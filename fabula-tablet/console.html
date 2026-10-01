@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>La Perla · Console</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Layout: owner console — summary tiles, approvals queue, two 30-day charts, three watch lists */
+:root{
+  --bg:#f7f5f0; --paper:#fff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb; --tile:#eef3ef;
+  --accent:#0f6b4f; --accent-fg:#fff; --warn:#b4472c; --good:#0f6b4f;
+  --series-1:#2a78d6; --series-2:#eb6834; --grid:#e6e3da;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root{ --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --tile:#232a27; --accent:#2f9c74; --warn:#f08a6a; --good:#4fbf93; --series-1:#3987e5; --series-2:#d95926; --grid:#2c3036; color-scheme:dark } }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.35;padding-block:0 32px;padding-inline:16px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:3px solid var(--accent);margin-bottom:16px;flex-wrap:wrap}
+header h1{font-family:var(--display);font-size:1.8rem;margin:0;font-weight:700}
+header .sub{color:var(--muted);font-size:.9rem}
+.badge{display:inline-block;font-family:var(--display);font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--warn);color:#fff;margin-left:8px;vertical-align:middle}
+.view{display:none}.view.active{display:block}
+.wrap{max-width:1180px;margin:0 auto}
+h2{font-family:var(--display);font-size:1.25rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);margin:22px 0 8px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:10px 12px;min-width:0}
+.tile .l{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.tile .v{font-family:var(--display);font-size:2rem;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.tile .d{font-size:.85rem;color:var(--muted)}
+.tile.bad .v{color:var(--warn)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.grid2.four{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;min-width:0}
+.card h3{font-family:var(--display);font-size:1.05rem;text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:.95rem}
+td,th{text-align:left;padding:6px 4px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-style:italic;padding:8px 0}
+.appr{border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:6px;padding:10px 12px;margin-bottom:10px;background:var(--tile)}
+.appr .k{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.appr .s{font-weight:600;margin:2px 0 6px}
+.appr .meta{font-size:.85rem;color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.btn{border:0;border-radius:6px;padding:8px 14px;font:600 .95rem var(--body);cursor:pointer;background:var(--accent);color:var(--accent-fg)}
+.btn.sec{background:var(--paper);color:var(--fg);border:1px solid var(--rule)}
+.btn.warn{background:var(--warn);color:#fff}
+.btn:disabled{opacity:.5}
+input[type=text],input[type=email],input[type=password]{font:1rem var(--body);padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);min-width:0;flex:1}
+.chart{width:100%;height:auto;display:block}
+.chart text{font-family:var(--body);fill:var(--muted);font-size:11px}
+.chart .grid line{stroke:var(--grid);stroke-width:1}
+.chart .axis{stroke:var(--rule)}
+.legend{display:flex;gap:14px;font-size:.85rem;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.tip{position:fixed;pointer-events:none;background:var(--fg);color:var(--bg);padding:6px 9px;border-radius:5px;font-size:.85rem;display:none;z-index:5;white-space:nowrap}
+.toast{position:fixed;left:16px;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:12px 16px;border-radius:8px;font-weight:600;display:none;z-index:9;max-width:520px;margin:0 auto}
+.toast.err{background:var(--warn);color:#fff}
+.login{max-width:380px;margin:60px auto}
+.login label{display:block;font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:12px}
+.login input{width:100%;margin-top:4px;font-size:1.1rem}
+.login .btn{width:100%;margin-top:16px;padding:12px}
+.status{font-size:.85rem;color:var(--muted)}
+.ok{color:var(--good)}.ko{color:var(--warn)}
+@media (max-width:640px){ header h1{font-size:1.4rem} .tile .v{font-size:1.6rem} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>La Perla del Cilento <span id="simbadge" class="badge" hidden>simulazione</span></h1><div class="sub" id="sub">Console di gestione</div></div>
+  <div class="row" style="margin:0"><span class="status" id="who"></span><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
+</header>
+
+<section class="view login" id="v-login">
+  <label for="email">Email</label><input id="email" type="email" autocomplete="username">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+  <button class="btn" id="btn-login">Entra</button>
+</section>
+
+<section class="view" id="v-main">
+  <div class="tiles" id="tiles"></div>
+
+  <h2>Da approvare</h2>
+  <div id="approvals"></div>
+
+  <div class="grid2">
+    <div class="card"><h3>Resa mozzarella · 30 giorni</h3><div id="chart-yield"></div></div>
+    <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="chart-sales"></div><div class="legend"><span><i style="background:var(--series-1)"></i>Banco</span><span><i style="background:var(--series-2)"></i>Ingrosso</span></div></div>
+  </div>
+
+  <div class="grid2 four" style="margin-top:16px">
+    <div class="card"><h3>Conformità ieri</h3><div id="haccp"></div></div>
+    <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
+    <div class="card"><h3>Segnali acquisti</h3><div id="procurement"></div></div>
+    <div class="card"><h3>Esecuzioni bot</h3><div id="runs"></div></div>
+  </div>
+</section>
+</div>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="console.js"></script>
+</body>
+</html>
