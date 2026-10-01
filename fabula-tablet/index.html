@@ -49,6 +49,14 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .check input{width:28px;height:28px;margin:0}
 .pending{font-size:.85rem;color:var(--muted);text-align:center;margin-top:16px}
 .row{display:flex;gap:10px}.row .btn{margin-top:12px}
+.dose-prog{display:flex;justify-content:space-between;color:var(--muted);font-size:.95rem;margin-bottom:6px}
+.bar{height:8px;background:var(--rule);border-radius:4px;overflow:hidden;margin-bottom:16px}.bar>div{height:100%;background:var(--accent);transition:width .3s}
+.dose-card{background:var(--paper);border:2px solid var(--rule);border-radius:14px;padding:22px;text-align:center}
+.dose-name{font-family:var(--display);font-size:1.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.dose-qty{font-family:var(--display);font-size:4.2rem;font-weight:700;color:var(--accent);line-height:1.05;margin:10px 0;font-variant-numeric:tabular-nums}
+.dose-instr{font-size:1.15rem}.dose-src{color:var(--warn);font-size:.85rem;margin-top:8px;text-transform:uppercase;letter-spacing:.05em}
+.btn.huge{font-size:1.7rem;padding:26px}
+.alt-row{display:flex;align-items:center;gap:10px}.alt-row input{flex:1}.alt-row span{font:600 1.4rem var(--body);color:var(--muted)}
 </style>
 </head>
 <body>
@@ -81,6 +89,26 @@ input[type=number]{font-variant-numeric:tabular-nums}
   <div class="card"><div class="scan" id="f-title"></div><div id="f-sub"></div></div>
   <form id="form"></form>
   <div class="row"><button class="btn secondary" id="btn-form-cancel">Annulla</button><button class="btn" id="btn-form-save">Salva</button></div>
+</section>
+
+<section class="view" id="v-dose">
+  <div class="card"><div class="scan" id="d-title"></div></div>
+  <div class="dose-prog"><span id="d-prog"></span></div>
+  <div class="bar"><div id="d-bar"></div></div>
+  <div class="dose-card">
+    <div class="dose-name" id="d-name"></div>
+    <div class="dose-qty" id="d-qty"></div>
+    <div class="dose-instr" id="d-instr"></div>
+    <div class="dose-src" id="d-src"></div>
+  </div>
+  <button class="btn huge" id="d-ok">✓ Fatto</button>
+  <button class="btn secondary" id="d-diff">Ho usato una quantità diversa</button>
+  <div id="d-alt" style="display:none">
+    <label for="d-alt-in">Quantità usata</label>
+    <div class="alt-row"><input id="d-alt-in" type="number" inputmode="decimal" step="0.1"><span id="d-alt-u"></span></div>
+    <div class="limit" id="d-warn"></div>
+    <button class="btn" id="d-alt-ok">Conferma</button>
+  </div>
 </section>
 
 </main>

@@ -36,6 +36,7 @@
   async function run(ops) {
     const out = [];
     for (const op of ops) {
+      if (op.rpc) { const { data, error } = await sb.rpc(op.rpc, op.args); if (error) throw error; out.push(data); continue; }
       const row = JSON.parse(JSON.stringify(op.row), (k, v) => typeof v === 'string' && v.startsWith('$') ? out[Number(v.slice(1, v.indexOf('.')))][v.slice(v.indexOf('.') + 1)] : v);
       let q = op.update ? sb.from(op.table).update(row).match(op.update).select().single()
                         : sb.from(op.table).insert(row).select().single();
@@ -128,7 +129,7 @@
     } catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
   }
   function openForm(title, sub, onSave) { $('f-title').textContent = title; $('f-sub').textContent = sub; current.onSave = onSave; show('form'); const f = $('form').querySelector('input,select'); if (f) f.focus(); }
-  $('btn-form-save').onclick = async () => { if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true; try { await current.onSave(); show('home'); loadTasks(); } finally { $('btn-form-save').disabled = false; } };
+  $('btn-form-save').onclick = async () => { if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true; try { const r = await current.onSave(); if (r !== 'stay') { show('home'); loadTasks(); } } finally { $('btn-form-save').disabled = false; } };
 
   // 1/4/7/9 — equipment: cold room, pasteurizer, thermometer → temperature; POS → Z report
   async function stepEquipment(code) {
@@ -196,9 +197,9 @@
   async function stepLot(lot) {
     const { data: milk } = await sb.from('milk_intake').select('id, qty_kg, intake_date').eq('milk_lot', lot).order('intake_date', { ascending: false }).limit(1).maybeSingle();
     const { data: batch } = await sb.from('production_batches').select('*').eq('batch_lot', lot).maybeSingle();
-    if (batch) return stepPick(batch);
+    if (batch) return batch.output_kg == null ? stepBatchEnd(batch) : stepPick(batch);   // open batch (e.g. ricotta) → close it
     if (!milk) throw new Error('Lotto sconosciuto: ' + lot);
-    const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, output_kg, milk_in_kg)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
+    const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
     if (open && open[0]) return stepBatchEnd(open[0].production_batches);
     return stepBatchStart(milk, lot);
   }
@@ -206,26 +207,54 @@
     const { data: prods } = await sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true);
     const { count } = await sb.from('production_batches').select('*', { count: 'exact', head: true }).eq('batch_date', today());
     const batchLot = 'L' + today().replace(/-/g, '') + '-' + String.fromCharCode(65 + (count || 0));
-    field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) }); field('kg', 'kg latte in caldaia', 'number', { step: '0.1' });
+    field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) });
+    field('mu', 'Unità', 'select', { options: [['kg', 'kg (bilancia)'], ['l', 'litri (contalitri)']] });
+    field('kg', 'Latte in caldaia', 'number', { step: '0.1' });
     openForm('Inizio lotto ' + batchLot, `latte ${lot} · disponibili ${milk.qty_kg} kg`, async () => {
-      await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg: val('kg') } }),
-        { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: val('product'), milk_in_kg: val('kg'), started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
-        { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: val('kg') } },
-        { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -val('kg'), move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }]);
-      toast('Lotto ' + batchLot + ' avviato ✓');
+      const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
+      const product = val('product');
+      await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu') } }),
+        { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
+        { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
+        { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -kg, move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }]);
+      const steps = await doseSteps(product, 'start', { milk: kg });
+      if (!steps.length) { toast('Lotto ' + batchLot + ' avviato ✓'); return; }
+      runDosing(`Dosaggio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => toast('Lotto ' + batchLot + ' avviato, dosaggio confermato ✓'));
+      return 'stay';
     });
   }
-  function stepBatchEnd(b) {
+  async function stepBatchEnd(b) {
+    const { data: prod } = await sb.from('products').select('shelf_life_days, byproduct_product_id').eq('id', b.product_id).single();
+    const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
     field('out', 'kg prodotto', 'number', { step: '0.1' }); field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
-    openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg latte in caldaia`, async () => {
-      const out = val('out'), y = Math.round(out / b.milk_in_kg * 1000) / 10;
-      const { data: prod } = await sb.from('products').select('shelf_life_days').eq('id', b.product_id).single();
+    if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
+    openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
+      const out = val('out'), ph = val('ph'), n = val('n'), whey = byp ? (val('whey') || 0) : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
       const exp = new Date(); exp.setDate(exp.getDate() + (prod?.shelf_life_days || 5));
-      await save([scanEvent(current.code, 'batch_end', { payload: { output_kg: out, yield_pct: y } }),
-        { table: 'production_batches', update: { id: b.id }, row: { output_kg: out, curd_ph: val('ph'), finished_at: new Date().toISOString() } },
-        { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: exp.toISOString().slice(0, 10), qty: out, move_type: 'production_out', batch_id: b.id, source: 'tablet' } },
-        { table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: b.id, qty_printed: val('n') || 1, printed_by_id: staff.id } }]);
-      toast(`Resa ${y}% · ${out} kg ✓`);
+      const code = current.code;
+      const startRicotta = async () => {
+        const ricLot = 'R' + b.batch_lot.slice(1);
+        await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: b.batch_lot, p_whey_kg: whey, p_staff_id: staff.id } }]);
+        const done = () => toast(`Ricotta ${ricLot} avviata ✓ · a fine lotto scansiona LOT:${ricLot}`);
+        const steps = await doseSteps(byp, 'start', { milk: whey });
+        if (!steps.length) { done(); return; }
+        runDosing(`Ricotta ${ricLot} · ${whey} kg siero`, ricLot, steps, async () => done());
+        return 'stay';
+      };
+      const close = async () => {
+        const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
+          { table: 'production_batches', update: { id: b.id }, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
+          { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: exp.toISOString().slice(0, 10), qty: out, move_type: 'production_out', batch_id: b.id, source: 'tablet' } }];
+        if (b.input_kind !== 'whey')   // ricotta lot label is printed when the batch starts
+          ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: b.id, qty_printed: n || 1, printed_by_id: staff.id } });
+        await save(ops);
+        toast(`Resa ${y}% · ${out} kg ✓`);
+        if (whey > 0) return startRicotta();
+      };
+      const steps = await doseSteps(b.product_id, 'close', { milk: b.milk_in_kg, out });
+      if (!steps.length) return close();
+      runDosing(`Confezionamento ${b.batch_lot} · ${out} kg`, b.batch_lot, steps, close);
+      return 'stay';
     });
   }
   // 6 — sale at the counter or shipment line
@@ -254,6 +283,57 @@
       }
     });
   }
+  // ---------- Guided dosing: recipe × milk → one confirm per ingredient ----------
+  const MILK_DENSITY = 1.035;                       // kg per litre, buffalo milk (to confirm with the casaro)
+  const RK = 'fabula_recipes';
+  async function loadRecipes() {
+    try { const { data, error } = await sb.from('v_recipe_active').select('*'); if (error) throw error; try { localStorage.setItem(RK, JSON.stringify(data)); } catch {} return data; }
+    catch { try { return JSON.parse(localStorage.getItem(RK) || '[]'); } catch { return []; } }
+  }
+  async function doseSteps(productId, phase, base) {
+    const all = await loadRecipes();
+    return all.filter(r => r.finished_product_id === productId && r.phase === phase)
+      .sort((a, b) => a.step_order - b.step_order)
+      .map(r => {
+        let q = r.qty_per_unit * (r.basis === 'per_kg_milk' ? base.milk : r.basis === 'per_kg_output' ? (base.out || 0) : 1);
+        q = r.round_up ? Math.ceil(q) : Math.round(q * 1000) / 1000;
+        return { ...r, qty: q };
+      }).filter(r => r.qty > 0);
+  }
+  // show in a unit people can weigh: litres → ml, small kg → g
+  const disp = s => s.unit === 'l' ? { f: 1000, u: 'ml' } : (s.unit === 'kg' && s.qty < 1) ? { f: 1000, u: 'g' } : { f: 1, u: s.unit === 'pz' ? 'pz' : s.unit };
+  const fmtQty = (q, s) => { const d = disp(s); const v = q * d.f; return (d.u === 'pz' ? Math.ceil(v) : Math.round(v * 10) / 10).toLocaleString('it-IT') + ' ' + d.u; };
+  function runDosing(title, batchLot, steps, onDone) {
+    let k = 0, warned = false;
+    const btns = ['d-ok', 'd-diff', 'd-alt-ok'].map($);
+    const render = () => {
+      const s = steps[k]; warned = false;
+      $('d-title').textContent = title; $('d-prog').textContent = `Passo ${k + 1} di ${steps.length}`;
+      $('d-bar').style.width = (k / steps.length * 100) + '%';
+      $('d-name').textContent = s.name; $('d-qty').textContent = fmtQty(s.qty, s);
+      $('d-instr').textContent = s.instruction_it || ''; $('d-src').textContent = s.source === 'placeholder' ? 'ricetta provvisoria' : '';
+      $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-alt-u').textContent = disp(s).u; $('d-warn').textContent = '';
+      btns.forEach(b => b.disabled = false); show('dose');
+    };
+    const next = async q => {
+      const s = steps[k]; btns.forEach(b => b.disabled = true);
+      try { await save([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: staff.id } }]); }
+      finally { btns.forEach(b => b.disabled = false); }
+      k++; if (k < steps.length) return render();
+      $('d-bar').style.width = '100%'; const r = await onDone(); if (r !== 'stay') { show('home'); loadTasks(); }   // 'stay' = next sequence (e.g. ricotta) took over
+    };
+    $('d-ok').onclick = () => next(steps[k].qty);
+    $('d-diff').onclick = () => { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); };
+    $('d-alt-ok').onclick = () => {
+      const s = steps[k], raw = $('d-alt-in').value;
+      if (raw === '' || !(Number(raw) >= 0)) return toast('Scrivi la quantità usata', 'err');
+      const q = Number(raw) / disp(s).f, dev = Math.abs(q - s.qty) / s.qty;
+      if (dev > 0.2 && !warned) { warned = true; $('d-warn').textContent = `Differenza ${Math.round(dev * 100)}% dalla ricetta. Ricontrolla e premi di nuovo Conferma.`; return; }
+      next(s.unit === 'pz' ? Math.ceil(q) : Math.round(q * 1000) / 1000);
+    };
+    render();
+  }
+
   let _rawId; async function rawMilkId() { if (!_rawId) { const { data } = await sb.from('products').select('id').eq('sku', 'RAW-MILK').single(); _rawId = data.id; } return _rawId; }
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
