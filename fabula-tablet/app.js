@@ -109,6 +109,21 @@
     try { s.clear(); } catch {}
   }
   $('btn-scan').onclick = startScan;
+  $('btn-receive').onclick = async () => {
+    $('form').innerHTML = ''; current = { code: 'PO:LIST' };
+    const { data, error } = await sb.from('v_open_purchase_orders').select('po_number, supplier, status, expected_date, lines');
+    if (error) return toast('Lista ordini non disponibile offline', 'err');
+    if (!data || !data.length) return toast('Nessun ordine in arrivo');
+    data.forEach(po => {
+      const d = document.createElement('div'); d.className = 'task';
+      const items = po.lines.map(l => `${l.name} ${Number(l.remaining).toLocaleString('it-IT')} ${l.unit}`).join(' · ');
+      d.innerHTML = `<div><div>${po.po_number} · ${po.supplier}</div><div class="code">${items}${po.status === 'partially_received' ? ' · parziale' : ''}</div></div><time>${po.expected_date ? po.expected_date.slice(8, 10) + '/' + po.expected_date.slice(5, 7) : ''}</time>`;
+      d.onclick = () => { $('form').innerHTML = ''; current = { code: 'PO:' + po.po_number }; stepReceive(po.po_number).catch(e => { toast(e.message, 'err'); show('home'); }); };
+      $('form').append(d);
+    });
+    openForm('Arrivo merce', 'Tocca l\'ordine che è arrivato', async () => {});
+    $('btn-form-save').style.display = 'none';
+  };
   $('btn-scan-cancel').onclick = () => { show('home'); stopScan(); };
   $('btn-manual').onclick = () => { const code = $('manual').value.trim().toUpperCase(); if (!code) return; stopScan().then(() => handleCode(code)); };
   $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('btn-manual').click(); } });
@@ -122,13 +137,14 @@
       if (kind === 'EQ') return await stepEquipment(ref);
       if (kind === 'DDT') return await stepMilk(ref);
       if (kind === 'LOT') return await stepLot(ref);
+      if (kind === 'PO') return await stepReceive(ref);
       if (kind === 'METER') return stepMeter(ref || 'elec_main');
       if (kind === 'CLEAN') return stepClean();
       if (kind === 'STAFF') { toast('Badge letto: ' + ref); return show('home'); }
       toast('Codice non riconosciuto: ' + code, 'err'); show('home');
     } catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
   }
-  function openForm(title, sub, onSave) { $('f-title').textContent = title; $('f-sub').textContent = sub; current.onSave = onSave; show('form'); const f = $('form').querySelector('input,select'); if (f) f.focus(); }
+  function openForm(title, sub, onSave) { $('f-title').textContent = title; $('f-sub').textContent = sub; current.onSave = onSave; $('btn-form-save').style.display = ''; show('form'); const f = $('form').querySelector('input,select'); if (f) f.focus(); }
   $('btn-form-save').onclick = async () => { if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true; try { const r = await current.onSave(); if (r !== 'stay') { show('home'); loadTasks(); } } finally { $('btn-form-save').disabled = false; } };
 
   // 1/4/7/9 — equipment: cold room, pasteurizer, thermometer → temperature; POS → Z report
@@ -287,6 +303,40 @@
       }
     });
   }
+  // 11 — goods receipt: approved PO arrives → stock goes up
+  async function stepReceive(poNumber) {
+    const { data: po, error } = await sb.from('v_open_purchase_orders').select('*').eq('po_number', poNumber).maybeSingle();
+    if (error) throw new Error('Ordine non leggibile offline');
+    if (!po) throw new Error('Ordine ' + poNumber + ' non in arrivo (non approvato o già ricevuto)');
+    $('form').innerHTML = '';
+    po.lines.forEach((l, i) => {
+      const h = document.createElement('div'); h.className = 'card'; h.style.marginTop = '14px';
+      h.innerHTML = `<div class="scan">${l.name}</div><div>ordinati ${Number(l.qty_ordered).toLocaleString('it-IT')} ${l.unit}${Number(l.qty_received) > 0 ? ` · già ricevuti ${Number(l.qty_received).toLocaleString('it-IT')}` : ''} · listino € ${Number(l.unit_price_eur).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/${l.unit}</div>`;
+      $('form').append(h);
+      const q = field('q' + i, `Ricevuti (${l.unit})`, 'number', { step: l.unit === 'pz' ? '1' : '0.01' }); q.value = l.remaining;
+      field('lot' + i, 'Lotto fornitore', 'text', { required: false });
+      const e = field('exp' + i, 'Scadenza (se stampata)', 'date', { required: false });
+      if (l.shelf_life_days) { const d = new Date(); d.setDate(d.getDate() + l.shelf_life_days); e.value = d.toISOString().slice(0, 10); }
+      field('pr' + i, `Prezzo sul DDT €/${l.unit} (solo se diverso)`, 'number', { step: '0.0001', required: false });
+    });
+    field('ddt', 'Numero DDT', 'text', { required: false }); field('photo', 'Foto DDT', 'file', { required: false });
+    openForm(po.po_number, po.supplier + (po.status === 'partially_received' ? ' · consegna parziale in corso' : ''), async () => {
+      const lines = po.lines.map((l, i) => ({ sku: l.sku, qty: val('q' + i), lot: val('lot' + i) || null, expiry: val('exp' + i) || null, unit_price: val('pr' + i) }))
+        .filter(x => x.qty && x.qty > 0);
+      if (!lines.length) { toast('Inserisci almeno una quantità ricevuta', 'err'); throw new Error('vuoto'); }
+      const over = lines.filter(x => { const l = po.lines.find(p => p.sku === x.sku); return x.qty > Number(l.remaining) * 1.02; });
+      if (over.length && !current.overOk) { current.overOk = true; toast('Quantità superiore all\'ordine: ricontrolla e premi Salva di nuovo', 'err'); throw new Error('over'); }
+      const ddt = val('ddt') || null;
+      await save([scanEvent(current.code, 'goods_receive', { payload: { po_number: po.po_number, ddt, lines } }),
+        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: staff.id, p_ddt: ddt } }]);
+      const f = $('photo').files[0];
+      if (f && navigator.onLine) { const path = `ddt/${today()}_${po.po_number}.jpg`; const { error: ue } = await sb.storage.from('documents').upload(path, f, { upsert: true });
+        if (!ue) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), related_table: 'purchase_orders', related_id: po.id, uploaded_by_id: staff.id }); }
+      const tot = lines.reduce((a, x) => a + x.qty, 0);
+      toast(`Ricevuto ${po.po_number} · ${tot.toLocaleString('it-IT')} pezzi/kg in magazzino ✓`);
+    });
+  }
+
   // ---------- Guided dosing: recipe × milk → one confirm per ingredient ----------
   const MILK_DENSITY = 1.035;                       // kg per litre, buffalo milk (to confirm with the casaro)
   const RK = 'fabula_recipes';
