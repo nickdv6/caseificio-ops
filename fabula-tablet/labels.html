@@ -1,0 +1,19 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Etichette QR Fabula</title>
+<style>body{font-family:system-ui;padding:16px}h1{font-size:1.2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.l{border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}.l b{display:block;font-size:1.3rem;margin-top:8px}.l small{color:#555}textarea{width:100%;height:90px;font-family:monospace}@media print{textarea,button,p{display:none}}</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script></head><body>
+<h1>Etichette QR — una riga per etichetta: <code>CODICE | Nome</code></h1>
+<textarea id="src">EQ:CF-01 | Cella frigo 1
+EQ:CF-02 | Cella frigo 2
+EQ:PAST-01 | Pastorizzatore
+EQ:FIL-01 | Filatrice
+EQ:BIL-01 | Bilancia ricezione
+EQ:TERM-01 | Termometro a sonda
+EQ:RT-01 | Registratore telematico
+CLEAN | Sanificazione fine turno
+METER:elec_main | Contatore luce</textarea>
+<p><button onclick="render()">Genera</button> poi stampa (Ctrl/Cmd+P) su carta adesiva.</p>
+<div class="grid" id="g"></div>
+<script>
+function render(){const g=document.getElementById('g');g.innerHTML='';document.getElementById('src').value.split('\n').filter(Boolean).forEach(line=>{const [code,name]=line.split('|').map(s=>s.trim());const d=document.createElement('div');d.className='l';const q=document.createElement('div');d.append(q);new QRCode(q,{text:code,width:140,height:140});d.insertAdjacentHTML('beforeend',`<b>${name||''}</b><small>${code}</small>`);g.append(d);});}
+render();
+</script></body></html>

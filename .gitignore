@@ -1,0 +1,14 @@
+# media from trials — too big for git, lives in the folder only
+Prova_*/
+*.mov
+*.mp4
+*.heic
+*.jpg
+*.jpeg
+*.png
+# local junk
+.DS_Store
+node_modules/
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f6b4f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Fabula Caseificio</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#f7f5f0; --paper:#fff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb;
+  --accent:#0f6b4f; --accent-fg:#fff; --warn:#b4472c; --ok:#0f6b4f; --tile:#eef3ef;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root{ --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#2f9c74; --tile:#232a27; color-scheme:dark } }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:18px;line-height:1.3;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:var(--accent);color:var(--accent-fg)}
+header h1{font-family:var(--display);font-size:1.5rem;margin:0;font-weight:700}
+header .who{font-size:.9rem;opacity:.9}
+main{flex:1;overflow:auto;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0))}
+.view{display:none}.view.active{display:block}
+h2{font-family:var(--display);font-size:1.6rem;margin:0 0 10px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}
+.btn{display:block;width:100%;border:0;border-radius:10px;padding:18px;font:600 1.25rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer;margin-top:12px}
+.btn.secondary{background:var(--paper);color:var(--fg);border:2px solid var(--rule)}
+.btn.warn{background:var(--warn)}
+.btn:disabled{opacity:.5}
+.big{font-family:var(--display);font-size:2.2rem;padding:28px}
+label{display:block;font-weight:600;margin-top:14px;color:var(--muted);font-size:.95rem;text-transform:uppercase;letter-spacing:.04em}
+input,select{width:100%;font:1.6rem var(--body);padding:14px;border:2px solid var(--rule);border-radius:10px;background:var(--paper);color:var(--fg);margin-top:4px}
+input[type=number]{font-variant-numeric:tabular-nums}
+.limit{color:var(--warn);font-weight:600;margin-top:6px}
+.tasks{display:flex;flex-direction:column;gap:8px}
+.task{display:flex;justify-content:space-between;align-items:center;background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:12px 14px}
+.task.overdue{border-color:var(--warn)}
+.task time{font-family:var(--display);font-size:1.2rem;color:var(--muted)}
+.task .code{font-size:.85rem;color:var(--muted)}
+.card{background:var(--tile);border-radius:10px;padding:14px;margin-bottom:12px}
+.card .scan{font-family:var(--display);font-size:1.4rem;font-weight:700}
+#reader{width:100%;border-radius:10px;overflow:hidden;background:#000;min-height:280px}
+.toast{position:fixed;left:16px;right:16px;bottom:calc(20px + env(safe-area-inset-bottom,0));background:var(--fg);color:var(--bg);padding:14px 16px;border-radius:10px;font-weight:600;display:none;z-index:9}
+.toast.ok{background:var(--ok);color:#fff}.toast.err{background:var(--warn);color:#fff}
+.check{display:flex;align-items:center;gap:12px;font-size:1.2rem;padding:12px;background:var(--paper);border:1px solid var(--rule);border-radius:10px;margin-top:8px}
+.check input{width:28px;height:28px;margin:0}
+.pending{font-size:.85rem;color:var(--muted);text-align:center;margin-top:16px}
+.row{display:flex;gap:10px}.row .btn{margin-top:12px}
+</style>
+</head>
+<body>
+<header><h1>Fabula</h1><div class="who" id="who"></div></header>
+<main>
+
+<section class="view" id="v-login">
+  <h2>Accedi</h2>
+  <label for="email">Email</label><input id="email" type="email" autocomplete="username">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+  <button class="btn" id="btn-login">Entra</button>
+</section>
+
+<section class="view" id="v-home">
+  <button class="btn big" id="btn-scan">▣ Scansiona</button>
+  <h2 style="margin-top:22px">Da fare oggi</h2>
+  <div class="tasks" id="tasks"></div>
+  <div class="pending" id="pending"></div>
+  <button class="btn secondary" id="btn-logout" style="margin-top:28px">Esci</button>
+</section>
+
+<section class="view" id="v-scan">
+  <div id="reader"></div>
+  <label for="manual">Oppure scrivi il codice</label>
+  <input id="manual" placeholder="EQ:CF-01">
+  <div class="row"><button class="btn secondary" id="btn-scan-cancel">Annulla</button><button class="btn" id="btn-manual">OK</button></div>
+</section>
+
+<section class="view" id="v-form">
+  <div class="card"><div class="scan" id="f-title"></div><div id="f-sub"></div></div>
+  <form id="form"></form>
+  <div class="row"><button class="btn secondary" id="btn-form-cancel">Annulla</button><button class="btn" id="btn-form-save">Salva</button></div>
+</section>
+
+</main>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
