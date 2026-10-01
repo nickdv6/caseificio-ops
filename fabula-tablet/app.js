@@ -183,7 +183,11 @@
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
     field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: 'latte ≤ 4 °C' });
     field('fat', 'Grasso % (se noto)', 'number', { step: '0.01', required: false }); field('photo', 'Foto DDT', 'file', { required: false });
-    openForm('Arrivo latte', 'DDT ' + ddt, async () => {
+    // today's milk plan, if the planning bot made one (approved or still proposed)
+    let planTxt = '';
+    try { const { data: plan } = await sb.from('milk_plans').select('milk_kg, status').eq('plan_date', today()).in('status', ['proposed', 'approved']).maybeSingle();
+      if (plan) planTxt = ` · piano ${plan.status === 'approved' ? 'approvato' : 'PROPOSTO (non approvato)'}: ${Number(plan.milk_kg).toLocaleString('it-IT')} kg`; } catch {}
+    openForm('Arrivo latte', 'DDT ' + ddt + planTxt, async () => {
       const accepted = val('temp') <= 4;
       const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp') } }),
         { table: 'milk_intake', row: { intake_date: today(), supplier_id: val('supplier'), milk_lot: val('lot'), qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), ddt_number: ddt, accepted, rejection_reason: accepted ? null : 'temperatura > 4 °C', received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
