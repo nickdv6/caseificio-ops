@@ -90,16 +90,27 @@
   const scanEvent = (code, action, extra = {}) => ({ table: 'scan_events', row: { code, action, staff_id: staff.id, device: CFG.device, ...extra } });
 
   // ---------- Scanner ----------
+  let scanStarting = null;
   function startScan() {
-    show('scan'); $('manual').value = '';
-    scanner = new Html5Qrcode('reader');
-    scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 240 }, txt => { stopScan(); handleCode(txt.trim()); }, () => {})
-      .catch(() => toast('Fotocamera non disponibile: scrivi il codice', 'err'));
+    show('scan'); $('manual').value = ''; $('manual').focus();
+    if (!window.Html5Qrcode) return;                 // library blocked → manual entry only
+    scanner = new Html5Qrcode('reader', { verbose: false });
+    scanStarting = scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 240 },
+        txt => { const code = txt.trim(); stopScan().then(() => handleCode(code)); }, () => {})
+      .catch(() => { toast('Fotocamera non disponibile: scrivi il codice', 'err'); })
+      .finally(() => { scanStarting = null; });
   }
-  function stopScan() { if (scanner) { scanner.stop().catch(() => {}); scanner.clear(); scanner = null; } }
+  async function stopScan() {
+    const s = scanner; scanner = null;
+    if (!s) return;
+    try { if (scanStarting) await scanStarting; } catch {}
+    try { if (s.isScanning) await s.stop(); } catch {}
+    try { s.clear(); } catch {}
+  }
   $('btn-scan').onclick = startScan;
-  $('btn-scan-cancel').onclick = () => { stopScan(); show('home'); };
-  $('btn-manual').onclick = () => { stopScan(); handleCode($('manual').value.trim().toUpperCase()); };
+  $('btn-scan-cancel').onclick = () => { show('home'); stopScan(); };
+  $('btn-manual').onclick = () => { const code = $('manual').value.trim().toUpperCase(); if (!code) return; stopScan().then(() => handleCode(code)); };
+  $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('btn-manual').click(); } });
   $('btn-form-cancel').onclick = () => show('home');
 
   // ---------- Route a code to its step ----------
