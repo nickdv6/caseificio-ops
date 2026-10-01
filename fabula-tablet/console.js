@@ -109,6 +109,100 @@
     $('runs').innerHTML = list.length ? '<table>' + list.map(r => `<tr><td>${esc(r.agent)}</td><td class="status">${new Date(r.started_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
   }
 
+  // ---------- settings & dates editor ----------
+  const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)' };
+  let settingsOpen = false;
+  $('btn-settings').onclick = () => { settingsOpen = !settingsOpen; $('settings').hidden = !settingsOpen; $('btn-settings').textContent = 'Impostazioni e scadenze ' + (settingsOpen ? '▾' : '▸'); if (settingsOpen) loadSettings(); };
+  async function loadSettings() {
+    const [s, e, d, st] = await Promise.all([
+      sb.from('settings').select('*').order('key'),
+      sb.from('v_equipment_schedule').select('*'),
+      sb.from('compliance_deadlines').select('*').is('done_on', null).order('due_on', { nullsFirst: false }),
+      sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name')]);
+    renderParams(s.data || []); renderEquipment(e.data || []); renderDeadlines(d.data || []); renderStaff(st.data || []);
+  }
+  const canEdit = () => ['owner', 'partner'].includes(staff.role);
+  const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
+  const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
+  const dOrNull = v => v || null, nOrNull = v => v === '' || v == null ? null : Number(v);
+
+  function renderParams(rows) {
+    const box = $('set-params'); box.innerHTML = '';
+    if (!canEdit()) { const n = document.createElement('div'); n.className = 'empty'; n.textContent = 'Solo titolare e partner possono modificare i parametri.'; box.append(n); }
+    let last = '';
+    rows.forEach(r => {
+      const g = r.key.split('.')[0];
+      if (g !== last) { last = g; const hh = document.createElement('div'); hh.className = 'status'; hh.style.marginTop = '8px'; hh.textContent = GROUPS[g] || g; box.append(hh); }
+      const row = document.createElement('div'); row.className = 'set-row';
+      row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small></div>`;
+      const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
+      const inp = document.createElement('input'); inp.type = 'text'; inp.value = r.value; inp.inputMode = 'decimal'; inp.disabled = !canEdit(); inp.oninput = () => row.classList.add('dirty');
+      right.append(inp);
+      if (canEdit()) right.append(saveBtn(async () => { if (inp.value.trim() === '' || isNaN(Number(inp.value.replace(',', '.')))) throw new Error('Inserisci un numero'); await upd('settings', { key: r.key }, { value: String(Number(inp.value.replace(',', '.'))) }); row.classList.remove('dirty'); }));
+      row.append(right); box.append(row);
+    });
+  }
+  const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
+  const dueCls = s => { if (!s) return ''; const d = (new Date(s) - new Date(new Date().toISOString().slice(0, 10))) / 864e5; return d < 0 ? 'ko' : d <= 30 ? 'ko' : ''; };
+  function renderEquipment(rows) {
+    const box = $('set-equipment'); box.innerHTML = '';
+    rows.filter(r => r.active).forEach(r => {
+      const c = document.createElement('div'); c.className = 'eq';
+      c.innerHTML = `<div class="h"><b>${esc(r.name)}</b><span class="status">${esc(r.code)}</span></div>
+        <div class="f">
+          <div><label>Ultima taratura</label><input type="date" data-k="last_calibrated_on" value="${r.last_calibrated_on || ''}"></div>
+          <div><label>Ogni (giorni)</label><input type="number" data-k="calibration_interval_days" value="${r.calibration_interval_days ?? ''}" placeholder="—"></div>
+          <div><label>Ultima manutenzione</label><input type="date" data-k="last_maintenance_on" value="${r.last_maintenance_on || ''}"></div>
+          <div><label>Ogni (giorni)</label><input type="number" data-k="maintenance_interval_days" value="${r.maintenance_interval_days ?? ''}" placeholder="—"></div>
+          <div style="grid-column:1/-1"><label>Tecnico / contatto</label><input type="text" data-k="technician_contact" value="${esc(r.technician_contact || '')}" placeholder="nome, telefono"></div>
+        </div>
+        <div class="next">prossima taratura <span class="${dueCls(r.next_calibration_on)}">${fmtD(r.next_calibration_on)}</span> · prossima manutenzione <span class="${dueCls(r.next_maintenance_on)}">${fmtD(r.next_maintenance_on)}</span></div>`;
+      const row = document.createElement('div'); row.className = 'row';
+      row.append(saveBtn(async () => {
+        const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
+        await upd('equipment', { id: r.id }, v); loadSettings();
+      }));
+      c.append(row); box.append(c);
+    });
+  }
+  function renderDeadlines(rows) {
+    const box = $('set-deadlines'); box.innerHTML = '';
+    if (!rows.length) box.innerHTML = '<div class="empty">Nessuna scadenza aperta.</div>';
+    rows.forEach(r => {
+      const c = document.createElement('div'); c.className = 'eq';
+      c.innerHTML = `<div class="h"><b>${esc(r.subject_it)}</b><span class="status ${dueCls(r.due_on)}">${r.due_on ? 'scade ' + fmtD(r.due_on) : 'data da impostare'}</span></div>
+        <div class="f">
+          <div><label>Scadenza</label><input type="date" data-k="due_on" value="${r.due_on || ''}"></div>
+          <div><label>Ogni (giorni)</label><input type="number" data-k="interval_days" value="${r.interval_days ?? ''}" placeholder="una tantum"></div>
+          <div><label>Responsabile</label><input type="text" data-k="responsible" value="${esc(r.responsible || '')}"></div>
+          <div><label>Fornitore / contatto</label><input type="text" data-k="contact" value="${esc(r.contact || '')}"></div>
+          <div style="grid-column:1/-1"><label>Note</label><input type="text" data-k="notes" value="${esc(r.notes || '')}"></div>
+        </div>`;
+      const row = document.createElement('div'); row.className = 'row';
+      row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); loadSettings(); }));
+      const done = document.createElement('button'); done.className = 'btn sm sec'; done.textContent = 'Fatto oggi';
+      done.onclick = async () => { done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadSettings(); };
+      row.append(done); c.append(row); box.append(c);
+    });
+  }
+  $('dl-add').onclick = async () => {
+    const subj = $('dl-new-subject').value.trim(); if (!subj) return toast('Scrivi la descrizione', 'err');
+    const { error } = await sb.from('compliance_deadlines').insert({ kind: 'other', subject_it: subj, due_on: dOrNull($('dl-new-due').value), interval_days: nOrNull($('dl-new-int').value), responsible: 'partner' });
+    if (error) return toast(error.message, 'err');
+    $('dl-new-subject').value = ''; $('dl-new-due').value = ''; $('dl-new-int').value = ''; toast('Aggiunta'); loadSettings();
+  };
+  function renderStaff(rows) {
+    const box = $('set-staff'); box.innerHTML = '';
+    rows.forEach(r => {
+      const row = document.createElement('div'); row.className = 'set-row';
+      row.innerHTML = `<div class="lbl">${esc(r.full_name)}<small>${esc(r.role)} · formazione HACCP scade <span class="${dueCls(r.haccp_training_expires)}">${fmtD(r.haccp_training_expires)}</span></small></div>`;
+      const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
+      const inp = document.createElement('input'); inp.type = 'date'; inp.value = r.haccp_training_expires || '';
+      right.append(inp, saveBtn(async () => { await upd('staff', { id: r.id }, { haccp_training_expires: dOrNull(inp.value) }); loadSettings(); }));
+      row.append(right); box.append(row);
+    });
+  }
+
   // ---------- charts (inline SVG, single scale, hover layer) ----------
   const tip = $('tip');
   const showTip = (e, html) => { tip.innerHTML = html; tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 28) + 'px'; };
