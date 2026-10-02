@@ -265,3 +265,25 @@ do $$ declare f record; d text; begin
     end if;
     execute format('alter function %s security definer set search_path = fabula, public', f.sig);
   end loop; end $$;
+
+-- 6 · hardening (security advisor): "no logged-in user" means full access only for service_role / SQL, never for anon;
+--     anon cannot execute any fabula function at all.
+create or replace function fabula.perm_level(p_area text) returns int language sql stable security definer set search_path = fabula, public as $$
+  select case
+    when auth.uid() is null and coalesce(auth.role(), '') <> 'anon' then 3   -- service role / SQL editor / bots
+    when auth.uid() is null then 0
+    when p_area = 'comune' then (select case when exists (select 1 from fabula.staff where auth_user_id = auth.uid() and active) then 2 else 0 end)
+    else coalesce((select rp.level from fabula.staff s join fabula.role_permissions rp on rp.role_code = s.app_role and rp.area = p_area
+                   where s.auth_user_id = auth.uid() and s.active limit 1), 0) end
+$$;
+create or replace function fabula.can_table(p_table text, p_write boolean default false) returns boolean language sql stable security definer set search_path = fabula, public as $$
+  select case when auth.uid() is null then coalesce(auth.role(), '') <> 'anon'
+    else coalesce((select case when p_write then fabula.perm_level(t.area) >= t.write_level
+                               else t.read_open and fabula.perm_level('comune') > 0 or fabula.perm_level(t.area) >= 1 end
+                   from fabula.table_areas t where t.table_name = p_table), fabula.perm_level('sistema') >= 3) end
+$$;
+revoke execute on all functions in schema fabula from public, anon;
+grant execute on all functions in schema fabula to authenticated, service_role;
+alter default privileges in schema fabula revoke execute on functions from public, anon;
+alter default privileges in schema fabula grant execute on functions to authenticated, service_role;
+revoke execute on function fabula.bot_watchdog(timestamptz), fabula.trg_audit(), fabula.trg_staff_guard(), fabula._ensure_supplier_product() from authenticated;
