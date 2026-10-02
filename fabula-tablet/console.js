@@ -71,7 +71,7 @@
 
   // ---------- approvals: one structured card per request, facts laid out as a grid instead of a sentence ----------
   let PRODUCTS = {};
-  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], other: ['Richiesta', ''] };
+  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], content_post: ['Post social', 'milk'], other: ['Richiesta', ''] };
   const WDAY = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
   const dShort = s => s ? WDAY[new Date(s + 'T12:00:00').getDay()] + ' ' + fmtD(s) : '—';
   const fact = (l, v, cls = '') => `<div><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
@@ -108,6 +108,13 @@
         title = `Ricetta ${esc(prod.name || p.finished_sku || '')} · ${esc((PRODUCTS[p.component_sku] || {}).name || p.component_sku || '')}`;
         facts = fact('Dose attuale', `${p.from} <small>${esc(p.unit || '')}</small>`) + fact('Dose proposta', `${p.to} <small>${esc(p.unit || '')}</small>`) + fact('Scostamento', `${p.deviation_pct > 0 ? '+' : ''}${num(p.deviation_pct)} %`) + fact('Lotti osservati', p.batches ?? '—');
         break;
+      case 'content_post': {
+        const cl = p.claims || [], blk = cl.filter(c => c.severity === 'block').length;
+        title = `Post ${esc(p.platform || '')}`;
+        facts = fact('Canale', esc(p.platform || '—')) + fact('Problemi nel testo', blk ? `${blk} da correggere` : 'nessuno', blk ? 'ko' : '') + fact('Avvisi', String(cl.filter(c => c.severity === 'warn').length));
+        more = `<details open><summary>Testo</summary><div style="white-space:pre-wrap;color:var(--fg)">${esc(p.caption_it || '')}</div>${cl.filter(c => c.severity !== 'info').map(c => `<div class="${c.severity === 'block' ? 'ko' : 'status'}">• ${esc(c.message)}</div>`).join('')}<div><a href="marketing.html#calendario">Apri nel calendario ↗</a></div></details>`;
+        break;
+      }
       case 'dop_declaration':
         title = `Dichiarazione Consorzio ${esc(p.month || '')}`;
         facts = fact('Latte lavorato', `${num(p.milk_processed_kg, 0)} <small>kg</small>`) + fact('Mozzarella DOP', `${num(p.mozzarella_dop_kg, 0)} <small>kg</small>`) + fact('Lotti', p.batches ?? '—') + fact('Etichette', num(p.labels_printed, 0)) + fact('Venduto', `${num(p.sold_kg, 0)} <small>kg</small>`);

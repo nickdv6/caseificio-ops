@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>La Perla · Marketing</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Layout: admin page — same visual system as the console, but only configuration: Bot · Parametri · Macchine e scadenze · Account. Owner/partner only. */
+:root{
+  --bg:#f6f4ef; --paper:#fff; --fg:#161514; --muted:#5d6168; --rule:#e4e0d6; --tile:#eef2f7;
+  --accent:#1e3a5f; --accent-fg:#fff; --warn:#b4472c; --good:#2f7a4d;
+  --series-1:#1e3a5f; --series-2:#c99a3c; --grid:#e8e5de;
+  --display:"Fraunces",Georgia,"Times New Roman",serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.35;padding-block:0 32px;padding-inline:16px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:3px solid var(--accent);margin-bottom:16px;flex-wrap:wrap}
+header h1{font-family:var(--display);font-size:1.8rem;margin:0;font-weight:700}
+header .sub{color:var(--muted);font-size:.9rem}
+.badge{display:inline-block;font-family:var(--display);font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--warn);color:#fff;margin-left:8px;vertical-align:middle}
+.view{display:none}.view.active{display:block}
+.wrap{max-width:1180px;margin:0 auto}
+h2{font-family:var(--display);font-size:1.25rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);margin:22px 0 8px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:10px 12px;min-width:0}
+.tile .l{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.tile .v{font-family:var(--display);font-size:2rem;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.tile .d{font-size:.85rem;color:var(--muted)}
+.tile.bad .v{color:var(--warn)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.grid2.four{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.grid2.two{grid-template-columns:repeat(2,minmax(0,1fr))}.col{display:flex;flex-direction:column;gap:16px;min-width:0}@media (max-width:760px){.grid2.two{grid-template-columns:1fr}}
+table.nw2 td:nth-child(1),table.nw2 td:nth-child(2),table.nw2 td:nth-child(4){white-space:nowrap}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;min-width:0}
+.card h3{font-family:var(--display);font-size:1.05rem;text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:.95rem}
+td,th{text-align:left;padding:6px 4px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-style:italic;padding:8px 0}
+.appr{border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:8px;padding:12px 14px;margin-bottom:12px;background:var(--paper)}
+.appr .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.appr .kind{display:inline-block;font-family:var(--display);font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:1px 7px;border-radius:3px;border:1.5px solid var(--warn);color:var(--warn);margin-bottom:4px}
+.appr .kind.po{border-color:var(--series-1);color:var(--series-1)}.appr .kind.milk{border-color:var(--accent);color:var(--accent)}
+.appr .t{font-family:var(--display);font-size:1.3rem;font-weight:700;line-height:1.2;margin-top:2px}
+.appr .amt{font-family:var(--display);font-size:1.4rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.appr .by{font-size:.8rem;color:var(--muted);margin-top:2px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px 14px;margin:10px 0 4px;padding:10px 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.facts div{min-width:0}.facts .l{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.facts .v{font-size:1.05rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.facts .v small{font-weight:400;color:var(--muted);font-size:.85rem}
+.facts .v.ko{color:var(--warn)}
+.appr details{font-size:.9rem;color:var(--muted);margin-top:6px}.appr details summary{cursor:pointer;color:var(--accent);font-weight:600;list-style:none}.appr details summary::-webkit-details-marker{display:none}
+.appr .row input{flex:1}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.btn{border:0;border-radius:6px;padding:8px 14px;font:600 .95rem var(--body);cursor:pointer;background:var(--accent);color:var(--accent-fg)}
+.btn.sec{background:var(--paper);color:var(--fg);border:1px solid var(--rule)}
+.btn.warn{background:var(--warn);color:#fff}
+.btn:disabled{opacity:.5}
+input[type=text],input[type=email],input[type=password]{font:1rem var(--body);padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);min-width:0;flex:1}
+.chart{width:100%;height:auto;display:block}
+.chart text{font-family:var(--body);fill:var(--muted);font-size:11px}
+.chart .grid line{stroke:var(--grid);stroke-width:1}
+.chart .axis{stroke:var(--rule)}
+.legend{display:flex;gap:14px;font-size:.85rem;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.tip{position:fixed;pointer-events:none;background:var(--fg);color:var(--bg);padding:6px 9px;border-radius:5px;font-size:.85rem;display:none;z-index:5;white-space:nowrap}
+.toast{position:fixed;left:16px;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:12px 16px;border-radius:8px;font-weight:600;display:none;z-index:9;max-width:520px;margin:0 auto}
+.toast.err{background:var(--warn);color:#fff}
+.login{max-width:380px;margin:60px auto}
+.login label{display:block;font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:12px}
+.login input{width:100%;margin-top:4px;font-size:1.1rem}
+.login .btn{width:100%;margin-top:16px;padding:12px}
+.status{font-size:.85rem;color:var(--muted)}
+.ok{color:var(--good)}.ko{color:var(--warn)}
+@media (max-width:640px){ header h1{font-size:1.4rem} .tile .v{font-size:1.6rem} }
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;align-items:start}
+.grid2{align-items:start}
+.set-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--rule)}
+.set-row:last-child{border-bottom:0}
+.set-row .lbl{font-size:.95rem}.set-row .lbl small{display:block;color:var(--muted);font-size:.8rem}
+.set-row input,.set-row select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);width:120px}
+.set-row input[type=date]{width:150px}.set-row input.wide{width:200px}
+table.rec td{vertical-align:middle}table.rec td.num{white-space:nowrap}table.rec input[type=number]{width:96px;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec input[type=text]{width:100%;min-width:180px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec select{font:.9rem var(--body);padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec .ph{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
+.set-row.text{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.set-row.text input.wide{width:100%}
+.set-row.dirty input{border-color:var(--accent)}
+.eq{border:1px solid var(--rule);border-radius:6px;padding:8px 10px;margin-bottom:8px}
+.eq .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.eq .h b{font-family:var(--display);font-size:1.1rem}
+details.eq{padding:0}details.eq>summary{list-style:none;cursor:pointer;padding:8px 10px}details.eq>summary::-webkit-details-marker{display:none}details.eq>summary b::before{content:"▸ ";color:var(--muted);font-size:.9rem}details.eq[open]>summary b::before{content:"▾ "}details.eq>.f,details.eq>.row{padding:0 10px}details.eq>.row{padding-bottom:8px}
+.eq .f{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px 10px;margin-top:6px}
+.eq label{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:block;white-space:nowrap}
+.eq input{width:100%;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}
+.eq .next{font-size:.85rem;color:var(--muted);margin-top:4px}.eq .next .ko{font-weight:600}
+.btn.sm{padding:5px 10px;font-size:.85rem}
+.tabs{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--rule);margin:0 -16px 16px;padding:6px 16px 0;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--body);padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.tab[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent)}
+.tab .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px}
+.tab .n.on{display:inline-block}
+.pane{display:none}.pane.active{display:block}
+details.card{padding:0}
+details.card>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+details.card>summary::-webkit-details-marker{display:none}
+details.card>summary h3{margin:0}
+details.card>summary::after{content:"▸";color:var(--muted);transition:transform .15s}
+details.card[open]>summary::after{transform:rotate(90deg)}
+details.card>.body{padding:0 14px 12px}
+.hint{font-size:.85rem;color:var(--muted);margin-bottom:8px}
+.grp{margin-top:10px}.grp>summary{cursor:pointer;font-weight:600;padding:6px 0;color:var(--fg);list-style:none;display:flex;justify-content:space-between}
+.grp>summary::-webkit-details-marker{display:none}.grp>summary::after{content:"▸";color:var(--muted)}.grp[open]>summary::after{content:"▾"}
+.pw{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+
+.tab[data-tab=bots] .n{background:var(--accent)}
+/* ---- marketing additions ---- */
+.claim{font-size:.88rem;padding:6px 9px;border-radius:5px;margin:4px 0;border-left:4px solid var(--rule);background:var(--tile)}
+.claim.block{border-left-color:var(--warn);background:#fbeee9}.claim.warn{border-left-color:var(--series-2);background:#fbf4e6}.claim.info{border-left-color:var(--series-1)}
+.pill{display:inline-block;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:10px;border:1px solid var(--rule);color:var(--muted);white-space:nowrap}
+.pill.idea{border-color:var(--rule)}.pill.generating{border-color:var(--series-2);color:var(--series-2)}.pill.draft{border-color:var(--series-1);color:var(--series-1)}
+.pill.review{background:var(--warn);color:#fff;border-color:var(--warn)}.pill.approved,.pill.scheduled{background:var(--series-1);color:#fff;border-color:var(--series-1)}.pill.published,.pill.live{background:var(--good);color:#fff;border-color:var(--good)}
+.pill.rejected,.pill.paused{text-decoration:line-through}.pill.applying{border-color:var(--series-2);color:var(--series-2)}
+.day{border-top:1px solid var(--rule);padding:8px 0}.day:first-child{border-top:0}
+.day>.dh{font-family:var(--display);font-weight:600;font-size:1rem;margin-bottom:4px}.day>.dh::first-letter{text-transform:uppercase}
+.day>.dh.today{color:var(--warn)}
+.post{display:grid;grid-template-columns:56px 1fr auto;gap:10px;align-items:start;padding:6px 8px;border:1px solid var(--rule);border-radius:6px;margin:4px 0;cursor:pointer;background:var(--paper)}
+.post:hover{border-color:var(--accent)}
+.post .tm{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.9rem}
+.post .tx{font-size:.95rem;min-width:0}.post .tx small{display:block;color:var(--muted);font-size:.8rem}
+.post .flags{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+dialog{border:0;border-radius:10px;padding:0;max-width:760px;width:calc(100% - 32px);background:var(--paper);color:var(--fg)}
+dialog::backdrop{background:rgba(22,21,20,.45)}
+dialog .dh{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--rule)}
+dialog .dh h3{margin:0;font-family:var(--display);font-size:1.15rem}
+dialog .db{padding:12px 16px;max-height:70vh;overflow:auto}
+dialog .df{padding:12px 16px;border-top:1px solid var(--rule);display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 12px}
+.fgrid label,.fl{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:block;margin-top:6px}
+.fgrid input,.fgrid select,textarea,.fi{width:100%;font:.95rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg)}
+textarea{min-height:90px;resize:vertical;line-height:1.4}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.thumb{width:96px;border:2px solid var(--rule);border-radius:6px;overflow:hidden;cursor:pointer;position:relative;background:var(--tile)}
+.thumb.on{border-color:var(--accent)}.thumb img,.thumb video{width:100%;height:72px;object-fit:cover;display:block}
+.thumb small{display:block;font-size:.68rem;padding:2px 4px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thumb .ai{position:absolute;top:3px;left:3px;background:var(--series-2);color:#fff;font-size:.65rem;padding:0 4px;border-radius:3px}
+.lib{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.lib .it{border:1px solid var(--rule);border-radius:8px;overflow:hidden;background:var(--paper)}
+.lib .it img,.lib .it video{width:100%;height:120px;object-fit:cover;display:block;background:var(--tile)}
+.lib .it .m{padding:6px 8px;font-size:.8rem}.lib .it label{display:flex;gap:6px;align-items:center;color:var(--muted)}
+.qr{display:inline-block;padding:8px;background:#fff;border:1px solid var(--rule);border-radius:6px}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:.85rem;word-break:break-all}
+.kpi-note{font-size:.8rem;color:var(--muted)}
+.slot{display:flex;justify-content:space-between;gap:8px;font-size:.9rem;padding:3px 0}
+.bar{height:6px;background:var(--tile);border-radius:3px;overflow:hidden;margin-top:2px}.bar i{display:block;height:100%;background:var(--accent)}
+.bar i.full{background:var(--warn)}
+#pick-list td:last-child{white-space:normal!important;min-width:90px}#pick-list td:last-child .btn{margin:2px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>La Perla del Cilento <span class="badge" style="background:var(--series-2)">marketing</span></h1><div class="sub">Sempre 100% bufala · contenuti, ritiri, canali, creator</div></div>
+  <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="console.html" style="text-decoration:none">← Console</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
+</header>
+
+<section class="view login" id="v-login">
+  <label for="email">Email</label><input id="email" type="email" autocomplete="username">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+  <button class="btn" id="btn-login">Entra</button>
+</section>
+
+<section class="view" id="v-main">
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="oggi" aria-selected="true">Oggi</button>
+    <button class="tab" role="tab" data-tab="calendario">Calendario <span class="n" id="n-review"></span></button>
+    <button class="tab" role="tab" data-tab="ritiri">Ritiri <span class="n" id="n-pick"></span></button>
+    <button class="tab" role="tab" data-tab="canali">Canali</button>
+    <button class="tab" role="tab" data-tab="creator">Creator <span class="n" id="n-follow"></span></button>
+    <button class="tab" role="tab" data-tab="media">Foto e video</button>
+    <button class="tab" role="tab" data-tab="campagne">Campagne</button>
+  </nav>
+
+  <!-- OGGI -->
+  <div class="pane active" id="p-oggi">
+    <div class="tiles" id="tiles"></div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3>Prossimi 7 giorni</h3><div id="o-week"></div></div>
+      <div class="col">
+        <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="o-channels"></div></div>
+        <div class="card"><h3>Codici sconto · creator e campagne</h3><div id="o-codes"></div></div>
+        <div class="card"><h3>Servizio AI (Predis.ai)</h3><div id="o-ai"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CALENDARIO -->
+  <div class="pane" id="p-calendario">
+    <div class="card">
+      <div class="row" style="margin-top:0;justify-content:space-between">
+        <div class="row" style="margin-top:0"><button class="btn sm sec" id="cal-prev">‹</button><b id="cal-range"></b><button class="btn sm sec" id="cal-next">›</button><button class="btn sm sec" id="cal-today">Oggi</button></div>
+        <div class="row" style="margin-top:0">
+          <select id="cal-filter" class="fi" style="width:auto"><option value="">Tutti gli stati</option><option>idea</option><option>draft</option><option>review</option><option>approved</option><option>published</option></select>
+          <button class="btn sm" id="cal-new">+ Nuovo post</button>
+        </div>
+      </div>
+      <div id="cal-seed" class="hint" style="margin-top:10px"></div>
+      <div id="cal"></div>
+    </div>
+  </div>
+
+  <!-- RITIRI -->
+  <div class="pane" id="p-ritiri">
+    <div class="grid2">
+      <div class="card"><h3>Preordini da ritirare</h3><div class="hint">Ordini online con "Ritiro in negozio". Entrano nel piano latte del giorno di ritiro. Quando il cliente ritira, segna l'ordine come evaso anche in Shopify (POS): è lì che parte lo scarico di magazzino.</div><div id="pick-list"></div></div>
+      <div class="col">
+        <div class="card"><h3>Carico delle fasce</h3><div id="pick-slots"></div></div>
+        <div class="card"><h3>Regole del preordine</h3><div class="params" data-groups="pickup"></div></div>
+        <div class="card"><h3>Da configurare in Shopify</h3><ol class="hint" style="padding-left:18px;margin:0">
+          <li>Impostazioni → Spedizione e consegna → <b>Ritiro in negozio</b>: attiva sulla sede di Agropoli, "Di solito pronto il giorno dopo", istruzioni di ritiro.</li>
+          <li>App per data e fascia di ritiro (es. Zapiet · Pickup + Delivery): fasce come sopra, ultimo ordine alle 18:00 per il giorno dopo, domenica chiuso, max ordini per fascia. L'app scrive Pickup-Date / Pickup-Time sull'ordine: questa pagina li legge.</li>
+          <li>Bot Ordini Shopify: includere <span class="mono">customAttributes</span>, <span class="mono">shippingLines.title</span>, <span class="mono">discountCodes</span>, <span class="mono">paymentGatewayNames</span>, <span class="mono">customerJourneySummary</span>.</li>
+        </ol></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CANALI -->
+  <div class="pane" id="p-canali">
+    <div class="card"><h3>Canali di vendita e comunicazione</h3><div class="hint">Prezzo al banco di riferimento: <b id="ch-base"></b>/kg. Sui marketplace il ricarico copre la commissione: la colonna "netto" dice quanto resta al kg dopo la commissione, rispetto al banco.</div><div id="ch-table"></div></div>
+    <div class="card" style="margin-top:16px"><h3>Link tracciati e QR</h3><div class="hint">Ogni link porta l'origine (utm) sull'ordine Shopify: così il brief sa quale canale vende. Stampa il QR per vetrina, scontrino, sacchetti, cartoline.</div>
+      <div class="fgrid">
+        <div><label>Pagina</label><select id="utm-page"><option value="/">Home</option><option value="/collections/all">Tutti i prodotti</option><option value="/pages/consegna-domicilio-agropoli-glovo">Consegna ad Agropoli</option></select></div>
+        <div><label>Origine (utm_source)</label><input id="utm-src" value="vetrina"></div>
+        <div><label>Mezzo (utm_medium)</label><input id="utm-med" value="qr"></div>
+        <div><label>Campagna</label><input id="utm-camp" value="lancio"></div>
+      </div>
+      <div class="row"><button class="btn sm" id="utm-go">Crea link e QR</button><button class="btn sm sec" id="utm-copy">Copia link</button></div>
+      <div class="row" style="align-items:flex-start"><div class="qr" id="utm-qr"></div><div class="mono" id="utm-out" style="flex:1"></div></div>
+    </div>
+  </div>
+
+  <!-- CREATOR -->
+  <div class="pane" id="p-creator">
+    <div class="card"><div class="row" style="margin-top:0;justify-content:space-between"><h3 style="margin:0">Creator e influencer</h3><button class="btn sm" id="inf-new">+ Aggiungi creator</button></div>
+      <div class="hint" style="margin-top:8px">Nano (&lt;10k) e micro (10–100k) del Cilento e della Campania: costano poco e convertono localmente. Oltre 500k follower il creator deve essere iscritto al registro AGCOM. Ogni contenuto va segnalato (#adv / "in collaborazione con"). Codici e commissioni: Shopify Collabs.</div>
+      <div id="inf-table"></div></div>
+  </div>
+
+  <!-- MEDIA -->
+  <div class="pane" id="p-media">
+    <div class="card"><h3>Libreria foto e video</h3><div class="hint">Le foto vere del caseificio sono la base del marchio. Prima di usarle: volti con consenso scritto; igiene in regola (cuffie, niente braccia nude nella cagliata, pavimento asciutto). I contenuti generati con IA sono segnati e vanno dichiarati nel testo.</div>
+      <div class="row"><input type="file" id="up-file" accept="image/*,video/*" multiple><input type="text" id="up-tags" placeholder="tag (filatura, ricotta, bufale…)" style="max-width:260px"><label class="status"><input type="checkbox" id="up-consent"> volti con consenso / nessun volto</label><label class="status"><input type="checkbox" id="up-hyg"> igiene ok</label><button class="btn sm" id="up-go">Carica</button></div>
+      <div class="lib" id="lib" style="margin-top:12px"></div></div>
+  </div>
+
+  <!-- CAMPAGNE -->
+  <div class="pane" id="p-campagne">
+    <div class="card"><div class="row" style="margin-top:0;justify-content:space-between"><h3 style="margin:0">Campagne e budget</h3><button class="btn sm" id="camp-new">+ Campagna</button></div>
+      <div id="camp-budget" class="hint" style="margin-top:8px"></div><div id="camp-table"></div></div>
+  </div>
+</section>
+</div>
+
+<!-- post editor -->
+<dialog id="dlg-post"><form method="dialog">
+  <div class="dh"><h3 id="pe-title">Post</h3><button class="btn sm sec" value="cancel">✕</button></div>
+  <div class="db">
+    <div class="fgrid">
+      <div><label>Data e ora</label><input type="datetime-local" id="pe-when"></div>
+      <div><label>Canale</label><select id="pe-platform"><option>instagram</option><option>facebook</option><option>tiktok</option><option>google</option><option>newsletter</option><option>whatsapp</option><option>sito</option></select></div>
+      <div><label>Formato</label><select id="pe-format"><option>post</option><option>carousel</option><option>reel</option><option>story</option><option>email</option><option>article</option></select></div>
+      <div><label>Tema</label><select id="pe-pillar"><option value="origine">Origine (masseria, bufale)</option><option value="mestiere">Mestiere (filatura, casaro)</option><option value="oggi_al_banco">Oggi al banco</option><option value="ricetta">Ricetta / consigli</option><option value="ritiro">Preordina e ritira</option><option value="territorio">Territorio</option><option value="collab">Collaborazione creator</option><option value="promo">Promo</option></select></div>
+      <div><label>Campagna</label><select id="pe-campaign"></select></div>
+      <div><label>Stato</label><input id="pe-status" disabled></div>
+    </div>
+    <label class="fl">Brief (cosa raccontare)</label><textarea id="pe-brief" style="min-height:60px"></textarea>
+    <label class="fl">Testo italiano</label><textarea id="pe-cap"></textarea>
+    <label class="fl">Testo inglese (facoltativo, per i clienti AT/DE/FR)</label><textarea id="pe-cap-en" style="min-height:60px"></textarea>
+    <div class="fgrid"><div style="grid-column:1/-1"><label>Hashtag</label><input id="pe-tags"></div><div style="grid-column:1/-1"><label>Link</label><input id="pe-link"></div></div>
+    <div id="pe-claims" style="margin-top:8px"></div>
+    <label class="fl">Foto / video (tocca per selezionare)</label><div class="thumbs" id="pe-assets"></div>
+    <div class="fgrid"><div><label>Link del post pubblicato</label><input id="pe-pub"></div></div>
+  </div>
+  <div class="df">
+    <select id="pe-ai-media" class="fi" style="width:auto"><option value="single_image">immagine</option><option value="carousel">carosello</option><option value="video">video</option></select>
+    <button class="btn sec" type="button" id="pe-ai">✨ Bozza con Predis</button>
+    <button class="btn sec" type="button" id="pe-copy">Copia testo</button>
+    <button class="btn sec" type="button" id="pe-save">Salva</button>
+    <button class="btn" type="button" id="pe-review">Invia in approvazione</button>
+    <button class="btn" type="button" id="pe-published" hidden>Segna pubblicato</button>
+  </div>
+</form></dialog>
+
+<!-- influencer editor -->
+<dialog id="dlg-inf"><form method="dialog">
+  <div class="dh"><h3 id="ie-title">Creator</h3><button class="btn sm sec" value="cancel">✕</button></div>
+  <div class="db">
+    <div class="fgrid">
+      <div><label>Nome</label><input id="ie-name"></div><div><label>Handle</label><input id="ie-handle" placeholder="@"></div>
+      <div><label>Piattaforma</label><select id="ie-platform"><option>instagram</option><option>tiktok</option><option>youtube</option><option>facebook</option><option>blog</option><option>altro</option></select></div>
+      <div><label>Follower</label><input id="ie-followers" type="number"></div><div><label>Engagement %</label><input id="ie-eng" type="number" step="0.1"></div>
+      <div><label>Città</label><input id="ie-city"></div><div><label>Tema</label><input id="ie-niche" placeholder="cucina, Cilento, famiglia…"></div>
+      <div><label>Email</label><input id="ie-email"></div><div><label>Telefono</label><input id="ie-phone"></div>
+      <div><label>Stato</label><select id="ie-status"><option value="prospect">da contattare</option><option value="contacted">contattato</option><option value="negotiating">in trattativa</option><option value="gifted">prodotto inviato / visita fatta</option><option value="posted">ha pubblicato</option><option value="affiliate">affiliato (codice attivo)</option><option value="declined">ha rifiutato</option><option value="paused">in pausa</option></select></div>
+      <div><label>Codice sconto</label><input id="ie-code" placeholder="GIULIA10"></div><div><label>Commissione %</label><input id="ie-comm" type="number" step="0.5"></div>
+      <div><label>Ultimo contatto</label><input id="ie-last" type="date"></div><div><label>Link Shopify Collabs</label><input id="ie-collabs"></div>
+      <div style="grid-column:1/-1"><label>Prossima azione</label><input id="ie-next"></div>
+      <div style="grid-column:1/-1"><label>Note</label><input id="ie-notes"></div>
+      <div><label class="status" style="text-transform:none"><input type="checkbox" id="ie-agcom"> iscritto registro AGCOM</label></div>
+    </div>
+    <div id="ie-extra"></div>
+  </div>
+  <div class="df">
+    <button class="btn sec" type="button" id="ie-dm">Messaggio DM</button>
+    <button class="btn sec" type="button" id="ie-mail">Email</button>
+    <button class="btn sec" type="button" id="ie-collab">+ Collaborazione</button>
+    <button class="btn" type="button" id="ie-save">Salva</button>
+  </div>
+</form></dialog>
+
+<div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="marketing.js"></script>
+</body>
+</html>
