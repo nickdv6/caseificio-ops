@@ -1,4 +1,4 @@
-/* La Perla owner console — reads fabula.daily_brief() + 30-day series, approves/rejects fabula.approvals rows. */
+/* La Perla owner console — five tabs. Oggi: daily_brief() tiles + approvals gate; Operazioni: PO send, wholesale, farm supply; Andamento: charts; Anagrafiche: parties, standing orders, staff; Impostazioni: settings, machines, deadlines, account. */
 (() => {
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
@@ -18,7 +18,7 @@
     const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
     staff = data || { id: null, full_name: session.user.email, role: 'owner' };
     $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false; $('btn-pkg').hidden = false;
-    show('main'); load();
+    show('main'); load(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
@@ -38,7 +38,8 @@
     $('simbadge').hidden = !b.is_simulation;
     $('sub').textContent = 'Brief di ' + dateIt(b.date);
     renderTiles(b); renderApprovals(b.pending_approvals); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals); renderRuns(runs.data || []);
-    renderPoSend(); renderWholesale();
+    badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
+    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); }
     yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
   }
   const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
@@ -111,18 +112,43 @@
   }
 
   // ---------- settings & dates editor ----------
-  const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', farm: 'Masseria (latte)', energy: 'Energia' };
-  let settingsOpen = false;
-  $('btn-settings').onclick = () => { settingsOpen = !settingsOpen; $('settings').hidden = !settingsOpen; $('btn-settings').textContent = 'Impostazioni e scadenze ' + (settingsOpen ? '▾' : '▸'); if (settingsOpen) loadSettings(); };
+  const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', farm: 'Masseria (latte)', energy: 'Energia', labor: 'Lavoro' };
+  // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
+  const loaded = {};
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, set: () => loadSettings() };
+  function showTab(name, push = true) {
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
+    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
+    if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
+    if (LOADERS[name] && !loaded[name]) { loaded[name] = true; LOADERS[name](); }
+  }
+  $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
+  const badge = (id, n) => { const el = $(id); if (!el) return; el.textContent = n; el.classList.toggle('on', n > 0); };
+  async function refreshBadges() {
+    const [po, ws, pl] = await Promise.all([
+      sb.from('v_pos_to_send').select('po_number'),
+      sb.from('v_wholesale_tomorrow').select('order_number'),
+      sb.from('v_parties_editor').select('id').eq('is_placeholder', true)]);
+    badge('n-ops', (po.data || []).length);
+    badge('n-anag', (pl.data || []).length);
+    $('n-ops').title = `${(po.data || []).length} ordini da inviare · ${(ws.data || []).length} consegne ingrosso`;
+  }
   async function loadSettings() {
-    const [s, e, d, st] = await Promise.all([
+    const [s, e, d] = await Promise.all([
       sb.from('settings').select('*').order('key'),
       sb.from('v_equipment_schedule').select('*'),
-      sb.from('compliance_deadlines').select('*').is('done_on', null).order('due_on', { nullsFirst: false }),
-      sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name')]);
-    renderParams(s.data || []); renderEquipment(e.data || []); renderDeadlines(d.data || []); renderStaff(st.data || []);
-    loadParties(); loadStanding(); loadFarm();
+      sb.from('compliance_deadlines').select('*').is('done_on', null).order('due_on', { nullsFirst: false })]);
+    renderParams(s.data || []); renderEquipment(e.data || []); renderDeadlines(d.data || []);
   }
+  async function loadStaffCard() {
+    const { data } = await sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name');
+    renderStaff(data || []);
+  }
+  $('pw-save').onclick = async () => {
+    const pw = $('pw-new').value; if (pw.length < 8) return toast('Minimo 8 caratteri', 'err');
+    $('pw-save').disabled = true; const { error } = await sb.auth.updateUser({ password: pw }); $('pw-save').disabled = false;
+    if (error) return toast(error.message, 'err'); $('pw-new').value = ''; toast('Password cambiata');
+  };
   const canEdit = () => ['owner', 'partner'].includes(staff.role);
   const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
   const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
@@ -131,17 +157,21 @@
   function renderParams(rows) {
     const box = $('set-params'); box.innerHTML = '';
     if (!canEdit()) { const n = document.createElement('div'); n.className = 'empty'; n.textContent = 'Solo titolare e partner possono modificare i parametri.'; box.append(n); }
-    let last = '';
+    let last = '', det = null, first = true;
     rows.forEach(r => {
       const g = r.key.split('.')[0];
-      if (g !== last) { last = g; const hh = document.createElement('div'); hh.className = 'status'; hh.style.marginTop = '8px'; hh.textContent = GROUPS[g] || g; box.append(hh); }
+      if (g !== last) {
+        last = g; det = document.createElement('details'); det.className = 'grp'; det.open = first; first = false;
+        const sm = document.createElement('summary'); sm.innerHTML = `<span>${esc(GROUPS[g] || g)}</span><span class="status">${rows.filter(x => x.key.split('.')[0] === g).length} parametri</span>`;
+        det.append(sm); box.append(det);
+      }
       const row = document.createElement('div'); row.className = 'set-row';
       row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small></div>`;
       const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
       const inp = document.createElement('input'); inp.type = 'text'; inp.value = r.value; inp.inputMode = 'decimal'; inp.disabled = !canEdit(); inp.oninput = () => row.classList.add('dirty');
       right.append(inp);
       if (canEdit()) right.append(saveBtn(async () => { if (inp.value.trim() === '' || isNaN(Number(inp.value.replace(',', '.')))) throw new Error('Inserisci un numero'); await upd('settings', { key: r.key }, { value: String(Number(inp.value.replace(',', '.'))) }); row.classList.remove('dirty'); }));
-      row.append(right); box.append(row);
+      row.append(right); det.append(row);
     });
   }
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
@@ -200,7 +230,7 @@
       row.innerHTML = `<div class="lbl">${esc(r.full_name)}<small>${esc(r.role)} · formazione HACCP scade <span class="${dueCls(r.haccp_training_expires)}">${fmtD(r.haccp_training_expires)}</span></small></div>`;
       const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
       const inp = document.createElement('input'); inp.type = 'date'; inp.value = r.haccp_training_expires || '';
-      right.append(inp, saveBtn(async () => { await upd('staff', { id: r.id }, { haccp_training_expires: dOrNull(inp.value) }); loadSettings(); }));
+      right.append(inp, saveBtn(async () => { await upd('staff', { id: r.id }, { haccp_training_expires: dOrNull(inp.value) }); loadStaffCard(); }));
       row.append(right); box.append(row);
     });
   }
@@ -226,7 +256,7 @@
       const wa = document.createElement('a'); wa.className = 'btn sm sec'; wa.style.textDecoration = 'none'; wa.textContent = '💬 WhatsApp'; wa.href = waLink(pk?.phone, pk?.whatsapp_it || ''); wa.target = '_blank';
       const cp = document.createElement('button'); cp.className = 'btn sm sec'; cp.textContent = 'Copia testo'; cp.onclick = () => copyText(pk?.body_it || '');
       const sent = document.createElement('button'); sent.className = 'btn sm'; sent.textContent = '✓ Segna inviato';
-      sent.onclick = async () => { sent.disabled = true; const { error } = await sb.rpc('mark_po_sent', { p_po_number: po.po_number, p_via: 'console' }); if (error) { toast(error.message, 'err'); sent.disabled = false; return; } toast('Ordine segnato come inviato'); renderPoSend(); };
+      sent.onclick = async () => { sent.disabled = true; const { error } = await sb.rpc('mark_po_sent', { p_po_number: po.po_number, p_via: 'console' }); if (error) { toast(error.message, 'err'); sent.disabled = false; return; } toast('Ordine segnato come inviato'); renderPoSend(); refreshBadges(); };
       row.append(mail, wa, cp, sent); c.append(row); box.append(c);
     }
   }
@@ -257,7 +287,7 @@
         const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
         if (!v.legal_name) throw new Error('Il nome è obbligatorio');
         if (p.is_placeholder && !/^(Fornitore|Cliente) \d/.test(v.legal_name)) v.notes = null;   // renamed → no longer a placeholder
-        await upd('parties', { id: p.id }, v); loadParties();
+        await upd('parties', { id: p.id }, v); loadParties(); refreshBadges();
       }));
       c.append(row); box.append(c);
     });

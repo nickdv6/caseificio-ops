@@ -7,7 +7,7 @@
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
 <style>
-/* Layout: owner console — summary tiles, approvals queue, two 30-day charts, three watch lists */
+/* Layout: owner console — five tabs (Oggi · Operazioni · Andamento · Anagrafiche · Impostazioni); Oggi holds the numbers and the approval gate */
 :root{
   --bg:#f7f5f0; --paper:#fff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb; --tile:#eef3ef;
   --accent:#0f6b4f; --accent-fg:#fff; --warn:#b4472c; --good:#0f6b4f;
@@ -65,7 +65,8 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 .status{font-size:.85rem;color:var(--muted)}
 .ok{color:var(--good)}.ko{color:var(--warn)}
 @media (max-width:640px){ header h1{font-size:1.4rem} .tile .v{font-size:1.6rem} }
-.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;align-items:start}
+.grid2{align-items:start}
 .set-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--rule)}
 .set-row:last-child{border-bottom:0}
 .set-row .lbl{font-size:.95rem}.set-row .lbl small{display:block;color:var(--muted);font-size:.8rem}
@@ -79,7 +80,24 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 .eq input{width:100%;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}
 .eq .next{font-size:.85rem;color:var(--muted);margin-top:4px}.eq .next .ko{font-weight:600}
 .btn.sm{padding:5px 10px;font-size:.85rem}
-.toggle{background:none;border:0;color:var(--accent);font:600 .95rem var(--body);cursor:pointer;padding:0}
+.tabs{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--rule);margin:0 -16px 16px;padding:6px 16px 0;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--body);padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.tab[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent)}
+.tab .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px}
+.tab .n.on{display:inline-block}
+.pane{display:none}.pane.active{display:block}
+details.card{padding:0}
+details.card>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+details.card>summary::-webkit-details-marker{display:none}
+details.card>summary h3{margin:0}
+details.card>summary::after{content:"▸";color:var(--muted);transition:transform .15s}
+details.card[open]>summary::after{transform:rotate(90deg)}
+details.card>.body{padding:0 14px 12px}
+.hint{font-size:.85rem;color:var(--muted);margin-bottom:8px}
+.grp{margin-top:10px}.grp>summary{cursor:pointer;font-weight:600;padding:6px 0;color:var(--fg);list-style:none;display:flex;justify-content:space-between}
+.grp>summary::-webkit-details-marker{display:none}.grp>summary::after{content:"▸";color:var(--muted)}.grp[open]>summary::after{content:"▾"}
+.pw{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 </style>
 </head>
 <body>
@@ -96,35 +114,66 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 </section>
 
 <section class="view" id="v-main">
-  <div class="tiles" id="tiles"></div>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="oggi" aria-selected="true">Oggi <span class="n" id="n-oggi"></span></button>
+    <button class="tab" role="tab" data-tab="ops">Operazioni <span class="n" id="n-ops"></span></button>
+    <button class="tab" role="tab" data-tab="trend">Andamento</button>
+    <button class="tab" role="tab" data-tab="anag">Anagrafiche <span class="n" id="n-anag"></span></button>
+    <button class="tab" role="tab" data-tab="set">Impostazioni</button>
+  </nav>
 
-  <h2>Da approvare</h2>
-  <div id="approvals"></div>
-
-  <div class="grid2">
-    <div class="card"><h3>Resa mozzarella · 30 giorni</h3><div id="chart-yield"></div></div>
-    <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="chart-sales"></div><div class="legend"><span><i style="background:var(--series-1)"></i>Banco</span><span><i style="background:var(--series-2)"></i>Ingrosso</span></div></div>
+  <!-- OGGI: numbers, the human gate, compliance -->
+  <div class="pane active" id="p-oggi">
+    <div class="tiles" id="tiles"></div>
+    <h2>Da approvare</h2>
+    <div id="approvals"></div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3>Conformità ieri</h3><div id="haccp"></div></div>
+      <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
+    </div>
   </div>
 
-  <div class="grid2 four" style="margin-top:16px">
-    <div class="card"><h3>Conformità ieri</h3><div id="haccp"></div></div>
-    <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
-    <div class="card"><h3>Segnali acquisti</h3><div id="procurement"></div></div>
-    <div class="card"><h3>Esecuzioni bot</h3><div id="runs"></div></div>
-    <div class="card"><h3>Ordini da inviare ai fornitori</h3><div id="po-send"></div></div>
-    <div class="card"><h3>Ingrosso · consegne confermate</h3><div id="wholesale"></div></div>
+  <!-- OPERAZIONI: orders in and out, milk supply -->
+  <div class="pane" id="p-ops">
+    <div class="grid2">
+      <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati, pronti da inviare: email o WhatsApp, poi "Segna inviato".</div><div id="po-send"></div></div>
+      <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi.</div><div id="wholesale"></div></div>
+      <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone, tu approvi in Oggi.</div><div id="procurement"></div></div>
+      <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="hint">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
+    </div>
   </div>
-  <h2 style="margin-top:26px"><button class="toggle" id="btn-settings">Impostazioni e scadenze ▸</button></h2>
-  <div id="settings" hidden>
+
+  <!-- ANDAMENTO: charts and bot log -->
+  <div class="pane" id="p-trend">
+    <div class="grid2">
+      <div class="card"><h3>Resa mozzarella · 30 giorni</h3><div id="chart-yield"></div></div>
+      <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="chart-sales"></div><div class="legend"><span><i style="background:var(--series-1)"></i>Banco</span><span><i style="background:var(--series-2)"></i>Ingrosso</span></div></div>
+    </div>
+    <details class="card" style="margin-top:16px"><summary><h3>Esecuzioni bot</h3></summary><div class="body" id="runs"></div></details>
+  </div>
+
+  <!-- ANAGRAFICHE: who we buy from, who we sell to, who works here -->
+  <div class="pane" id="p-anag">
     <div class="set-grid">
-      <div class="card"><h3>Parametri dei bot</h3><div id="set-params"></div></div>
-      <div class="card"><h3>Macchine · tarature e manutenzioni</h3><div id="set-equipment"></div></div>
-      <div class="card"><h3>Scadenze e adempimenti</h3><div id="set-deadlines"></div>
-        <div class="row"><input type="text" id="dl-new-subject" placeholder="Nuova scadenza (descrizione)" class="wide"><input type="date" id="dl-new-due"><input type="text" id="dl-new-int" placeholder="ogni N giorni" style="width:110px"><button class="btn sm" id="dl-add">Aggiungi</button></div></div>
-      <div class="card"><h3>Personale · formazione HACCP</h3><div id="set-staff"></div></div>
-      <div class="card"><h3>Fornitori e clienti</h3><div class="status" style="margin-bottom:6px">I nomi "Fornitore 1", "Cliente 1" sono segnaposto: scrivi qui il nome vero, email e telefono e i bot li useranno subito.</div><div id="set-parties"></div></div>
-      <div class="card"><h3>Ordini fissi ingrosso (kg al giorno)</h3><div class="status" style="margin-bottom:6px">Il bot "Ordini ingrosso" prenota ogni giorno queste quantità per il giorno dopo e prepara il messaggio di conferma.</div><div id="set-standing"></div></div>
-      <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="status" style="margin-bottom:6px">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
+      <div class="card"><h3>Fornitori e clienti</h3><div class="hint">"Fornitore 1", "Cliente 1" sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito.</div><div id="set-parties"></div></div>
+      <div>
+        <div class="card"><h3>Ordini fissi ingrosso · kg al giorno</h3><div class="hint">Il bot Ordini ingrosso prenota queste quantità per il giorno dopo e prepara il messaggio di conferma.</div><div id="set-standing"></div></div>
+        <div class="card" style="margin-top:16px"><h3>Personale · formazione HACCP</h3><div id="set-staff"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPOSTAZIONI: parameters, machines, deadlines, account -->
+  <div class="pane" id="p-set">
+    <div class="set-grid">
+      <div class="card"><h3>Parametri dei bot</h3><div class="hint">Ogni gruppo si apre con un tocco. Salva una riga alla volta.</div><div id="set-params"></div></div>
+      <div>
+        <details class="card" open><summary><h3>Macchine · tarature e manutenzioni</h3></summary><div class="body" id="set-equipment"></div></details>
+        <details class="card" open style="margin-top:16px"><summary><h3>Scadenze e adempimenti</h3></summary><div class="body"><div id="set-deadlines"></div>
+          <div class="row"><input type="text" id="dl-new-subject" placeholder="Nuova scadenza (descrizione)" class="wide"><input type="date" id="dl-new-due"><input type="text" id="dl-new-int" placeholder="ogni N giorni" style="width:110px"><button class="btn sm" id="dl-add">Aggiungi</button></div></div></details>
+        <div class="card" style="margin-top:16px"><h3>Account</h3><div class="hint">Cambia la password di accesso (console e tablet).</div>
+          <div class="pw"><input type="password" id="pw-new" placeholder="Nuova password (min 8 caratteri)" autocomplete="new-password"><button class="btn sm" id="pw-save">Cambia</button></div></div>
+      </div>
     </div>
   </div>
 </section>
