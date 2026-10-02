@@ -41,7 +41,7 @@
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
     renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals);
     badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
-    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); }
+    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); }
     yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
   }
   const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
@@ -158,7 +158,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); } };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); } };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -308,6 +308,21 @@
     });
     box.append(tbl);
     const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Default giornaliero: impostazione farm.default_kg_per_day (Parametri dei bot).'; box.append(note);
+  }
+
+  const EFFL_KIND = { scotta: 'Scotta', siero: 'Siero', acque_lavaggio: 'Acque di lavaggio', fanghi: 'Fanghi', altro: 'Altro' };
+  const EFFL_DEST = { ricotta: 'ricotta', allevamento: 'allevamento', fognatura: 'fognatura', trasportatore: 'trasportatore', depuratore_interno: 'depuratore interno', altro: 'altro' };
+  async function loadEffluent() {
+    const box = $('effluent');
+    const [{ data: rows, error }, { data: bal }] = await Promise.all([sb.from('v_effluent_recent').select('*').limit(30), sb.from('v_effluent_balance').select('*').limit(7)]);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const missing = (bal || []).filter(b => Number(b.whey_logged_m3) === 0 && Number(b.wash_logged_m3) === 0).length;
+    const tot = (rows || []).reduce((a, r) => { a[r.kind] = (a[r.kind] || 0) + Number(r.m3); return a; }, {});
+    let html = Object.keys(tot).length ? `<div class="status" style="margin-bottom:6px">${Object.entries(tot).map(([k, v]) => `${EFFL_KIND[k] || k} <b>${num(v, 1)} m³</b>`).join(' · ')}</div>` : '';
+    if (missing) html += `<div class="status ko" style="margin-bottom:6px">${missing} giorni di produzione (ultimi 7) senza registrazione reflui.</div>`;
+    html += (rows && rows.length) ? '<table class="nw2"><tr><th>Giorno</th><th>Cosa</th><th class="num">m³</th><th>Destinazione</th><th>Doc.</th></tr>' + rows.map(r => `<tr><td>${fmtD(r.log_date).slice(0, 5)}</td><td>${EFFL_KIND[r.kind] || esc(r.kind)}</td><td class="num">${num(r.m3, 2)}</td><td>${EFFL_DEST[r.destination] || esc(r.destination)}${r.recipient ? ' · ' + esc(r.recipient) : ''}</td><td class="${r.document_ref ? '' : 'status'}">${esc(r.document_ref || (r.destination === 'trasportatore' || r.destination === 'allevamento' ? 'manca' : '—'))}</td></tr>`).join('') + '</table>'
+      : '<div class="empty">Nessun refluo registrato negli ultimi 14 giorni.</div>';
+    box.innerHTML = html;
   }
 
   // ---------- charts (inline SVG, single scale, hover layer) ----------

@@ -1,4 +1,4 @@
-/* La Perla admin — configuration and system page, separate from the operational console: bot parameters, bots (schedule + last runs), machines, deadlines, account. Owner/partner only. */
+/* La Perla configuration page, separate from the operational console: one tab per category (Azienda, Produzione, Vendite, Utenze e reflui, Lavoro e benchmark, Macchine e scadenze, Bot, Account). Settings rows are routed to cards by key prefix; data_type text|number. Owner/partner only. */
 (() => {
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
@@ -20,7 +20,7 @@
     staff = data || { id: null, full_name: session.user.email, role: 'owner' };
     $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
     if (!canEdit()) { show('denied'); return; }
-    show('main'); load(); showTab((location.hash || '#bots').slice(1).replace(/[^a-z]/g, '') || 'bots', false);
+    show('main'); load(); showTab((location.hash || '#azienda').slice(1).replace(/[^a-z]/g, '') || 'azienda', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
@@ -74,23 +74,27 @@
     renderParams(s.data || []); renderEquipment(e.data || []); renderDeadlines(d.data || []);
   }
   function renderParams(rows) {
-    const box = $('set-params'); box.innerHTML = '';
-    if (!canEdit()) { const n = document.createElement('div'); n.className = 'empty'; n.textContent = 'Solo titolare e partner possono modificare i parametri.'; box.append(n); }
-    let last = '', det = null, first = true;
-    rows.forEach(r => {
-      const g = r.key.split('.')[0];
-      if (g !== last) {
-        last = g; det = document.createElement('details'); det.className = 'grp'; det.open = first; first = false;
-        const sm = document.createElement('summary'); sm.innerHTML = `<span>${esc(GROUPS[g] || g)}</span><span class="status">${rows.filter(x => x.key.split('.')[0] === g).length} parametri</span>`;
-        det.append(sm); box.append(det);
-      }
-      const row = document.createElement('div'); row.className = 'set-row';
-      row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small></div>`;
-      const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
-      const inp = document.createElement('input'); inp.type = 'text'; inp.value = r.value; inp.inputMode = 'decimal'; inp.disabled = !canEdit(); inp.oninput = () => row.classList.add('dirty');
-      right.append(inp);
-      if (canEdit()) right.append(saveBtn(async () => { if (inp.value.trim() === '' || isNaN(Number(inp.value.replace(',', '.')))) throw new Error('Inserisci un numero'); await upd('settings', { key: r.key }, { value: String(Number(inp.value.replace(',', '.'))) }); row.classList.remove('dirty'); }));
-      row.append(right); det.append(row);
+    document.querySelectorAll('.params').forEach(box => {
+      box.innerHTML = '';
+      const groups = box.dataset.groups.split(',');
+      const mine = rows.filter(r => groups.includes(r.key.split('.')[0])).sort((a, b) => (a.sort ?? 100) - (b.sort ?? 100) || a.key.localeCompare(b.key));
+      if (!mine.length) { box.innerHTML = '<div class="empty">Nessun parametro.</div>'; return; }
+      if (!canEdit()) { const n = document.createElement('div'); n.className = 'hint'; n.textContent = 'Solo titolare e partner possono modificare.'; box.append(n); }
+      mine.forEach(r => {
+        const isText = r.data_type === 'text';
+        const row = document.createElement('div'); row.className = 'set-row' + (isText ? ' text' : '');
+        row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small></div>`;
+        const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
+        const inp = document.createElement('input'); inp.type = 'text'; inp.value = r.value; inp.disabled = !canEdit(); inp.oninput = () => row.classList.add('dirty');
+        if (isText) { inp.className = 'wide'; inp.placeholder = '—'; } else inp.inputMode = 'decimal';
+        right.append(inp);
+        if (canEdit()) right.append(saveBtn(async () => {
+          let v = inp.value.trim();
+          if (!isText) { if (v === '' || isNaN(Number(v.replace(',', '.')))) throw new Error('Inserisci un numero'); v = String(Number(v.replace(',', '.'))); }
+          await upd('settings', { key: r.key }, { value: v }); row.classList.remove('dirty');
+        }));
+        row.append(right); box.append(row);
+      });
     });
   }
   function renderEquipment(rows) {

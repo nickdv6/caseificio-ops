@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>La Perla · Amministrazione</title>
+<title>La Perla · Configurazione</title>
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
 <style>
@@ -83,6 +83,7 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 .set-row .lbl{font-size:.95rem}.set-row .lbl small{display:block;color:var(--muted);font-size:.8rem}
 .set-row input,.set-row select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);width:120px}
 .set-row input[type=date]{width:150px}.set-row input.wide{width:200px}
+.set-row.text{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.set-row.text input.wide{width:100%}
 .set-row.dirty input{border-color:var(--accent)}
 .eq{border:1px solid var(--rule);border-radius:6px;padding:8px 10px;margin-bottom:8px}
 .eq .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.eq .h b{font-family:var(--display);font-size:1.1rem}
@@ -117,7 +118,7 @@ details.card>.body{padding:0 14px 12px}
 <body>
 <div class="wrap">
 <header>
-  <div><h1>La Perla del Cilento <span class="badge" style="background:var(--muted)">amministrazione</span></h1><div class="sub">Impostazioni dell'app e dei bot · non è la console operativa</div></div>
+  <div><h1>La Perla del Cilento <span class="badge" style="background:var(--muted)">configurazione</span></h1><div class="sub">Preferenze dell'app, dei bot e dell'azienda · non è la console operativa</div></div>
   <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="console.html" style="text-decoration:none">← Console</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
 </header>
 
@@ -131,19 +132,49 @@ details.card>.body{padding:0 14px 12px}
 
 <section class="view" id="v-main">
   <nav class="tabs" role="tablist" id="tabs">
-    <button class="tab" role="tab" data-tab="bots" aria-selected="true">Bot</button>
-    <button class="tab" role="tab" data-tab="params">Parametri</button>
+    <button class="tab" role="tab" data-tab="azienda" aria-selected="true">Azienda</button>
+    <button class="tab" role="tab" data-tab="produzione">Produzione</button>
+    <button class="tab" role="tab" data-tab="vendite">Vendite</button>
+    <button class="tab" role="tab" data-tab="utenze">Utenze e reflui</button>
+    <button class="tab" role="tab" data-tab="lavoro">Lavoro e benchmark</button>
     <button class="tab" role="tab" data-tab="maint">Macchine e scadenze</button>
+    <button class="tab" role="tab" data-tab="bots">Bot</button>
     <button class="tab" role="tab" data-tab="account">Account</button>
   </nav>
 
-  <div class="pane active" id="p-bots">
+  <div class="pane" id="p-bots">
     <div class="card"><h3>Bot programmati</h3><div class="hint">Ogni bot legge una funzione del database una volta al giorno e scrive al massimo una proposta in "Da approvare". Orari in ora italiana; per cambiarli serve l'editor delle attività programmate.</div><div id="bots"></div></div>
     <details class="card" style="margin-top:16px"><summary><h3>Registro esecuzioni · ultime 40</h3></summary><div class="body" id="runs"></div></details>
   </div>
 
-  <div class="pane" id="p-params">
-    <div class="card" style="max-width:720px"><h3>Parametri dei bot</h3><div class="hint">Ogni gruppo si apre con un tocco. Salva una riga alla volta; il bot usa il nuovo valore dalla prossima esecuzione.</div><div id="set-params"></div></div>
+  <!-- one pane per category; each card is filled from fabula.settings by group prefix -->
+  <div class="pane active" id="p-azienda">
+    <div class="card" style="max-width:760px"><h3>Dati aziendali</h3><div class="hint">Intestazione di ordini e documenti stampati. Inserisci i dati dell'acquirente (non quelli del venditore) quando la società è definita.</div><div class="params" data-groups="company"></div></div>
+  </div>
+  <div class="pane" id="p-produzione">
+    <div class="set-grid">
+      <div class="card"><h3>Piano latte</h3><div class="hint">Come il bot dimensiona il latte del giorno dopo.</div><div class="params" data-groups="milk"></div></div>
+      <div class="card"><h3>Masseria</h3><div class="hint">Latte disponibile dalla Masseria; i kg per singolo giorno si impostano nella console → Operazioni.</div><div class="params" data-groups="farm"></div></div>
+    </div>
+  </div>
+  <div class="pane" id="p-vendite">
+    <div class="set-grid">
+      <div class="card"><h3>Prezzi</h3><div class="params" data-groups="price"></div></div>
+      <div class="card"><h3>Vendere prima (scorte in scadenza)</h3><div class="hint">Soglie del bot che propone promo e offerte ingrosso.</div><div class="params" data-groups="sell"></div></div>
+    </div>
+  </div>
+  <div class="pane" id="p-utenze">
+    <div class="set-grid">
+      <div class="card"><h3>Tariffe utenze</h3><div class="hint">Da bolletta. Energia e acqua entrano nel costo pieno al kg e nel pacchetto mensile.</div><div class="params" data-groups="energy"></div></div>
+      <div class="card"><h3>Reflui</h3><div class="hint">Stime attese per giorno di produzione: il registro reflui sul tablet (💧 Reflui) viene confrontato con questi rapporti.</div><div class="params" data-groups="effluent"></div>
+        <div class="hint" style="margin-top:10px">Destinazioni ammesse: ricotta (siero riusato), allevamento (sottoprodotto, documento commerciale), fognatura (solo se l'AUA lo prevede), trasportatore (FIR/RENTRI). L'autorizzazione e le analisi sono in Macchine e scadenze.</div></div>
+    </div>
+  </div>
+  <div class="pane" id="p-lavoro">
+    <div class="set-grid">
+      <div class="card"><h3>Lavoro</h3><div class="hint">Costo orario usato quando ci sono ore badge reali.</div><div class="params" data-groups="labor"></div></div>
+      <div class="card"><h3>Benchmark OpEx (€/anno)</h3><div class="hint">Usati dal brief settimanale finché non arriva la contabilità reale.</div><div class="params" data-groups="opex"></div></div>
+    </div>
   </div>
 
   <div class="pane" id="p-maint">

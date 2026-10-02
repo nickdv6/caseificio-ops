@@ -60,14 +60,16 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
   const num = (n, d = 0) => n == null ? '—' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
   const STATUS = { pending_approval: ['in attesa di approvazione', ''], approved: ['approvato', 'ok'], sent: ['inviato', 'ok'], partially_received: ['ricevuto in parte', 'ok'], received: ['ricevuto', 'ok'], cancelled: ['annullato', ''] };
-  // Company block: fill P.IVA / address once the buying entity is final (settings company.* could carry this later).
-  const COMPANY = { name: 'La Perla del Cilento', line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)' };
+  // Company block comes from settings company.* (admin → Azienda); defaults until they are filled in.
+  const COMPANY = { name: 'La Perla del Cilento', line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)', legal: '', piva: '', email: '', hours: '' };
 
   async function show(poNumber) {
     const sheet = $('sheet');
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
     if (!poNumber) { sheet.innerHTML = '<div class="empty">Indica il numero d\'ordine (es. PO-20261001-01).</div>'; return; }
+    const { data: cs } = await sb.from('settings').select('key, value').like('key', 'company.%');
+    (cs || []).forEach(r => { const v = (r.value || '').trim(); if (!v) return; ({ 'company.name': () => COMPANY.name = v, 'company.legal_name': () => COMPANY.legal = v, 'company.piva': () => COMPANY.piva = v, 'company.address': () => COMPANY.line1 = v, 'company.email': () => COMPANY.email = v, 'company.receiving_hours': () => COMPANY.hours = v }[r.key] || (() => {}))(); });
     const { data: po, error } = await sb.from('purchase_orders').select('*, supplier:parties(legal_name, address, city, province, postcode, email, phone, piva, payment_terms_days), lines:purchase_order_lines(qty_ordered, qty_received, unit_price_eur, iva_rate, product:products(sku, name, unit))').eq('po_number', poNumber).maybeSingle();
     if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!po) { sheet.innerHTML = `<div class="empty">Ordine ${esc(poNumber)} non trovato.</div>`; return; }
@@ -79,12 +81,12 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
     const addr = [s.address, [s.postcode, s.city].filter(Boolean).join(' ') + (s.province ? ' (' + s.province + ')' : '')].filter(x => x && x.trim()).join(' · ');
     sheet.innerHTML = `
       <div class="top">
-        <div class="brand"><h1>${COMPANY.name}</h1><div class="sub">${COMPANY.line1}</div></div>
+        <div class="brand"><h1>${esc(COMPANY.name)}</h1><div class="sub">${esc([COMPANY.legal, COMPANY.line1, COMPANY.piva ? 'P.IVA ' + COMPANY.piva : '', COMPANY.email].filter(Boolean).join(' · '))}</div></div>
         <div class="ponum"><div class="l">Ordine d'acquisto</div><div class="n">${esc(po.po_number)}</div><div class="l">del ${fmtD(po.order_date)} <span class="badge ${stCls}">${stLabel}</span>${po.source === 'simulation' ? '<span class="badge">simulazione</span>' : ''}</div></div>
       </div>
       <div class="parties">
         <div class="box"><div class="l">Fornitore</div><b>${esc(s.legal_name || '—')}</b>${addr ? `<div>${esc(addr)}</div>` : ''}${s.piva ? `<div>P.IVA ${esc(s.piva)}</div>` : ''}${s.email ? `<div>${esc(s.email)}</div>` : ''}${s.phone ? `<div>${esc(s.phone)}</div>` : ''}</div>
-        <div class="box"><div class="l">Consegnare a</div><b>${COMPANY.name}</b><div>${COMPANY.line1}</div><div>Rif. ordine da riportare su DDT e fattura: <b>${esc(po.po_number)}</b></div></div>
+        <div class="box"><div class="l">Consegnare a</div><b>${esc(COMPANY.legal || COMPANY.name)}</b><div>${esc(COMPANY.line1)}</div>${COMPANY.hours ? `<div>Ricevimento merce: ${esc(COMPANY.hours)}</div>` : ''}<div>Rif. ordine da riportare su DDT e fattura: <b>${esc(po.po_number)}</b></div></div>
       </div>
       <table>
         <tr><th>#</th><th>Articolo</th><th>Codice</th><th class="num">Quantità</th><th class="num">Prezzo</th><th class="num">IVA</th><th class="num">Importo</th></tr>

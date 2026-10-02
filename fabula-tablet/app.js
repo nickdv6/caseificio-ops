@@ -170,6 +170,7 @@
       if (kind === 'LOT') return await stepLot(ref);
       if (kind === 'PO') return await stepReceive(ref);
       if (kind === 'COUNT') return await stepStockCount();
+      if (kind === 'EFFL') return stepEffluent();
       if (kind === 'METER') return stepMeter(ref || 'elec_main');
       if (kind === 'CLEAN') return stepClean();
       if (kind === 'STAFF') {                       // one scan = clock in, next scan = clock out
@@ -401,6 +402,29 @@
     });
   }
   $('btn-count').onclick = () => stepStockCount().catch(e => { toast(e.message, 'err'); show('home'); });
+
+  // 13 — effluent register: what left the dairy today, where it went, which document covers it
+  function stepEffluent() {
+    $('form').innerHTML = ''; current = { code: 'EFFL:' };
+    field('kind', 'Cosa', 'select', { options: [['scotta', 'Scotta (dopo la ricotta)'], ['siero', 'Siero (non lavorato)'], ['acque_lavaggio', 'Acque di lavaggio'], ['fanghi', 'Fanghi / residui'], ['altro', 'Altro']] });
+    field('qty', 'Quantità', 'number', { step: '10' });
+    field('unit', 'Unità', 'select', { options: [['l', 'litri'], ['m3', 'm³'], ['kg', 'kg']] });
+    field('dest', 'Destinazione', 'select', { options: [['allevamento', 'Allevamento (sottoprodotto)'], ['fognatura', 'Fognatura (scarico autorizzato)'], ['trasportatore', 'Trasportatore autorizzato'], ['ricotta', 'Riusato per ricotta'], ['depuratore_interno', 'Depuratore interno'], ['altro', 'Altro']] });
+    field('recipient', 'Chi ritira (allevamento / ditta)', 'text', { required: false });
+    field('doc', 'Documento (DDT sottoprodotto / FIR / RENTRI)', 'text', { required: false });
+    field('note', 'Note', 'text', { required: false });
+    const dest = $('dest'), doc = $('doc'), rec = $('recipient');
+    const needDoc = () => ['allevamento', 'trasportatore'].includes(dest.value);
+    dest.onchange = () => { doc.required = needDoc(); rec.required = needDoc(); doc.style.borderColor = needDoc() && !doc.value ? 'var(--warn)' : ''; };
+    dest.onchange();
+    openForm('Reflui', 'Una riga per ogni ritiro o scarico. Allevamento e trasportatore richiedono il documento.', async () => {
+      if (needDoc() && !val('doc')) { toast('Serve il numero del documento per allevamento o trasportatore', 'err'); throw new Error('doc'); }
+      await save([scanEvent('EFFL:', 'task_done', { payload: { kind: val('kind'), qty: val('qty'), unit: val('unit'), destination: val('dest') } }),
+        { table: 'effluent_log', row: { kind: val('kind'), qty: val('qty'), unit: val('unit'), destination: val('dest'), recipient: val('recipient') || null, document_ref: val('doc') || null, notes: val('note') || null, staff_id: staff.id } }]);
+      toast('Refluo registrato ✓');
+    });
+  }
+  $('btn-effl').onclick = () => { try { stepEffluent(); } catch (e) { toast(e.message, 'err'); show('home'); } };
 
   // ---------- Guided dosing: recipe × milk → one confirm per ingredient ----------
   const MILK_DENSITY = 1.035;                       // kg per litre, buffalo milk (to confirm with the casaro)
