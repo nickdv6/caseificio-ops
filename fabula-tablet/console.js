@@ -43,7 +43,7 @@
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
     renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals);
     badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
-    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); loadShopifyOrders(); }
+    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }
     yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
   }
   const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
@@ -174,7 +174,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); } };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); } };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -349,6 +349,34 @@
     });
     box.append(tbl);
     const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Prezzo ingrosso: Configurazione → Vendite. Qui compaiono solo i clienti con tag ingrosso su Shopify.'; box.append(note);
+  }
+  async function loadDemand7() {
+    const box = $('demand7'); box.innerHTML = '';
+    const { data, error } = await sb.from('v_demand_7d').select('*');
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!(data || []).length) { box.innerHTML = '<div class="empty">Nessun giorno di produzione nei prossimi 7 giorni.</div>'; return; }
+    const tbl = document.createElement('table');
+    tbl.innerHTML = '<tr><th>Giorno</th><th class="num">Banco kg</th><th class="num">Ingrosso kg</th><th class="num">Preordini kg</th><th class="num">Mozzarella kg</th><th class="num">Latte kg</th><th class="num">Masseria kg</th><th>Piano</th></tr>';
+    const t = { r: 0, w: 0, p: 0, o: 0, m: 0, f: 0, c: 0 };
+    data.forEach(r => {
+      const d = new Date(r.plan_date + 'T12:00:00');
+      const short = Number(r.farm_gap_kg) < 0, cap = r.capacity_hit;
+      t.r += +r.retail_kg; t.w += +r.wholesale_kg; t.p += +r.preorder_kg; t.o += +r.output_kg; t.m += +r.milk_kg; t.f += +r.farm_kg; t.c += +r.est_cost_eur;
+      const plan = r.plan_status ? `${r.plan_status === 'approved' ? 'approvato' : 'proposto'} ${num(r.plan_milk_kg, 0)} kg` : '–';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}${Number(r.history_days) < 2 ? ' <small class="status">poco storico</small>' : ''}</td>
+        <td class="num">${num(r.retail_kg, 0)}</td><td class="num" title="${esc(r.wholesale_source)}">${num(r.wholesale_kg, 0)}</td><td class="num">${Number(r.preorder_kg) ? num(r.preorder_kg, 0) : '–'}</td>
+        <td class="num">${num(r.output_kg, 0)}</td><td class="num${cap ? ' ko' : ''}" title="${cap ? 'Serve più della capacità della caldaia' : ''}">${num(r.milk_kg, 0)}${cap ? ' ▲' : ''}</td>
+        <td class="num${short ? ' ko' : ''}">${num(r.farm_kg, 0)}${short ? ` (−${num(-r.farm_gap_kg, 0)})` : ''}</td><td><small>${plan}</small></td>`;
+      tbl.append(tr);
+    });
+    const tf = document.createElement('tr'); tf.style.fontWeight = '600';
+    tf.innerHTML = `<td>Totale</td><td class="num">${num(t.r, 0)}</td><td class="num">${num(t.w, 0)}</td><td class="num">${t.p ? num(t.p, 0) : '–'}</td><td class="num">${num(t.o, 0)}</td><td class="num">${num(t.m, 0)}</td><td class="num">${num(t.f, 0)}</td><td><small>€ ${num(t.c, 0)} latte</small></td>`;
+    tbl.append(tf); box.append(tbl);
+    const capDays = data.filter(r => r.capacity_hit).length, shortDays = data.filter(r => Number(r.farm_gap_kg) < 0).length;
+    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px';
+    note.textContent = `Resa usata ${num(data[0].yield_pct, 1)}% (media 30 gg). ` + (capDays ? `${capDays} giorni oltre la capacità della caldaia (▲): anticipare produzione o aumentare i turni. ` : '') + (shortDays ? `${shortDays} giorni la Masseria non basta: serve latte da altri fornitori.` : 'La Masseria copre tutti i giorni.');
+    box.append(note);
   }
   async function loadFarm() {
     const box = $('set-farm'); box.innerHTML = '';

@@ -1,0 +1,8 @@
+-- v0.31 · 7-day demand view for the milk planner.
+-- demand_7d(from = tomorrow Rome, days = 7): one row per production day (Sundays skipped) with the same logic as plan_milk():
+-- retail = avg same-weekday sales last 4 weeks minus wholesale share (fallback: any-day 28 d), pickup preorders + walk-in share,
+-- wholesale = confirmed orders > standing-order grid > history, safety %, fresh carry only on the first day,
+-- output ÷ 30-day yield → milk rounded to milk.round_kg, min run, capped at capacity (capacity_hit), vs farm_kg_available() (farm_gap_kg),
+-- milk cost at the 30-day price, and any existing proposed/approved milk plan for that date. Read-only.
+-- v_demand_7d = demand_7d() for the console card "Domanda e latte · prossimi 7 giorni" (Operazioni).
+-- (function body below)
