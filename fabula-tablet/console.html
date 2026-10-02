@@ -111,6 +111,8 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
     <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
     <div class="card"><h3>Segnali acquisti</h3><div id="procurement"></div></div>
     <div class="card"><h3>Esecuzioni bot</h3><div id="runs"></div></div>
+    <div class="card"><h3>Ordini da inviare ai fornitori</h3><div id="po-send"></div></div>
+    <div class="card"><h3>Ingrosso · consegne confermate</h3><div id="wholesale"></div></div>
   </div>
   <h2 style="margin-top:26px"><button class="toggle" id="btn-settings">Impostazioni e scadenze ▸</button></h2>
   <div id="settings" hidden>
@@ -120,6 +122,9 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
       <div class="card"><h3>Scadenze e adempimenti</h3><div id="set-deadlines"></div>
         <div class="row"><input type="text" id="dl-new-subject" placeholder="Nuova scadenza (descrizione)" class="wide"><input type="date" id="dl-new-due"><input type="text" id="dl-new-int" placeholder="ogni N giorni" style="width:110px"><button class="btn sm" id="dl-add">Aggiungi</button></div></div>
       <div class="card"><h3>Personale · formazione HACCP</h3><div id="set-staff"></div></div>
+      <div class="card"><h3>Fornitori e clienti</h3><div class="status" style="margin-bottom:6px">I nomi "Fornitore 1", "Cliente 1" sono segnaposto: scrivi qui il nome vero, email e telefono e i bot li useranno subito.</div><div id="set-parties"></div></div>
+      <div class="card"><h3>Ordini fissi ingrosso (kg al giorno)</h3><div class="status" style="margin-bottom:6px">Il bot "Ordini ingrosso" prenota ogni giorno queste quantità per il giorno dopo e prepara il messaggio di conferma.</div><div id="set-standing"></div></div>
+      <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="status" style="margin-bottom:6px">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
     </div>
   </div>
 </section>
