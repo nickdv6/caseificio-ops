@@ -61,7 +61,8 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
   const num = (n, d = 0) => n == null ? '—' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
   const STATUS = { pending_approval: ['in attesa di approvazione', ''], approved: ['approvato', 'ok'], sent: ['inviato', 'ok'], partially_received: ['ricevuto in parte', 'ok'], received: ['ricevuto', 'ok'], cancelled: ['annullato', ''] };
-  const COMPANY = { name: 'La Perla del Cilento', line1: 'Caseificio · Agropoli (SA)', line2: 'P.IVA 06052830657' };
+  // Company block: fill P.IVA / address once the buying entity is final (settings company.* could carry this later).
+  const COMPANY = { name: 'La Perla del Cilento', line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)' };
 
   async function show(poNumber) {
     const sheet = $('sheet');
@@ -79,12 +80,12 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
     const addr = [s.address, [s.postcode, s.city].filter(Boolean).join(' ') + (s.province ? ' (' + s.province + ')' : '')].filter(x => x && x.trim()).join(' · ');
     sheet.innerHTML = `
       <div class="top">
-        <div class="brand"><h1>${COMPANY.name}</h1><div class="sub">${COMPANY.line1} · ${COMPANY.line2}</div></div>
+        <div class="brand"><h1>${COMPANY.name}</h1><div class="sub">${COMPANY.line1}</div></div>
         <div class="ponum"><div class="l">Ordine d'acquisto</div><div class="n">${esc(po.po_number)}</div><div class="l">del ${fmtD(po.order_date)} <span class="badge ${stCls}">${stLabel}</span>${po.source === 'simulation' ? '<span class="badge">simulazione</span>' : ''}</div></div>
       </div>
       <div class="parties">
         <div class="box"><div class="l">Fornitore</div><b>${esc(s.legal_name || '—')}</b>${addr ? `<div>${esc(addr)}</div>` : ''}${s.piva ? `<div>P.IVA ${esc(s.piva)}</div>` : ''}${s.email ? `<div>${esc(s.email)}</div>` : ''}${s.phone ? `<div>${esc(s.phone)}</div>` : ''}</div>
-        <div class="box"><div class="l">Consegnare a</div><b>${COMPANY.name}</b><div>${COMPANY.line1}</div><div>Orario ricevimento merce: lun–sab 7:00–13:00</div><div>Rif. ordine da riportare su DDT e fattura: <b>${esc(po.po_number)}</b></div></div>
+        <div class="box"><div class="l">Consegnare a</div><b>${COMPANY.name}</b><div>${COMPANY.line1}</div><div>Rif. ordine da riportare su DDT e fattura: <b>${esc(po.po_number)}</b></div></div>
       </div>
       <table>
         <tr><th>#</th><th>Articolo</th><th>Codice</th><th class="num">Quantità</th><th class="num">Prezzo</th><th class="num">IVA</th><th class="num">Importo</th></tr>
@@ -96,7 +97,6 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
       <div class="terms">
         <div><div class="l">Consegna richiesta</div><div class="v">entro ${fmtD(po.expected_date)}</div></div>
         <div><div class="l">Pagamento</div><div class="v">${s.payment_terms_days ?? 30} giorni data fattura</div></div>
-        <div><div class="l">Fatturazione elettronica</div><div class="v">P.IVA ${COMPANY.line2.replace('P.IVA ', '')}</div></div>
         ${po.sent_at ? `<div><div class="l">Inviato</div><div class="v">${fmtD(po.sent_at.slice(0, 10))} via ${esc(po.sent_via || '')}</div></div>` : ''}
       </div>
       ${po.notes || po.rationale ? `<div class="foot" style="border:0;margin:0;padding:0"><div class="note">${esc(po.notes || '')}</div></div>` : ''}
@@ -105,7 +105,8 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
         <div class="qr"><div id="qr"></div><div class="l">${esc(po.po_number)} · ricezione merce</div></div>
       </div>
       <div class="sig"><div>Per ${COMPANY.name}</div><div>Per accettazione (fornitore)</div></div>`;
-    new QRCode($('qr'), { text: 'PO:' + po.po_number, width: 132, height: 132, correctLevel: QRCode.CorrectLevel.M });
+    try { new QRCode($('qr'), { text: 'PO:' + po.po_number, width: 132, height: 132, correctLevel: QRCode.CorrectLevel.M }); }
+    catch { $('qr').innerHTML = `<div style="font:700 1.1rem ui-monospace,monospace;padding:12px;border:1px dashed var(--rule)">PO:${esc(po.po_number)}</div>`; }
     document.title = 'La Perla · ' + po.po_number;
   }
   const fromUrl = new URLSearchParams(location.search).get('po');
