@@ -275,6 +275,13 @@
       tr.append(tot); tbl.append(tr); recompute();
     });
     box.innerHTML = ''; box.append(tbl);
+    const { data: cover } = await sb.from('v_safety_cover').select('*').gte('work_date', mon).lte('work_date', sun);
+    const cv = {}; (cover || []).forEach(c => { cv[c.work_date] = c; });
+    const trc = document.createElement('tr');
+    trc.innerHTML = '<td><small>Primo soccorso · antincendio in turno</small></td>' + days.map(d => { const c = cv[isoDay(d)]; if (!c) return '<td></td>';
+      const miss = [c.first_aid ? '' : 'PS', c.fire_warden ? '' : 'AI'].filter(Boolean);
+      return `<td><small class="${miss.length ? 'ko' : 'ok'}" title="${esc([c.first_aid_names && 'PS: ' + c.first_aid_names, c.fire_warden_names && 'AI: ' + c.fire_warden_names].filter(Boolean).join(' · '))}">${miss.length ? 'manca ' + miss.join(' + ') : 'PS ✓ AI ✓'}</small></td>`; }).join('') + '<td></td>';
+    tbl.append(trc);
     if (!(people || []).length) box.innerHTML = '<div class="empty">Nessuna persona attiva in anagrafica.</div>';
     $('rota-save').onclick = async () => {
       const b = $('rota-save'); b.disabled = true;
@@ -321,8 +328,10 @@
   $('rota-copy').onclick = async () => { const prev = new Date(rotaMon); prev.setDate(prev.getDate() - 7); const { data, error } = await sb.rpc('copy_rota_week', { p_from: isoDay(prev), p_to: isoDay(rotaMon) }); if (error) return toast(error.message, 'err'); toast(`${data} turni copiati (le celle già compilate restano)`); loadRota(); };
 
   async function loadStaffCard() {
-    const { data } = await sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name');
-    renderStaff(data || []);
+    const [{ data }, { data: exp }] = await Promise.all([
+      sb.from('staff').select('id, full_name, role, haccp_training_expires, designations, active').eq('active', true).order('full_name'),
+      sb.from('v_certificates_expiring').select('*')]);
+    renderStaff(data || [], exp || []);
   }
   const canEdit = () => ['owner', 'partner'].includes(staff.role);
   const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
@@ -331,17 +340,26 @@
 
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
   const dueCls = s => { if (!s) return ''; const d = (new Date(s) - new Date(new Date().toISOString().slice(0, 10))) / 864e5; return d < 0 ? 'ko' : d <= 30 ? 'ko' : ''; };
-  function renderStaff(rows) {
+  const DESIG = [['primo_soccorso', 'Primo soccorso'], ['antincendio', 'Antincendio'], ['preposto', 'Preposto'], ['rls', 'RLS']];
+  function renderStaff(rows, exp) {
     const box = $('set-staff'); box.innerHTML = '';
     rows.forEach(r => {
+      const mine = exp.filter(x => x.staff_id === r.id);
+      const bad = mine.filter(x => x.status === 'scaduto' || x.status === 'mancante'), soon = mine.filter(x => x.status !== 'scaduto' && x.status !== 'mancante');
       const row = document.createElement('div'); row.className = 'set-row';
-      row.innerHTML = `<div class="lbl">${esc(r.full_name)}<small>${esc(r.role)} · formazione HACCP scade <span class="${dueCls(r.haccp_training_expires)}">${fmtD(r.haccp_training_expires)}</span></small></div>`;
-      const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
-      const inp = document.createElement('input'); inp.type = 'date'; inp.value = r.haccp_training_expires || '';
-      right.append(inp, saveBtn(async () => { await upd('staff', { id: r.id }, { haccp_training_expires: dOrNull(inp.value) }); loadStaffCard(); }));
+      const lines = [...bad.map(x => `<span class="ko">${esc(x.course_name)}: ${x.status === 'scaduto' ? 'scaduto il ' + fmtD(x.expires_on) : 'manca'}</span>`),
+                     ...soon.map(x => `${esc(x.course_name)}: scade ${fmtD(x.expires_on)} (${x.days_left} gg)`)];
+      row.innerHTML = `<div class="lbl">${esc(r.full_name)}<small>${esc(r.role)}${lines.length ? '<br>' + lines.join('<br>') : ' · attestati in regola'}</small></div>`;
+      const right = document.createElement('div'); right.className = 'row'; right.style.cssText = 'margin-top:0;flex-wrap:wrap;gap:6px';
+      const boxes = DESIG.map(([k, l]) => { const lab = document.createElement('label'); lab.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:.85rem'; const c = document.createElement('input'); c.type = 'checkbox'; c.value = k; c.checked = (r.designations || []).includes(k); lab.append(c, l); right.append(lab); return c; });
+      right.append(saveBtn(async () => { await upd('staff', { id: r.id }, { designations: boxes.filter(c => c.checked).map(c => c.value) }); loadStaffCard(); }));
       row.append(right); box.append(row);
     });
+    const n = document.createElement('div'); n.className = 'status'; n.style.marginTop = '6px';
+    n.innerHTML = 'Le nomine aggiungono i corsi obbligatori (primo soccorso, antincendio, preposto, RLS). Gli attestati si caricano in <a href="haccp.html#formazione">Sicurezza alimentare → Formazione</a>; le scadenze arrivano anche nel bot Scadenze.';
+    box.append(n);
   }
+
 
 
   // ---------- Tier 2: send POs, wholesale confirmations ----------
