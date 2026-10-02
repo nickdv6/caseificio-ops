@@ -7,7 +7,7 @@
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
 <style>
-/* Layout: owner console — four operational tabs (Oggi · Operazioni · Andamento · Anagrafiche); Oggi holds the numbers and the approval gate. Configuration lives in admin.html. */
+/* Layout: owner console — five operational tabs (Oggi · Operazioni · Andamento · Anagrafiche · Ricette); Oggi holds the numbers and the approval gate. Configuration lives in admin.html. */
 :root{
   --bg:#f6f4ef; --paper:#fff; --fg:#161514; --muted:#5d6168; --rule:#e4e0d6; --tile:#eef2f7;
   --accent:#1e3a5f; --accent-fg:#fff; --warn:#b4472c; --good:#2f7a4d;
@@ -110,6 +110,9 @@ details.card>.body{padding:0 14px 12px}
 .grp{margin-top:10px}.grp>summary{cursor:pointer;font-weight:600;padding:6px 0;color:var(--fg);list-style:none;display:flex;justify-content:space-between}
 .grp>summary::-webkit-details-marker{display:none}.grp>summary::after{content:"▸";color:var(--muted)}.grp[open]>summary::after{content:"▾"}
 .pw{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+table.rec td{vertical-align:middle}table.rec td.num{white-space:nowrap}table.rec input[type=number]{width:96px;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec input[type=text]{width:100%;min-width:180px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec select{font:.9rem var(--body);padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec .ph{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
+.subtabs{display:flex;gap:4px;border-bottom:1px solid var(--rule);margin:-4px 0 10px}.sub{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--body);padding:8px 12px;border-bottom:3px solid transparent;cursor:pointer;display:flex;gap:6px;align-items:center}.sub[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent)}.sub .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px}.sub .n.on{display:inline-block}
+table.par input[type=text],table.par input[type=email],table.par input[type=tel]{width:100%;min-width:120px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.par input[type=number]{width:64px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.par td{vertical-align:middle}table.par tr.ph td:first-child{border-left:3px solid var(--warn)}
 </style>
 </head>
 <body>
@@ -131,6 +134,7 @@ details.card>.body{padding:0 14px 12px}
     <button class="tab" role="tab" data-tab="ops">Operazioni <span class="n" id="n-ops"></span></button>
     <button class="tab" role="tab" data-tab="trend">Andamento</button>
     <button class="tab" role="tab" data-tab="anag">Anagrafiche <span class="n" id="n-anag"></span></button>
+    <button class="tab" role="tab" data-tab="ricette">Ricette</button>
   </nav>
 
   <!-- OGGI: numbers, the human gate, compliance -->
@@ -170,14 +174,20 @@ details.card>.body{padding:0 14px 12px}
   <!-- ANAGRAFICHE: who we buy from, who we sell to, who works here -->
   <div class="pane" id="p-anag">
     <div class="set-grid">
-      <div class="card"><h3>Fornitori e clienti</h3><div class="hint">"Fornitore 1", "Cliente 1" sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito.</div><div id="set-parties"></div></div>
-      <div>
+      <div class="card" style="grid-column:1/-1"><div class="subtabs" id="party-tabs"><button class="sub" data-type="supplier" aria-selected="true">Fornitori <span class="n" id="n-sup"></span></button><button class="sub" data-type="customer">Clienti <span class="n" id="n-cus"></span></button></div>
+        <div class="hint">"Fornitore 1", "Cliente 1" sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito. Modifica direttamente nella riga e premi Salva.</div><div id="set-parties"></div></div>
+      <div class="set-grid" style="grid-column:1/-1">
         <div class="card"><h3>Ordini fissi ingrosso · kg al giorno</h3><div class="hint">Il bot Ordini ingrosso prenota queste quantità per il giorno dopo e prepara il messaggio di conferma.</div><div id="set-standing"></div></div>
-        <div class="card" style="margin-top:16px"><h3>Personale · formazione HACCP</h3><div id="set-staff"></div></div>
+        <div class="card"><h3>Personale · formazione HACCP</h3><div id="set-staff"></div></div>
       </div>
     </div>
   </div>
 
+  <!-- RICETTE: dosing steps the tablet follows -->
+  <div class="pane" id="p-ricette">
+    <div class="hint" style="margin-bottom:12px">Dosi per kg di latte (o di siero per la ricotta), per kg di prodotto finito o per lotto. Il tablet le trasforma nelle quantità da pesare a ogni lotto; ogni modifica vale da oggi e la storia resta. "↑" = arrotonda per eccesso (pezzi).</div>
+    <div id="recipes"></div>
+  </div>
 </section>
 </div>
 <div class="tip" id="tip"></div>

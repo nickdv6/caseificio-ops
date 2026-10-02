@@ -32,7 +32,7 @@
     if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
   }
   $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
-  async function load() { loadSettings(); loadBots(); loadRecipes(); }
+  async function load() { loadSettings(); loadBots(); }
 
   // ---------- helpers ----------
   const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', farm: 'Masseria (latte)', energy: 'Energia', labor: 'Lavoro' };
@@ -63,59 +63,6 @@
       const r = last[a];
       return `<tr><td><b>${n}</b><br><small class="status">${a}</small></td><td>${w}</td><td><code>${f}</code></td><td>${r ? fmtT(r.started_at) : '<span class="status">mai</span>'}</td><td class="${r ? (r.status === 'ok' ? 'ok' : 'ko') : ''}">${r ? esc(r.status) + (r.summary ? ' · <span class="status">' + esc(r.summary) + '</span>' : '') + (r.error ? ' · ' + esc(r.error) : '') : ''}</td></tr>`; }).join('') + '</table>';
     $('runs').innerHTML = (runs && runs.length) ? '<table>' + runs.slice(0, 40).map(r => `<tr><td>${esc(r.agent)}</td><td class="status">${fmtT(r.started_at)}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td><td class="status">${esc(r.summary || r.error || '')}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
-  }
-
-  // ---------- recipes: dose per kg, versioned by date ----------
-  const BASIS = (fin) => ({ per_kg_milk: fin === 'RIC-BUF-KG' ? 'per kg siero' : 'per kg latte', per_kg_output: 'per kg prodotto', per_batch: 'per lotto' });
-  const PHASE = { start: 'Avvio', close: 'Chiusura' };
-  async function loadRecipes() {
-    const box = $('recipes'); box.innerHTML = '';
-    const [{ data: rows, error }, { data: fins }, { data: comps }] = await Promise.all([
-      sb.from('v_recipe_editor').select('*'),
-      sb.from('products').select('sku, name').eq('kind', 'finished_good').eq('active', true).order('sku'),
-      sb.from('products').select('sku, name, unit').in('kind', ['consumable', 'packaging']).eq('active', true).order('name')]);
-    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
-    (fins || []).forEach(f => {
-      const mine = (rows || []).filter(r => r.finished_sku === f.sku);
-      const card = document.createElement('div'); card.className = 'card'; card.style.marginBottom = '16px';
-      card.innerHTML = `<h3>${esc(f.name)} <small class="status">${esc(f.sku)}</small></h3>`;
-      const tbl = document.createElement('table'); tbl.className = 'rec';
-      tbl.innerHTML = '<tr><th>Fase</th><th>Componente</th><th>Base</th><th class="num">Dose</th><th>↑</th><th>Istruzione sul tablet</th><th></th></tr>';
-      if (!mine.length) tbl.innerHTML += '<tr><td colspan="7" class="empty">Nessun componente: aggiungine uno qui sotto.</td></tr>';
-      mine.forEach(r => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><span class="ph">${PHASE[r.phase] || esc(r.phase)} · ${r.step_order}</span></td><td><b>${esc(r.component_name)}</b><br><small class="status">${esc(r.component_sku)}</small></td><td class="status">${BASIS(f.sku)[r.basis] || esc(r.basis)}</td>`;
-        const tdQ = document.createElement('td'); tdQ.className = 'num'; const q = document.createElement('input'); q.type = 'number'; q.step = 'any'; q.min = '0'; q.value = Number(r.qty_per_unit); tdQ.append(q, document.createTextNode(' ' + r.unit));
-        const tdR = document.createElement('td'); const ru = document.createElement('input'); ru.type = 'checkbox'; ru.checked = !!r.round_up; ru.title = 'Arrotonda per eccesso (pezzi)'; tdR.append(ru);
-        const tdI = document.createElement('td'); const ins = document.createElement('input'); ins.type = 'text'; ins.value = r.instruction_it || ''; ins.placeholder = 'es. Pesa il caglio e aggiungilo al latte'; tdI.append(ins);
-        const tdB = document.createElement('td'); tdB.style.whiteSpace = 'nowrap';
-        tdB.append(saveBtn(async () => { const { error } = await sb.rpc('update_recipe_dose', { p_recipe_id: r.recipe_id, p_qty: Number(q.value), p_round_up: ru.checked, p_instruction: ins.value.trim() || null }); if (error) throw error; loadRecipes(); }));
-        const end = document.createElement('button'); end.className = 'btn sm sec'; end.textContent = 'Togli'; end.style.marginLeft = '6px'; end.title = 'Il componente non viene più dosato da domani';
-        end.onclick = async () => { end.disabled = true; const { error } = await sb.rpc('end_recipe_component', { p_recipe_id: r.recipe_id }); if (error) { toast(error.message, 'err'); end.disabled = false; return; } toast('Componente tolto dalla ricetta'); loadRecipes(); };
-        tdB.append(end); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr);
-      });
-      // add row
-      const add = document.createElement('tr'); add.style.background = 'var(--tile)';
-      const used = new Set(mine.map(r => r.component_sku));
-      const selC = document.createElement('select'); selC.innerHTML = '<option value="">+ componente…</option>' + (comps || []).filter(c => !used.has(c.sku)).map(c => `<option value="${esc(c.sku)}">${esc(c.name)} (${esc(c.unit)})</option>`).join('');
-      const selB = document.createElement('select'); selB.innerHTML = Object.entries(BASIS(f.sku)).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-      const selP = document.createElement('select'); selP.innerHTML = '<option value="start">Avvio</option><option value="close">Chiusura</option>';
-      const ord = document.createElement('input'); ord.type = 'number'; ord.value = 10 * (mine.length + 1); ord.style.width = '64px'; ord.title = 'ordine del passo';
-      const q2 = document.createElement('input'); q2.type = 'number'; q2.step = 'any'; q2.min = '0'; q2.placeholder = 'dose';
-      const ru2 = document.createElement('input'); ru2.type = 'checkbox';
-      const ins2 = document.createElement('input'); ins2.type = 'text'; ins2.placeholder = 'istruzione (facoltativa)';
-      const btn = document.createElement('button'); btn.className = 'btn sm'; btn.textContent = 'Aggiungi';
-      btn.onclick = async () => {
-        if (!selC.value) return toast('Scegli il componente', 'err'); if (!(Number(q2.value) > 0)) return toast('Inserisci la dose', 'err');
-        btn.disabled = true; const { error } = await sb.rpc('add_recipe_component', { p_finished_sku: f.sku, p_component_sku: selC.value, p_basis: selB.value, p_qty: Number(q2.value), p_round_up: ru2.checked, p_phase: selP.value, p_step_order: Number(ord.value) || 10, p_instruction: ins2.value.trim() || null });
-        btn.disabled = false; if (error) return toast(error.message, 'err'); toast('Componente aggiunto'); loadRecipes();
-      };
-      const c1 = document.createElement('td'); c1.append(selP, document.createTextNode(' '), ord); const c2 = document.createElement('td'); c2.append(selC); const c3 = document.createElement('td'); c3.append(selB);
-      const c4 = document.createElement('td'); c4.className = 'num'; c4.append(q2); const c5 = document.createElement('td'); c5.append(ru2); const c6 = document.createElement('td'); c6.append(ins2); const c7 = document.createElement('td'); c7.append(btn);
-      add.append(c1, c2, c3, c4, c5, c6, c7); tbl.append(add);
-      card.append(tbl); box.append(card);
-    });
-    const note = document.createElement('div'); note.className = 'hint'; note.textContent = 'Le dosi attuali sono segnaposto finché i partner non confermano caglio, sale, acido citrico e imballi reali. La revisione mensile propone correzioni quando i casari dosano sistematicamente in modo diverso.'; box.append(note);
   }
 
   // ---------- settings, machines, deadlines ----------

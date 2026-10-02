@@ -1,4 +1,4 @@
-/* La Perla owner console — operations only. Oggi: daily_brief() tiles + approvals gate; Operazioni: PO send, wholesale, farm supply; Andamento: charts; Anagrafiche: parties, standing orders, staff. Bot parameters, machines, deadlines and account live in admin.html. */
+/* La Perla owner console — operations only. Oggi: daily_brief() tiles + approvals gate; Operazioni: PO send, wholesale, farm supply, effluent; Andamento: charts; Anagrafiche: parties (table, Fornitori|Clienti), standing orders, staff; Ricette: dosing steps. Bot parameters, machines, deadlines and account live in admin.html. */
 (() => {
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
@@ -158,7 +158,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); } };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => loadRecipes() };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -234,28 +234,47 @@
   }
 
   // ---------- Tier 2 settings: parties, standing orders, farm supply ----------
+  // ---------- parties: one compact editable table, sub-tabs Fornitori | Clienti ----------
+  let partyType = 'supplier', PARTIES = [];
+  $('party-tabs').onclick = e => { const b = e.target.closest('.sub'); if (!b) return; partyType = b.dataset.type; document.querySelectorAll('#party-tabs .sub').forEach(x => x.setAttribute('aria-selected', x === b)); renderParties(); };
   async function loadParties() {
-    const box = $('set-parties'); box.innerHTML = '';
     const { data, error } = await sb.from('v_parties_editor').select('*');
-    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
-    (data || []).forEach(p => {
-      const c = document.createElement('div'); c.className = 'eq' + (p.is_placeholder ? ' dirty' : '');
-      c.innerHTML = `<div class="h"><b>${esc(p.legal_name)}</b><span class="status">${p.type === 'supplier' ? 'fornitore' : 'cliente'}${p.is_placeholder ? ' · SEGNAPOSTO' : ''}${p.products_supplied ? ' · ' + p.products_supplied + ' articoli' : ''}${p.standing_orders ? ' · ordini fissi' : ''}</span></div>
-        <div class="f">
-          <div style="grid-column:1/-1"><label>Nome / ragione sociale</label><input type="text" data-k="legal_name" value="${esc(p.legal_name)}"></div>
-          <div><label>Email ordini</label><input type="email" data-k="email" value="${esc(p.email || '')}" placeholder="—"></div>
-          <div><label>Telefono / WhatsApp</label><input type="tel" data-k="phone" value="${esc(p.phone || '')}" placeholder="+39 …"></div>
-          <div><label>Pagamento (giorni)</label><input type="number" data-k="payment_terms_days" value="${p.payment_terms_days ?? ''}"></div>
-        </div>`;
-      const row = document.createElement('div'); row.className = 'row';
-      row.append(saveBtn(async () => {
-        const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
+    if (error) { $('set-parties').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    PARTIES = data || [];
+    badge('n-sup', PARTIES.filter(p => p.type === 'supplier' && p.is_placeholder).length); badge('n-cus', PARTIES.filter(p => p.type === 'customer' && p.is_placeholder).length);
+    renderParties();
+  }
+  function renderParties() {
+    const box = $('set-parties'); box.innerHTML = '';
+    const rows = PARTIES.filter(p => p.type === partyType);
+    if (!rows.length) { box.innerHTML = `<div class="empty">Nessun ${partyType === 'supplier' ? 'fornitore' : 'cliente'}.</div>`; return; }
+    const tbl = document.createElement('table'); tbl.className = 'par';
+    tbl.innerHTML = `<tr><th>Nome / ragione sociale</th><th>Email</th><th>Telefono / WhatsApp</th><th class="num">Pag. gg</th><th>${partyType === 'supplier' ? 'Articoli' : 'Ordini fissi'}</th><th></th></tr>`;
+    rows.forEach(p => {
+      const tr = document.createElement('tr'); if (p.is_placeholder) tr.className = 'ph';
+      const mk = (type, k, v, ph = '') => { const i = document.createElement(type === 'number' ? 'input' : 'input'); i.type = type; i.dataset.k = k; i.value = v ?? ''; i.placeholder = ph; return i; };
+      const name = mk('text', 'legal_name', p.legal_name), email = mk('email', 'email', p.email, '—'), phone = mk('tel', 'phone', p.phone, '+39 …'), days = mk('number', 'payment_terms_days', p.payment_terms_days);
+      const t1 = document.createElement('td'); t1.append(name); if (p.is_placeholder) { const s = document.createElement('small'); s.className = 'status ko'; s.textContent = 'segnaposto'; t1.append(document.createElement('br'), s); }
+      const t2 = document.createElement('td'); t2.append(email); const t3 = document.createElement('td'); t3.append(phone); const t4 = document.createElement('td'); t4.className = 'num'; t4.append(days);
+      const t5 = document.createElement('td'); t5.className = 'status'; t5.textContent = partyType === 'supplier' ? (p.products_supplied ? p.products_supplied + ' articoli' : '—') : (p.standing_orders ? p.standing_orders + ' giorni' : '—');
+      const t6 = document.createElement('td'); t6.style.whiteSpace = 'nowrap';
+      t6.append(saveBtn(async () => {
+        const v = {}; tr.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
         if (!v.legal_name) throw new Error('Il nome è obbligatorio');
         if (p.is_placeholder && !/^(Fornitore|Cliente) \d/.test(v.legal_name)) v.notes = null;   // renamed → no longer a placeholder
         await upd('parties', { id: p.id }, v); loadParties(); refreshBadges();
       }));
-      c.append(row); box.append(c);
+      tr.append(t1, t2, t3, t4, t5, t6); tbl.append(tr);
     });
+    // new party row
+    const add = document.createElement('tr'); add.style.background = 'var(--tile)';
+    const nn = document.createElement('input'); nn.type = 'text'; nn.placeholder = partyType === 'supplier' ? 'Nuovo fornitore…' : 'Nuovo cliente…';
+    const ne = document.createElement('input'); ne.type = 'email'; ne.placeholder = 'email'; const np = document.createElement('input'); np.type = 'tel'; np.placeholder = '+39 …'; const nd = document.createElement('input'); nd.type = 'number'; nd.value = 30;
+    const nb = document.createElement('button'); nb.className = 'btn sm'; nb.textContent = 'Aggiungi';
+    nb.onclick = async () => { if (!nn.value.trim()) return toast('Scrivi il nome', 'err'); nb.disabled = true; const { error } = await sb.from('parties').insert({ type: partyType, legal_name: nn.value.trim(), email: ne.value.trim() || null, phone: np.value.trim() || null, payment_terms_days: nOrNull(nd.value) }); nb.disabled = false; if (error) return toast(error.message, 'err'); toast('Aggiunto'); loadParties(); };
+    [nn, ne, np, nd].forEach((el, k) => { const td = document.createElement('td'); if (k === 3) td.className = 'num'; td.append(el); add.append(td); });
+    const e5 = document.createElement('td'); const e6 = document.createElement('td'); e6.append(nb); add.append(e5, e6); tbl.append(add);
+    box.append(tbl);
   }
   const WD = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
   async function loadStanding() {
@@ -288,7 +307,7 @@
       tr.append(td); tbl.append(tr);
     });
     box.append(tbl);
-    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Prezzo ingrosso: impostazione price.wholesale_moz_eur_kg (Parametri dei bot). Nuovo cliente: aggiungilo in "Fornitori e clienti" rinominando un segnaposto.'; box.append(note);
+    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Prezzo ingrosso: Configurazione → Vendite. Nuovo cliente: aggiungilo nella tabella Clienti qui sopra, poi compare in questa griglia.'; box.append(note);
   }
   async function loadFarm() {
     const box = $('set-farm'); box.innerHTML = '';
@@ -324,6 +343,60 @@
       : '<div class="empty">Nessun refluo registrato negli ultimi 14 giorni.</div>';
     box.innerHTML = html;
   }
+
+  // ---------- recipes: dose per kg, versioned by date ----------
+  const BASIS = (fin) => ({ per_kg_milk: fin === 'RIC-BUF-KG' ? 'per kg siero' : 'per kg latte', per_kg_output: 'per kg prodotto', per_batch: 'per lotto' });
+  const PHASE = { start: 'Avvio', close: 'Chiusura' };
+  async function loadRecipes() {
+    const box = $('recipes'); box.innerHTML = '';
+    const [{ data: rows, error }, { data: fins }, { data: comps }] = await Promise.all([
+      sb.from('v_recipe_editor').select('*'),
+      sb.from('products').select('sku, name').eq('kind', 'finished_good').eq('active', true).order('sku'),
+      sb.from('products').select('sku, name, unit').in('kind', ['consumable', 'packaging']).eq('active', true).order('name')]);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    (fins || []).forEach(f => {
+      const mine = (rows || []).filter(r => r.finished_sku === f.sku);
+      const card = document.createElement('div'); card.className = 'card'; card.style.marginBottom = '16px';
+      card.innerHTML = `<h3>${esc(f.name)} <small class="status">${esc(f.sku)}</small></h3>`;
+      const tbl = document.createElement('table'); tbl.className = 'rec';
+      tbl.innerHTML = '<tr><th>Fase</th><th>Componente</th><th>Base</th><th class="num">Dose</th><th>↑</th><th>Istruzione sul tablet</th><th></th></tr>';
+      if (!mine.length) tbl.innerHTML += '<tr><td colspan="7" class="empty">Nessun componente: aggiungine uno qui sotto.</td></tr>';
+      mine.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><span class="ph">${PHASE[r.phase] || esc(r.phase)} · ${r.step_order}</span></td><td><b>${esc(r.component_name)}</b><br><small class="status">${esc(r.component_sku)}</small></td><td class="status">${BASIS(f.sku)[r.basis] || esc(r.basis)}</td>`;
+        const tdQ = document.createElement('td'); tdQ.className = 'num'; const q = document.createElement('input'); q.type = 'number'; q.step = 'any'; q.min = '0'; q.value = Number(r.qty_per_unit); tdQ.append(q, document.createTextNode(' ' + r.unit));
+        const tdR = document.createElement('td'); const ru = document.createElement('input'); ru.type = 'checkbox'; ru.checked = !!r.round_up; ru.title = 'Arrotonda per eccesso (pezzi)'; tdR.append(ru);
+        const tdI = document.createElement('td'); const ins = document.createElement('input'); ins.type = 'text'; ins.value = r.instruction_it || ''; ins.placeholder = 'es. Pesa il caglio e aggiungilo al latte'; tdI.append(ins);
+        const tdB = document.createElement('td'); tdB.style.whiteSpace = 'nowrap';
+        tdB.append(saveBtn(async () => { const { error } = await sb.rpc('update_recipe_dose', { p_recipe_id: r.recipe_id, p_qty: Number(q.value), p_round_up: ru.checked, p_instruction: ins.value.trim() || null }); if (error) throw error; loadRecipes(); }));
+        const end = document.createElement('button'); end.className = 'btn sm sec'; end.textContent = 'Togli'; end.style.marginLeft = '6px'; end.title = 'Il componente non viene più dosato da domani';
+        end.onclick = async () => { end.disabled = true; const { error } = await sb.rpc('end_recipe_component', { p_recipe_id: r.recipe_id }); if (error) { toast(error.message, 'err'); end.disabled = false; return; } toast('Componente tolto dalla ricetta'); loadRecipes(); };
+        tdB.append(end); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr);
+      });
+      // add row
+      const add = document.createElement('tr'); add.style.background = 'var(--tile)';
+      const used = new Set(mine.map(r => r.component_sku));
+      const selC = document.createElement('select'); selC.innerHTML = '<option value="">+ componente…</option>' + (comps || []).filter(c => !used.has(c.sku)).map(c => `<option value="${esc(c.sku)}">${esc(c.name)} (${esc(c.unit)})</option>`).join('');
+      const selB = document.createElement('select'); selB.innerHTML = Object.entries(BASIS(f.sku)).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+      const selP = document.createElement('select'); selP.innerHTML = '<option value="start">Avvio</option><option value="close">Chiusura</option>';
+      const ord = document.createElement('input'); ord.type = 'number'; ord.value = 10 * (mine.length + 1); ord.style.width = '64px'; ord.title = 'ordine del passo';
+      const q2 = document.createElement('input'); q2.type = 'number'; q2.step = 'any'; q2.min = '0'; q2.placeholder = 'dose';
+      const ru2 = document.createElement('input'); ru2.type = 'checkbox';
+      const ins2 = document.createElement('input'); ins2.type = 'text'; ins2.placeholder = 'istruzione (facoltativa)';
+      const btn = document.createElement('button'); btn.className = 'btn sm'; btn.textContent = 'Aggiungi';
+      btn.onclick = async () => {
+        if (!selC.value) return toast('Scegli il componente', 'err'); if (!(Number(q2.value) > 0)) return toast('Inserisci la dose', 'err');
+        btn.disabled = true; const { error } = await sb.rpc('add_recipe_component', { p_finished_sku: f.sku, p_component_sku: selC.value, p_basis: selB.value, p_qty: Number(q2.value), p_round_up: ru2.checked, p_phase: selP.value, p_step_order: Number(ord.value) || 10, p_instruction: ins2.value.trim() || null });
+        btn.disabled = false; if (error) return toast(error.message, 'err'); toast('Componente aggiunto'); loadRecipes();
+      };
+      const c1 = document.createElement('td'); c1.append(selP, document.createTextNode(' '), ord); const c2 = document.createElement('td'); c2.append(selC); const c3 = document.createElement('td'); c3.append(selB);
+      const c4 = document.createElement('td'); c4.className = 'num'; c4.append(q2); const c5 = document.createElement('td'); c5.append(ru2); const c6 = document.createElement('td'); c6.append(ins2); const c7 = document.createElement('td'); c7.append(btn);
+      add.append(c1, c2, c3, c4, c5, c6, c7); tbl.append(add);
+      card.append(tbl); box.append(card);
+    });
+    const note = document.createElement('div'); note.className = 'hint'; note.textContent = 'Le dosi attuali sono segnaposto finché i partner non confermano caglio, sale, acido citrico e imballi reali. La revisione mensile propone correzioni quando i casari dosano sistematicamente in modo diverso.'; box.append(note);
+  }
+
 
   // ---------- charts (inline SVG, single scale, hover layer) ----------
   const tip = $('tip');
