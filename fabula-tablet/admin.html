@@ -140,8 +140,15 @@ details.card>.body{padding:0 14px 12px}
     <button class="tab" role="tab" data-tab="lavoro">Lavoro e benchmark</button>
     <button class="tab" role="tab" data-tab="maint">Macchine e scadenze</button>
     <button class="tab" role="tab" data-tab="bots">Bot</button>
+    <button class="tab" role="tab" data-tab="registro">Registro modifiche</button>
     <button class="tab" role="tab" data-tab="account">Account</button>
   </nav>
+
+  <div class="pane" id="p-registro">
+    <div class="card"><h3>Registro modifiche</h3><div class="hint">Chi ha cambiato cosa e quando: parametri, approvazioni, ricette, ordini fissi, personale, prodotti, macchine, scadenze, punti HACCP, fornitori, turni. "service_role" = bot programmati o SQL.</div>
+      <div class="row" style="gap:8px;margin-bottom:8px"><select id="aud-table"><option value="">Tutte le tabelle</option></select><input id="aud-q" type="text" placeholder="Cerca chiave, valore o persona" style="flex:1"><button class="btn sec" id="aud-go">Cerca</button></div>
+      <div id="audit"></div></div>
+  </div>
 
   <div class="pane" id="p-bots">
     <div class="card"><h3>Bot programmati</h3><div class="hint">Ogni bot legge una funzione del database una volta al giorno e scrive al massimo una proposta in "Da approvare". Orari in ora italiana; per cambiarli serve l'editor delle attività programmate.</div><div id="bots"></div></div>

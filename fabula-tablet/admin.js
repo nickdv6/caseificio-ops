@@ -34,7 +34,29 @@
     if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
   }
   $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
-  async function load() { loadSettings(); loadBots(); loadVariantMap(); }
+  async function load() { loadSettings(); loadBots(); loadVariantMap(); loadAudit(); }
+  const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',
+    compliance_deadlines: 'Scadenze', haccp_control_points: 'Punti HACCP', process_steps: 'Processo', supplier_products: 'Condizioni fornitori', supplier_prices: 'Listini',
+    farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni' };
+  const AUD_A = { insert: 'aggiunto', update: 'modificato', delete: 'eliminato' };
+  const short = v => { if (v == null) return '∅'; const s = typeof v === 'object' ? JSON.stringify(v) : String(v); return s.length > 60 ? s.slice(0, 57) + '…' : s; };
+  async function loadAudit() {
+    const sel = $('aud-table'); if (sel.options.length === 1) Object.entries(AUD_T).forEach(([k, l]) => sel.add(new Option(l, k)));
+    const box = $('audit'); box.innerHTML = '<div class="status">Carico…</div>';
+    let q = sb.from('audit_log').select('*').order('at', { ascending: false }).limit(150);
+    if (sel.value) q = q.eq('table_name', sel.value);
+    const { data, error } = await q;
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const needle = $('aud-q').value.trim().toLowerCase();
+    const rows = (data || []).filter(r => !needle || JSON.stringify(r).toLowerCase().includes(needle));
+    if (!rows.length) { box.innerHTML = '<div class="empty">Nessuna modifica registrata.</div>'; return; }
+    const label = r => { const d = r.new_data || r.old_data || {}; return r.table_name === 'settings' ? r.row_key : d.summary || d.full_name || d.name || d.name_it || d.code || d.subject_it || d.po_number || d.work_date || (r.row_key || '').slice(0, 8); };
+    box.innerHTML = `<table><tr><th>Quando</th><th>Chi</th><th>Dove</th><th>Cosa</th><th>Modifica</th></tr>${rows.map(r => {
+      const diff = r.action === 'update' ? (r.changed || []).map(c => `<b>${esc(c)}</b>: ${esc(short(r.old_data?.[c]))} → ${esc(short(r.new_data?.[c]))}`).join('<br>') : esc(AUD_A[r.action]);
+      return `<tr><td class="nw">${new Date(r.at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(r.actor)}</td><td>${esc(AUD_T[r.table_name] || r.table_name)}</td><td>${esc(label(r))}</td><td><small>${diff}</small></td></tr>`; }).join('')}</table>`;
+  }
+  $('aud-go').onclick = () => loadAudit(); $('aud-table').onchange = () => loadAudit();
+  $('aud-q').addEventListener('keydown', e => { if (e.key === 'Enter') loadAudit(); });
 
   // ---------- helpers ----------
   const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', shopify: 'Shopify', farm: 'Masseria (latte)', energy: 'Energia', labor: 'Lavoro' };
