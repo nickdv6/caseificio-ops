@@ -27,8 +27,10 @@
 
   // ---------- data ----------
   async function load() {
-    const [brief, prod, sales, runs] = await Promise.all([
+    const [brief, appr, prods, prod, sales, runs] = await Promise.all([
       sb.rpc('daily_brief'),
+      sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table').eq('status', 'pending').order('requested_at'),
+      sb.from('products').select('sku, name, unit'),
       sb.from('v_daily_production').select('batch_date, product, yield_pct, output_kg').ilike('product', 'Mozzarella%').gte('batch_date', daysAgo(30)).order('batch_date'),
       sb.from('v_daily_sales').select('order_date, channel, revenue_eur').gte('order_date', daysAgo(30)).order('order_date'),
       sb.from('agent_runs').select('agent, started_at, status, summary, error').order('started_at', { ascending: false }).limit(8)
@@ -37,7 +39,8 @@
     const b = brief.data;
     $('simbadge').hidden = !b.is_simulation;
     $('sub').textContent = 'Brief di ' + dateIt(b.date);
-    renderTiles(b); renderApprovals(b.pending_approvals); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals); renderRuns(runs.data || []);
+    PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
+    renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals); renderRuns(runs.data || []);
     badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
     if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); }
     yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
@@ -65,17 +68,63 @@
     $('tiles').innerHTML = tiles.map(([l, v, d, bad]) => `<div class="tile${bad ? ' bad' : ''}"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join('');
   }
 
-  // ---------- approvals ----------
-  function renderApprovals(list) {
+  // ---------- approvals: one structured card per request, facts laid out as a grid instead of a sentence ----------
+  let PRODUCTS = {};
+  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], other: ['Richiesta', ''] };
+  const WDAY = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+  const dShort = s => s ? WDAY[new Date(s + 'T12:00:00').getDay()] + ' ' + fmtD(s) : '—';
+  const fact = (l, v, cls = '') => `<div><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
+  const kgf = n => num(n, Number(n) % 1 ? 1 : 0);
+  function approvalView(a, today) {
+    const p = a.payload || {}, type = a.kind === 'other' ? (p.type || 'other') : (p.type === 'recipe_update' ? 'recipe_update' : a.kind);
+    const prod = PRODUCTS[p.sku] || PRODUCTS[p.finished_sku] || {};
+    let title = esc(a.summary), facts = '', more = '', amount = a.amount_eur != null ? eur(a.amount_eur) : '';
+    switch (type) {
+      case 'purchase_order':
+        title = `${esc(p.po_number || 'Ordine')} · ${esc(p.supplier || '')}`;
+        facts = fact('Articolo', esc(prod.name || p.sku || '—')) + fact('Quantità', `${num(p.qty, 0)} <small>${esc(p.unit || '')}</small>`) +
+          fact('Prezzo', p.unit_price_eur != null ? `€ ${num(p.unit_price_eur, 3)} <small>/${esc(p.unit || '')}</small>` : '<span class="ko">da confermare</span>') +
+          fact('Giacenza', `${num(p.on_hand, 0)} <small>${esc(p.unit || '')}</small>`) + fact('Consumo', p.daily_use != null ? `${num(p.daily_use, 0)} <small>${esc(p.unit || '')}/giorno</small>` : '—') +
+          fact('Copertura', p.days_cover != null ? `${num(p.days_cover)} <small>giorni</small>` : '—', p.days_cover != null && p.days_cover < 5 ? 'ko' : '');
+        more = p.price_missing ? '<div class="status ko">Prezzo non a listino: confermalo con il fornitore prima di approvare.</div>' : '';
+        break;
+      case 'milk_plan':
+        title = `Latte per ${dShort(p.plan_date)}`;
+        facts = fact('Latte', `${num(p.milk_kg, 0)} <small>kg</small>`) + fact('Mozzarella prevista', `≈ ${kgf(p.planned_output_kg)} <small>kg</small>`) +
+          fact('Costo stimato', eur(p.est_cost_eur)) + fact('Decidere entro', a.expires_at ? new Date(a.expires_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) + ' <small>ora italiana</small>' : '—');
+        more = p.rationale ? `<details><summary>Come è stato calcolato</summary>${esc(p.rationale)}</details>` : '';
+        break;
+      case 'sell_down': case 'price_change': {
+        const act = { promo_banco: 'promo al banco', offerta_ingrosso_e_promo: 'promo al banco + offerta ai clienti ingrosso', ritirare: 'ritirare dalla vendita', spingere_al_banco: 'spingere al banco' }[p.action] || p.action || '';
+        const days = p.expiry && today ? Math.round((new Date(p.expiry) - new Date(today)) / 864e5) : null;
+        title = `${esc(prod.name || p.sku || '')} · lotto ${esc(p.lot || '')}`;
+        facts = fact('A rischio', `${kgf(p.at_risk_kg)} <small>kg</small>`, 'ko') + fact('Giacenza', `${kgf(p.on_hand_kg)} <small>kg</small>`) +
+          fact('Scade', days == null ? fmtD(p.expiry) : days <= 0 ? 'oggi' : days === 1 ? 'domani' : fmtD(p.expiry), days != null && days <= 1 ? 'ko' : '') +
+          fact('Prezzo', `<s style="color:var(--muted);font-weight:400">€ ${num(p.list_price_eur_kg, 2)}</s> → € ${num(p.promo_price_eur_kg, 2)} <small>/kg</small>`) + fact('Sconto', `−${p.promo_pct} %`) + fact('Azione', esc(act));
+        break;
+      }
+      case 'recipe_update':
+        title = `Ricetta ${esc(prod.name || p.finished_sku || '')} · ${esc((PRODUCTS[p.component_sku] || {}).name || p.component_sku || '')}`;
+        facts = fact('Dose attuale', `${p.from} <small>${esc(p.unit || '')}</small>`) + fact('Dose proposta', `${p.to} <small>${esc(p.unit || '')}</small>`) + fact('Scostamento', `${p.deviation_pct > 0 ? '+' : ''}${num(p.deviation_pct)} %`) + fact('Lotti osservati', p.batches ?? '—');
+        break;
+      case 'dop_declaration':
+        title = `Dichiarazione Consorzio ${esc(p.month || '')}`;
+        facts = fact('Latte lavorato', `${num(p.milk_processed_kg, 0)} <small>kg</small>`) + fact('Mozzarella DOP', `${num(p.mozzarella_dop_kg, 0)} <small>kg</small>`) + fact('Lotti', p.batches ?? '—') + fact('Etichette', num(p.labels_printed, 0)) + fact('Venduto', `${num(p.sold_kg, 0)} <small>kg</small>`);
+        break;
+    }
+    const [klabel, kcls] = KIND[type] || KIND.other;
+    return { title, facts, more, amount, klabel, kcls };
+  }
+  function renderApprovals(list, today) {
     const box = $('approvals');
     if (!list || !list.length) { box.innerHTML = '<div class="empty">Niente in attesa. I bot propongono, tu decidi: tutto ciò che impegna denaro o documenti compare qui prima.</div>'; return; }
-    box.innerHTML = list.map(a => `
+    const age = a => Math.max(0, Math.round((Date.now() - new Date(a.requested_at)) / 864e5));
+    box.innerHTML = list.map(a => { const v = approvalView(a, today); return `
       <div class="appr" data-id="${a.id}">
-        <div class="k">${esc(a.kind).replace('_', ' ')} · ${esc(a.requested_by)} · ${a.age_days} g</div>
-        <div class="s">${esc(a.summary)}</div>
-        <div class="meta">${a.amount_eur != null ? eur(a.amount_eur) : ''}</div>
+        <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><span class="t">${v.title}</span><div class="by">proposto da ${esc(String(a.requested_by || '').replace('agent:', 'bot ').replace('_', ' '))} · ${age(a) === 0 ? 'oggi' : age(a) + ' g fa'}</div></div><div class="amt">${v.amount}</div></div>
+        ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
         <div class="row"><input type="text" placeholder="Nota (facoltativa)" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>
-      </div>`).join('');
+      </div>`; }).join('');
     box.querySelectorAll('button[data-act]').forEach(btn => btn.onclick = async () => {
       const card = btn.closest('.appr'), id = card.dataset.id, act = btn.dataset.act;
       card.querySelectorAll('button').forEach(b => b.disabled = true);
