@@ -84,6 +84,7 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 .set-row input,.set-row select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);width:120px}
 .set-row input[type=date]{width:150px}.set-row input.wide{width:200px}
 .set-row.text{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.set-row.text input.wide{width:100%}
+table.rec td{vertical-align:middle}table.rec td.num{white-space:nowrap}table.rec input[type=number]{width:96px;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec input[type=text]{width:100%;min-width:180px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec select{font:.9rem var(--body);padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec .ph{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
 .set-row.dirty input{border-color:var(--accent)}
 .eq{border:1px solid var(--rule);border-radius:6px;padding:8px 10px;margin-bottom:8px}
 .eq .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.eq .h b{font-family:var(--display);font-size:1.1rem}
@@ -134,6 +135,7 @@ details.card>.body{padding:0 14px 12px}
   <nav class="tabs" role="tablist" id="tabs">
     <button class="tab" role="tab" data-tab="azienda" aria-selected="true">Azienda</button>
     <button class="tab" role="tab" data-tab="produzione">Produzione</button>
+    <button class="tab" role="tab" data-tab="ricette">Ricette</button>
     <button class="tab" role="tab" data-tab="vendite">Vendite</button>
     <button class="tab" role="tab" data-tab="utenze">Utenze e reflui</button>
     <button class="tab" role="tab" data-tab="lavoro">Lavoro e benchmark</button>
@@ -156,6 +158,10 @@ details.card>.body{padding:0 14px 12px}
       <div class="card"><h3>Piano latte</h3><div class="hint">Come il bot dimensiona il latte del giorno dopo.</div><div class="params" data-groups="milk"></div></div>
       <div class="card"><h3>Masseria</h3><div class="hint">Latte disponibile dalla Masseria; i kg per singolo giorno si impostano nella console → Operazioni.</div><div class="params" data-groups="farm"></div></div>
     </div>
+  </div>
+  <div class="pane" id="p-ricette">
+    <div class="hint" style="margin-bottom:12px">Dosi per kg di latte (o di siero per la ricotta), per kg di prodotto finito o per lotto. Il tablet le trasforma nelle quantità da pesare a ogni lotto; ogni modifica vale da oggi e la storia resta. "Arrotonda ↑" serve per i pezzi (buste, fuscelle).</div>
+    <div id="recipes"></div>
   </div>
   <div class="pane" id="p-vendite">
     <div class="set-grid">
