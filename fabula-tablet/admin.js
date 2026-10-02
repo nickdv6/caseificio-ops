@@ -37,7 +37,55 @@
     if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
   }
   $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
-  async function load() { loadSettings(); loadBots(); loadVariantMap(); loadAudit(); loadUsers(); }
+  async function load() { loadSettings(); loadBots(); loadBotFeed(); loadVariantMap(); loadAudit(); loadUsers(); }
+  // ---------- Bot dashboard: every bot notification (bot_messages) ----------
+  const SEV = { alert: 'Allarme', warn: 'Attenzione', info: 'Info' };
+  const fmtR = s => new Date(s).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  let bdFilter = 'unread', bdAgent = null, bdLimit = 50, bdNames = {};
+  async function loadBotFeed() {
+    const [{ data: bots }, cnt] = await Promise.all([
+      sb.from('v_bot_dashboard').select('*').order('name_it'),
+      sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000)]);
+    const unread = cnt.data || [], nU = unread.length, nA = unread.filter(x => x.severity === 'alert').length;
+    const tb = $('n-bots'); tb.textContent = nA || nU; tb.classList.toggle('on', nU > 0); tb.classList.toggle('al', nA > 0);
+    (bots || []).forEach(b => { bdNames[b.agent] = b.name_it; });
+    const bb = $('bd-bots');
+    bb.innerHTML = (bots || []).map(b => {
+      const when = (b.due_times || []).map(t => t.slice(0, 5)).join(' · ') + (b.month_day ? ` · giorno ${b.month_day}` : b.weekdays && b.weekdays.length < 6 ? ' · ' + b.weekdays.map(d => ['', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'][d]).join(', ') : '');
+      const st = !b.active ? 'disattivato' : b.last_run_at ? `${b.last_status === 'error' ? '<span class="ko">errore</span>' : 'ok'} · ${fmtR(b.last_run_at)}` : 'mai eseguito';
+      return `<div class="botc${bdAgent === b.agent ? ' sel' : ''}" data-a="${esc(b.agent)}"><div><div class="nm">${esc(b.name_it)}</div><small>${esc(when)} · ${st}</small></div>${b.unread ? `<span class="u${b.unread_alerts ? ' al' : ''}">${b.unread}</span>` : ''}</div>`;
+    }).join('') + `<div class="botc${bdAgent === '_other' ? ' sel' : ''}" data-a="_other"><div><div class="nm">Allarmi e avvisi di sistema</div><small>Allarme bot, battito bot, avvisi della console</small></div></div>`;
+    bb.querySelectorAll('.botc').forEach(el => el.onclick = () => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); });
+    $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdAgent === '_other' ? 'allarmi e avvisi' : bdNames[bdAgent] || bdAgent) : '';
+    let q = sb.from('bot_messages').select('*').order('created_at', { ascending: false }).limit(bdLimit + 1);
+    if (bdFilter === 'unread') q = q.is('read_at', null);
+    if (bdFilter === 'alert') q = q.eq('severity', 'alert');
+    if (bdAgent === '_other') q = q.in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']); else if (bdAgent) q = q.eq('agent', bdAgent);
+    const { data: msgs, error } = await q;
+    const feed = $('bd-feed');
+    if (error) { feed.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    $('bd-more').hidden = (msgs || []).length <= bdLimit;
+    const rows = (msgs || []).slice(0, bdLimit);
+    if (!rows.length) { feed.innerHTML = `<div class="empty">${bdFilter === 'unread' ? 'Nessuna notifica da leggere.' : 'Nessuna notifica.'}</div>`; return; }
+    feed.innerHTML = rows.map(m => {
+      const name = bdNames[m.agent] || ({ bot_watchdog: 'Allarme bot', bot_heartbeat: 'Battito bot', avvisi: 'Avvisi console' }[m.agent]) || m.agent;
+      const long = (m.body || '').split('\n').length > 6 || (m.body || '').length > 500;
+      return `<div class="msg ${esc(m.severity)}${m.read_at ? ' read' : ''}" data-id="${m.id}"><div class="hd"><span class="who"><span class="lvl">${SEV[m.severity] || ''}</span>${esc(name)}</span><span class="status">${fmtR(m.created_at)}</span></div>
+        <div class="t">${esc(m.title)}</div>${m.body ? `<div class="b">${esc(m.body)}</div>${long ? '<button class="more" data-x="more">Mostra tutto</button>' : ''}` : ''}
+        ${m.read_at ? '' : '<div class="row" style="margin-top:4px"><button class="btn sm sec" data-x="read">Letto</button></div>'}</div>`;
+    }).join('');
+    feed.querySelectorAll('[data-x=more]').forEach(b => b.onclick = () => { const bd = b.previousElementSibling; bd.classList.toggle('open'); b.textContent = bd.classList.contains('open') ? 'Riduci' : 'Mostra tutto'; });
+    feed.querySelectorAll('[data-x=read]').forEach(b => b.onclick = async () => { const id = Number(b.closest('.msg').dataset.id); const { error } = await sb.rpc('mark_bot_messages_read', { p_ids: [id] }); if (error) return toast(error.message, 'err'); loadBotFeed(); });
+  }
+  document.querySelectorAll('.bd-bar .chip').forEach(c => c.onclick = () => { bdFilter = c.dataset.f; bdLimit = 50; document.querySelectorAll('.bd-bar .chip').forEach(x => x.setAttribute('aria-pressed', x === c)); loadBotFeed(); });
+  $('bd-more').onclick = () => { bdLimit += 50; loadBotFeed(); };
+  $('bd-readall').onclick = async () => {
+    const { data: ids } = await (bdAgent === '_other' ? sb.from('bot_messages').select('id').is('read_at', null).in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']) : bdAgent ? sb.from('bot_messages').select('id').is('read_at', null).eq('agent', bdAgent) : sb.from('bot_messages').select('id').is('read_at', null));
+    if (!ids || !ids.length) return toast('Niente da segnare');
+    const { data, error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids.map(x => x.id) }); if (error) return toast(error.message, 'err');
+    toast(`${data} notifiche segnate come lette`); loadBotFeed();
+  };
+  setInterval(() => { if (document.visibilityState === 'visible' && PERM.data && PERM.page('admin')) loadBotFeed(); }, 60000);
   // ---------- Utenti e ruoli ----------
   const LVL = ['—', 'vede', 'registra', 'gestisce'];
   const JOBS = [['owner', 'titolare'], ['partner', 'socio'], ['casaro', 'casaro'], ['operaio', 'operaio'], ['commesso', 'commesso'], ['consulente', 'consulente']];

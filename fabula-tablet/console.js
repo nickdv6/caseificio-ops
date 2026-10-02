@@ -24,6 +24,11 @@
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = `${staff.full_name} · ${staff.role_name}`; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
     PERM.navLinks(); $('btn-pkg').hidden = !PERM.page('pacchetto'); $('btn-admin').hidden = !PERM.page('admin');
+    $('btn-bots').hidden = !PERM.page('admin');
+    const botBadge = async () => { if (!PERM.page('admin')) return; const { data } = await sb.from('bot_messages').select('severity').is('read_at', null).limit(1000);
+      const n = (data || []).length, al = (data || []).filter(x => x.severity === 'alert').length;
+      $('bots-n').textContent = n ? `· ${n}${al ? ` (${al} allarmi)` : ''}` : ''; $('bots-n').className = al ? 'ko' : 'status'; };
+    botBadge(); setInterval(() => { if (document.visibilityState === 'visible') botBadge(); }, 120000);
     const TAB_AREAS = { ops: ['produzione', 'acquisti', 'vendite'], trend: ['produzione', 'vendite'], anag: ['vendite', 'acquisti', 'personale'], ricette: ['produzione'], turni: ['personale'] };
     document.querySelectorAll('.tab').forEach(t => { const a = TAB_AREAS[t.dataset.tab]; if (a) t.hidden = !a.some(x => PERM.can(x)); });
     show('main'); load(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
