@@ -174,7 +174,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadTerms(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); } };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadTerms(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); }, turni: () => loadRota() };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -231,6 +231,95 @@
       data.map(x => `<tr><td>${fmtD(x.price_date)}</td><td>${esc(x.source)}</td><td>${esc(x.ref || '')}</td><td class="num">${x.qty != null ? num(x.qty, 0) : ''}</td><td class="num">${num(x.price_eur, 4)}</td><td class="num ${Number(x.change_pct) > 5 ? 'ko' : ''}">${x.change_pct != null ? (x.change_pct > 0 ? '+' : '') + num(x.change_pct, 1) + '%' : ''}</td></tr>`).join('');
     box.append(tbl);
   }
+  // ---------- Turni: weekly rota + hours/overtime ----------
+  const isoDay = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
+  const mondayOf = d => { const x = new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  let rotaMon = mondayOf(new Date()); rotaMon.setDate(rotaMon.getDate() + 7);
+  const KIND_L = { F: 'ferie', P: 'permesso', M: 'malattia', R: 'riposo' }, L_KIND = { ferie: 'F', permesso: 'P', malattia: 'M', riposo: 'R' };
+  const hm = t => t ? t.slice(0, 5).replace(/:00$/, '') : '';
+  const cellText = e => !e ? '' : e.kind !== 'lavoro' ? L_KIND[e.kind] : `${hm(e.start_time)}-${hm(e.end_time)}${e.break_min ? '/' + e.break_min : ''}${e.area ? ' ' + e.area : ''}`;
+  function parseCell(s) {
+    s = (s || '').trim(); if (!s) return null;
+    if (/^[FPMR]$/i.test(s)) return { kind: KIND_L[s.toUpperCase()], start_time: null, end_time: null, break_min: 0, area: null };
+    const m = s.match(/^(\d{1,2})(?:[:.](\d{2}))?\s*-\s*(\d{1,2})(?:[:.](\d{2}))?(?:\s*\/\s*(\d{1,3}))?(?:\s+(.+))?$/);
+    if (!m || +m[1] > 23 || +m[3] > 24) throw new Error(`Orario non valido: "${s}"`);
+    const t = (h, mi) => `${String(+h % 24).padStart(2, '0')}:${mi || '00'}`;
+    return { kind: 'lavoro', start_time: t(m[1], m[2]), end_time: t(m[3], m[4]), break_min: m[5] ? +m[5] : 0, area: m[6] ? m[6].trim() : null };
+  }
+  const cellHours = c => { if (!c || c.kind !== 'lavoro') return 0; const [a, b] = [c.start_time, c.end_time].map(x => +x.slice(0, 2) + +x.slice(3, 5) / 60); return Math.max(0, (b > a ? b - a : b + 24 - a) - c.break_min / 60); };
+  async function loadRota() {
+    const mon = isoDay(rotaMon), sunD = new Date(rotaMon); sunD.setDate(sunD.getDate() + 6); const sun = isoDay(sunD);
+    $('rota-week').textContent = `${rotaMon.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – ${sunD.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    const box = $('rota-grid'); box.innerHTML = '<div class="status">Carico…</div>';
+    const [{ data: people, error: e1 }, { data: rows, error: e2 }, { data: cfg }] = await Promise.all([
+      sb.from('staff').select('id, full_name, role, contract_hours_week').eq('active', true).order('full_name'),
+      sb.from('rota_entries').select('*').gte('work_date', mon).lte('work_date', sun),
+      sb.from('settings').select('value').eq('key', 'labor.contract_hours_week').maybeSingle()]);
+    if (e1 || e2) { box.innerHTML = `<div class="empty">${esc((e1 || e2).message)}</div>`; return; }
+    const defH = Number(cfg?.value || 40);
+    const days = [...Array(7)].map((_, i) => { const d = new Date(rotaMon); d.setDate(d.getDate() + i); return d; });
+    const byKey = {}; (rows || []).forEach(r => { byKey[r.staff_id + '|' + r.work_date] = r; });
+    const tbl = document.createElement('table'); tbl.className = 'rota';
+    tbl.innerHTML = '<tr><th>Persona</th>' + days.map(d => `<th>${d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric' })}</th>`).join('') + '<th class="num">Ore</th></tr>';
+    const inputs = [];
+    (people || []).forEach(p => {
+      const tr = document.createElement('tr'); const tdN = document.createElement('td'); tdN.innerHTML = `${esc(p.full_name)}<br><small>${esc(p.role)}</small>`; tr.append(tdN);
+      const tot = document.createElement('td'); tot.className = 'num';
+      const contract = Number(p.contract_hours_week || defH);
+      const recompute = () => { let h = 0, bad = false; inputs.filter(x => x.p === p.id).forEach(x => { try { h += cellHours(parseCell(x.i.value)); x.i.style.borderColor = ''; } catch { bad = true; x.i.style.borderColor = 'var(--warn)'; } }); tot.innerHTML = `${num(h, 1)}<br><small>/ ${num(contract, 0)}</small>`; tot.classList.toggle('ko', h > contract || bad); };
+      days.forEach(d => {
+        const key = p.id + '|' + isoDay(d); const td = document.createElement('td');
+        const i = document.createElement('input'); i.type = 'text'; i.style.width = '108px'; i.value = cellText(byKey[key]); i.placeholder = '—';
+        i.oninput = recompute; td.append(i); tr.append(td); inputs.push({ p: p.id, date: isoDay(d), i, orig: i.value, id: byKey[key]?.id });
+      });
+      tr.append(tot); tbl.append(tr); recompute();
+    });
+    box.innerHTML = ''; box.append(tbl);
+    if (!(people || []).length) box.innerHTML = '<div class="empty">Nessuna persona attiva in anagrafica.</div>';
+    $('rota-save').onclick = async () => {
+      const b = $('rota-save'); b.disabled = true;
+      try {
+        const ups = [], dels = [];
+        for (const x of inputs) {
+          if (x.i.value.trim() === x.orig.trim()) continue;
+          const c = parseCell(x.i.value);
+          if (!c) { if (x.id) dels.push(x.id); continue; }
+          ups.push({ staff_id: x.p, work_date: x.date, ...c, created_by: staff.id, updated_at: new Date().toISOString() });
+        }
+        if (ups.length) { const { error } = await sb.from('rota_entries').upsert(ups, { onConflict: 'staff_id,work_date' }); if (error) throw error; }
+        if (dels.length) { const { error } = await sb.from('rota_entries').delete().in('id', dels); if (error) throw error; }
+        toast(ups.length + dels.length ? `Turni salvati (${ups.length + dels.length})` : 'Nessuna modifica'); loadRota();
+      } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
+    };
+    loadHours(mon);
+  }
+  async function loadHours(mon) {
+    const box = $('rota-hours'); box.innerHTML = '';
+    const from = new Date(mon + 'T12:00:00'); from.setDate(from.getDate() - 21);
+    const { data, error } = await sb.from('v_hours_weekly').select('*').gte('week_start', isoDay(from)).lte('week_start', mon).order('week_start', { ascending: false }).order('full_name');
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const week = (data || []).filter(r => r.week_start === mon);
+    const tbl = document.createElement('table');
+    tbl.innerHTML = '<tr><th>Persona</th><th class="num">Previste</th><th class="num">Lavorate</th><th class="num">Contratto h</th><th class="num">Straord. h</th><th class="num">Straord. €</th><th class="num">Domenica h</th><th>Note</th><th></th></tr>';
+    if (!week.length) tbl.innerHTML += '<tr><td colspan="9" class="empty">Nessuna timbratura né turno in questa settimana.</td></tr>';
+    week.forEach(r => {
+      const tr = document.createElement('tr');
+      const notes = [r.planned_no_clock_days ? `${r.planned_no_clock_days} gg in turno senza badge` : '', r.clock_no_rota_days ? `${r.clock_no_rota_days} gg timbrati fuori turno` : '', r.absence_days ? `${r.absence_days} gg assenza` : ''].filter(Boolean).join(' · ');
+      tr.innerHTML = `<td>${esc(r.full_name)}</td><td class="num">${num(r.planned_h, 1)}</td><td class="num">${num(r.worked_h, 1)}</td>`;
+      const tdc = document.createElement('td'); tdc.className = 'num'; const ci = document.createElement('input'); ci.type = 'number'; ci.step = '0.5'; ci.min = '0'; ci.style.width = '64px'; ci.value = Number(r.contract_h); tdc.append(ci); tr.append(tdc);
+      tr.insertAdjacentHTML('beforeend', `<td class="num${Number(r.overtime_h) > 0 ? ' ko' : ''}">${num(r.overtime_h, 1)}</td><td class="num">${Number(r.overtime_eur) ? '€ ' + num(r.overtime_eur, 0) : '–'}</td><td class="num">${r.sunday_h ? num(r.sunday_h, 1) : '–'}</td><td><small>${esc(notes)}</small></td>`);
+      const tds = document.createElement('td'); tds.append(saveBtn(async () => { await upd('staff', { id: r.staff_id }, { contract_hours_week: nOrNull(ci.value) }); loadRota(); })); tr.append(tds);
+      tbl.append(tr);
+    });
+    box.append(tbl);
+    const four = {}; (data || []).forEach(r => { const f = four[r.full_name] = four[r.full_name] || { w: 0, o: 0, e: 0 }; f.w += +r.worked_h; f.o += +r.overtime_h; f.e += +r.overtime_eur; });
+    const names = Object.keys(four);
+    if (names.length) { const n = document.createElement('div'); n.className = 'status'; n.style.marginTop = '8px'; n.textContent = 'Ultime 4 settimane: ' + names.map(k => `${k} ${num(four[k].w, 0)} h, straordinari ${num(four[k].o, 1)} h (€ ${num(four[k].e, 0)})`).join(' · '); box.append(n); }
+  }
+  $('rota-prev').onclick = () => { rotaMon.setDate(rotaMon.getDate() - 7); loadRota(); };
+  $('rota-next').onclick = () => { rotaMon.setDate(rotaMon.getDate() + 7); loadRota(); };
+  $('rota-copy').onclick = async () => { const prev = new Date(rotaMon); prev.setDate(prev.getDate() - 7); const { data, error } = await sb.rpc('copy_rota_week', { p_from: isoDay(prev), p_to: isoDay(rotaMon) }); if (error) return toast(error.message, 'err'); toast(`${data} turni copiati (le celle già compilate restano)`); loadRota(); };
+
   async function loadStaffCard() {
     const { data } = await sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name');
     renderStaff(data || []);

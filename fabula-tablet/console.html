@@ -136,6 +136,7 @@ table.par input[type=text],table.par input[type=email],table.par input[type=tel]
     <button class="tab" role="tab" data-tab="trend">Andamento</button>
     <button class="tab" role="tab" data-tab="anag">Anagrafiche <span class="n" id="n-anag"></span></button>
     <button class="tab" role="tab" data-tab="ricette">Ricette</button>
+    <button class="tab" role="tab" data-tab="turni">Turni</button>
   </nav>
 
   <!-- OGGI: numbers, the human gate, compliance -->
@@ -188,6 +189,16 @@ table.par input[type=text],table.par input[type=email],table.par input[type=tel]
   </div>
 
   <!-- RICETTE: dosing steps the tablet follows -->
+  <!-- TURNI: weekly rota + hours and overtime from badge clocks -->
+  <div class="pane" id="p-turni">
+    <div class="card"><h3>Turni della settimana</h3>
+      <div class="row" style="gap:8px;align-items:center;margin-bottom:8px"><button class="btn sm sec" id="rota-prev">◀</button><b id="rota-week"></b><button class="btn sm sec" id="rota-next">▶</button>
+        <span style="flex:1"></span><button class="btn sm sec" id="rota-copy">Copia settimana precedente</button><button class="btn sm" id="rota-save">Salva settimana</button></div>
+      <div class="hint">Scrivi l'orario come <b>05-14</b> o <b>05:30-13:30/30</b> (/30 = pausa in minuti) e, se vuoi, il reparto dopo uno spazio: <b>05-14 banco</b>. Lettere: <b>F</b> ferie, <b>P</b> permesso, <b>M</b> malattia, <b>R</b> riposo. Cella vuota = nessun turno.</div>
+      <div id="rota-grid"></div></div>
+    <div class="card" style="margin-top:14px"><h3>Ore lavorate e straordinari</h3><div class="hint">Dalle timbrature del badge sul tablet. Straordinario = ore oltre il contratto settimanale (o oltre il limite giornaliero, se impostato in Configurazione → Lavoro). € = costo orario × (1 + maggiorazione).</div><div id="rota-hours"></div></div>
+  </div>
+
   <div class="pane" id="p-ricette">
     <div class="hint" style="margin-bottom:12px">Dosi per kg di latte (o di siero per la ricotta), per kg di prodotto finito o per lotto. Il tablet le trasforma nelle quantità da pesare a ogni lotto; ogni modifica vale da oggi e la storia resta. "↑" = arrotonda per eccesso (pezzi).</div>
     <div id="recipes"></div>
