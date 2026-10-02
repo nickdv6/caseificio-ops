@@ -4,6 +4,8 @@
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
+  // Mouse wheel over a focused number field must never change its value (keyboard only).
+  document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
   let staff = null, scanner = null, current = null;
 
   // ---------- UI helpers ----------
