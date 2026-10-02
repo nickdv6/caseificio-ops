@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>La Perla · Console</title>
+<title>La Perla · Amministrazione</title>
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
 <style>
-/* Layout: owner console — four operational tabs (Oggi · Operazioni · Andamento · Anagrafiche); Oggi holds the numbers and the approval gate. Configuration lives in admin.html. */
+/* Layout: admin page — same visual system as the console, but only configuration: Bot · Parametri · Macchine e scadenze · Account. Owner/partner only. */
 :root{
   --bg:#f7f5f0; --paper:#fff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb; --tile:#eef3ef;
   --accent:#0f6b4f; --accent-fg:#fff; --warn:#b4472c; --good:#0f6b4f;
@@ -111,13 +111,15 @@ details.card>.body{padding:0 14px 12px}
 .grp{margin-top:10px}.grp>summary{cursor:pointer;font-weight:600;padding:6px 0;color:var(--fg);list-style:none;display:flex;justify-content:space-between}
 .grp>summary::-webkit-details-marker{display:none}.grp>summary::after{content:"▸";color:var(--muted)}.grp[open]>summary::after{content:"▾"}
 .pw{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+
+.tab[data-tab=bots] .n{background:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
 <header>
-  <div><h1>La Perla del Cilento <span id="simbadge" class="badge" hidden>simulazione</span></h1><div class="sub" id="sub">Console di gestione</div></div>
-  <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="pacchetto.html" id="btn-pkg" hidden style="text-decoration:none">Pacchetto mensile</a><a class="btn sec" href="admin.html" id="btn-admin" hidden style="text-decoration:none">⚙ Amministrazione</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
+  <div><h1>La Perla del Cilento <span class="badge" style="background:var(--muted)">amministrazione</span></h1><div class="sub">Impostazioni dell'app e dei bot · non è la console operativa</div></div>
+  <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="console.html" style="text-decoration:none">← Console</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
 </header>
 
 <section class="view login" id="v-login">
@@ -126,65 +128,43 @@ details.card>.body{padding:0 14px 12px}
   <button class="btn" id="btn-login">Entra</button>
 </section>
 
+<section class="view" id="v-denied"><div class="empty" style="padding:40px 0;text-align:center">Questa pagina è riservata a titolare e partner. <a href="console.html">Torna alla console</a>.</div></section>
+
 <section class="view" id="v-main">
   <nav class="tabs" role="tablist" id="tabs">
-    <button class="tab" role="tab" data-tab="oggi" aria-selected="true">Oggi <span class="n" id="n-oggi"></span></button>
-    <button class="tab" role="tab" data-tab="ops">Operazioni <span class="n" id="n-ops"></span></button>
-    <button class="tab" role="tab" data-tab="trend">Andamento</button>
-    <button class="tab" role="tab" data-tab="anag">Anagrafiche <span class="n" id="n-anag"></span></button>
+    <button class="tab" role="tab" data-tab="bots" aria-selected="true">Bot</button>
+    <button class="tab" role="tab" data-tab="params">Parametri</button>
+    <button class="tab" role="tab" data-tab="maint">Macchine e scadenze</button>
+    <button class="tab" role="tab" data-tab="account">Account</button>
   </nav>
 
-  <!-- OGGI: numbers, the human gate, compliance -->
-  <div class="pane active" id="p-oggi">
-    <div class="tiles" id="tiles"></div>
-    <h2>Da approvare</h2>
-    <div id="approvals"></div>
-    <div class="grid2" style="margin-top:16px">
-      <div class="card"><h3>Conformità ieri</h3><div id="haccp"></div></div>
-      <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
-    </div>
+  <div class="pane active" id="p-bots">
+    <div class="card"><h3>Bot programmati</h3><div class="hint">Ogni bot legge una funzione del database una volta al giorno e scrive al massimo una proposta in "Da approvare". Orari in ora italiana; per cambiarli serve l'editor delle attività programmate.</div><div id="bots"></div></div>
+    <details class="card" style="margin-top:16px"><summary><h3>Registro esecuzioni · ultime 40</h3></summary><div class="body" id="runs"></div></details>
   </div>
 
-  <!-- OPERAZIONI: orders in and out, milk supply -->
-  <div class="pane" id="p-ops">
-    <div class="grid2 two">
-      <div class="col">
-        <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati, pronti da inviare: email, WhatsApp o stampa (con QR per la ricezione), poi "Segna inviato".</div><div id="po-send"></div></div>
-        <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone, tu approvi in Oggi.</div><div id="procurement"></div></div>
-        <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi.</div><div id="wholesale"></div></div>
-      </div>
-      <div class="col">
-        <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="hint">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
-      </div>
-    </div>
+  <div class="pane" id="p-params">
+    <div class="card" style="max-width:720px"><h3>Parametri dei bot</h3><div class="hint">Ogni gruppo si apre con un tocco. Salva una riga alla volta; il bot usa il nuovo valore dalla prossima esecuzione.</div><div id="set-params"></div></div>
   </div>
 
-  <!-- ANDAMENTO: charts and bot log -->
-  <div class="pane" id="p-trend">
-    <div class="grid2">
-      <div class="card"><h3>Resa mozzarella · 30 giorni</h3><div id="chart-yield"></div></div>
-      <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="chart-sales"></div><div class="legend"><span><i style="background:var(--series-1)"></i>Banco</span><span><i style="background:var(--series-2)"></i>Ingrosso</span></div></div>
-    </div>
-  </div>
-
-  <!-- ANAGRAFICHE: who we buy from, who we sell to, who works here -->
-  <div class="pane" id="p-anag">
+  <div class="pane" id="p-maint">
     <div class="set-grid">
-      <div class="card"><h3>Fornitori e clienti</h3><div class="hint">"Fornitore 1", "Cliente 1" sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito.</div><div id="set-parties"></div></div>
-      <div>
-        <div class="card"><h3>Ordini fissi ingrosso · kg al giorno</h3><div class="hint">Il bot Ordini ingrosso prenota queste quantità per il giorno dopo e prepara il messaggio di conferma.</div><div id="set-standing"></div></div>
-        <div class="card" style="margin-top:16px"><h3>Personale · formazione HACCP</h3><div id="set-staff"></div></div>
-      </div>
+      <details class="card" open><summary><h3>Macchine · tarature e manutenzioni</h3></summary><div class="body" id="set-equipment"></div></details>
+      <details class="card" open><summary><h3>Scadenze e adempimenti</h3></summary><div class="body"><div id="set-deadlines"></div>
+        <div class="row"><input type="text" id="dl-new-subject" placeholder="Nuova scadenza (descrizione)" class="wide"><input type="date" id="dl-new-due"><input type="text" id="dl-new-int" placeholder="ogni N giorni" style="width:110px"><button class="btn sm" id="dl-add">Aggiungi</button></div></div></details>
     </div>
   </div>
 
+  <div class="pane" id="p-account">
+    <div class="card" style="max-width:520px"><h3>Account</h3><div class="hint">Cambia la password di accesso (console, amministrazione e tablet).</div>
+      <div class="pw"><input type="password" id="pw-new" placeholder="Nuova password (min 8 caratteri)" autocomplete="new-password"><button class="btn sm" id="pw-save">Cambia</button></div></div>
+  </div>
 </section>
 </div>
-<div class="tip" id="tip"></div>
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
-<script src="console.js"></script>
+<script src="admin.js"></script>
 </body>
 </html>

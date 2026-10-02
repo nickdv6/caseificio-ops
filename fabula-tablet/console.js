@@ -1,4 +1,4 @@
-/* La Perla owner console — five tabs. Oggi: daily_brief() tiles + approvals gate; Operazioni: PO send, wholesale, farm supply; Andamento: charts; Anagrafiche: parties, standing orders, staff; Impostazioni: settings, machines, deadlines, account. */
+/* La Perla owner console — operations only. Oggi: daily_brief() tiles + approvals gate; Operazioni: PO send, wholesale, farm supply; Andamento: charts; Anagrafiche: parties, standing orders, staff. Bot parameters, machines, deadlines and account live in admin.html. */
 (() => {
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
@@ -17,7 +17,7 @@
     if (!session) return show('login');
     const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
     staff = data || { id: null, full_name: session.user.email, role: 'owner' };
-    $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false; $('btn-pkg').hidden = false;
+    $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false; $('btn-pkg').hidden = false; $('btn-admin').hidden = !['owner', 'partner'].includes(staff.role);
     show('main'); load(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
@@ -27,20 +27,19 @@
 
   // ---------- data ----------
   async function load() {
-    const [brief, appr, prods, prod, sales, runs] = await Promise.all([
+    const [brief, appr, prods, prod, sales] = await Promise.all([
       sb.rpc('daily_brief'),
       sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table').eq('status', 'pending').order('requested_at'),
       sb.from('products').select('sku, name, unit'),
       sb.from('v_daily_production').select('batch_date, product, yield_pct, output_kg').ilike('product', 'Mozzarella%').gte('batch_date', daysAgo(30)).order('batch_date'),
-      sb.from('v_daily_sales').select('order_date, channel, revenue_eur').gte('order_date', daysAgo(30)).order('order_date'),
-      sb.from('agent_runs').select('agent, started_at, status, summary, error').order('started_at', { ascending: false }).limit(8)
+      sb.from('v_daily_sales').select('order_date, channel, revenue_eur').gte('order_date', daysAgo(30)).order('order_date')
     ]);
     if (brief.error) return toast('daily_brief: ' + brief.error.message, 'err');
     const b = brief.data;
     $('simbadge').hidden = !b.is_simulation;
     $('sub').textContent = 'Brief di ' + dateIt(b.date);
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
-    renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals); renderRuns(runs.data || []);
+    renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals);
     badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
     if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); }
     yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
@@ -156,15 +155,10 @@
   function renderProcurement(list) {
     $('procurement').innerHTML = (list && list.length) ? '<table><tr><th>Articolo</th><th class="num">Giacenza</th><th class="num">Copertura</th><th class="num">Riordino</th></tr>' + list.map(p => `<tr><td>${esc(p.name)}</td><td class="num">${num(p.on_hand, 0)}</td><td class="num ${p.days_cover != null && p.days_cover < 5 ? 'ko' : ''}">${p.days_cover != null ? num(p.days_cover) + ' gg' : '–'}</td><td class="num">${num(p.reorder_qty, 0)}</td></tr>`).join('') + '</table>' : '<div class="empty">Scorte consumabili sopra il punto di riordino.</div>';
   }
-  function renderRuns(list) {
-    $('runs').innerHTML = list.length ? '<table>' + list.map(r => `<tr><td>${esc(r.agent)}</td><td class="status">${new Date(r.started_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
-  }
-
   // ---------- settings & dates editor ----------
-  const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', farm: 'Masseria (latte)', energy: 'Energia', labor: 'Lavoro' };
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, set: () => loadSettings() };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); } };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -182,96 +176,17 @@
     badge('n-anag', (pl.data || []).length);
     $('n-ops').title = `${(po.data || []).length} ordini da inviare · ${(ws.data || []).length} consegne ingrosso`;
   }
-  async function loadSettings() {
-    const [s, e, d] = await Promise.all([
-      sb.from('settings').select('*').order('key'),
-      sb.from('v_equipment_schedule').select('*'),
-      sb.from('compliance_deadlines').select('*').is('done_on', null).order('due_on', { nullsFirst: false })]);
-    renderParams(s.data || []); renderEquipment(e.data || []); renderDeadlines(d.data || []);
-  }
   async function loadStaffCard() {
     const { data } = await sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name');
     renderStaff(data || []);
   }
-  $('pw-save').onclick = async () => {
-    const pw = $('pw-new').value; if (pw.length < 8) return toast('Minimo 8 caratteri', 'err');
-    $('pw-save').disabled = true; const { error } = await sb.auth.updateUser({ password: pw }); $('pw-save').disabled = false;
-    if (error) return toast(error.message, 'err'); $('pw-new').value = ''; toast('Password cambiata');
-  };
   const canEdit = () => ['owner', 'partner'].includes(staff.role);
   const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
   const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
   const dOrNull = v => v || null, nOrNull = v => v === '' || v == null ? null : Number(v);
 
-  function renderParams(rows) {
-    const box = $('set-params'); box.innerHTML = '';
-    if (!canEdit()) { const n = document.createElement('div'); n.className = 'empty'; n.textContent = 'Solo titolare e partner possono modificare i parametri.'; box.append(n); }
-    let last = '', det = null, first = true;
-    rows.forEach(r => {
-      const g = r.key.split('.')[0];
-      if (g !== last) {
-        last = g; det = document.createElement('details'); det.className = 'grp'; det.open = first; first = false;
-        const sm = document.createElement('summary'); sm.innerHTML = `<span>${esc(GROUPS[g] || g)}</span><span class="status">${rows.filter(x => x.key.split('.')[0] === g).length} parametri</span>`;
-        det.append(sm); box.append(det);
-      }
-      const row = document.createElement('div'); row.className = 'set-row';
-      row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small></div>`;
-      const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
-      const inp = document.createElement('input'); inp.type = 'text'; inp.value = r.value; inp.inputMode = 'decimal'; inp.disabled = !canEdit(); inp.oninput = () => row.classList.add('dirty');
-      right.append(inp);
-      if (canEdit()) right.append(saveBtn(async () => { if (inp.value.trim() === '' || isNaN(Number(inp.value.replace(',', '.')))) throw new Error('Inserisci un numero'); await upd('settings', { key: r.key }, { value: String(Number(inp.value.replace(',', '.'))) }); row.classList.remove('dirty'); }));
-      row.append(right); det.append(row);
-    });
-  }
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
   const dueCls = s => { if (!s) return ''; const d = (new Date(s) - new Date(new Date().toISOString().slice(0, 10))) / 864e5; return d < 0 ? 'ko' : d <= 30 ? 'ko' : ''; };
-  function renderEquipment(rows) {
-    const box = $('set-equipment'); box.innerHTML = '';
-    rows.filter(r => r.active).forEach(r => {
-      const c = document.createElement('details'); c.className = 'eq';
-      const nc = r.next_calibration_on, nm = r.next_maintenance_on, unset = !nc && !nm;
-      c.innerHTML = `<summary class="h"><b>${esc(r.name)} <small class="status">${esc(r.code)}</small></b><span class="status">${unset ? '<span class="ko">date da impostare</span>' : `taratura <span class="${dueCls(nc)}">${fmtD(nc)}</span> · manutenzione <span class="${dueCls(nm)}">${fmtD(nm)}</span>`}</span></summary>
-        <div class="f">
-          <div><label>Ultima taratura</label><input type="date" data-k="last_calibrated_on" value="${r.last_calibrated_on || ''}"></div>
-          <div><label>Ogni (giorni)</label><input type="number" data-k="calibration_interval_days" value="${r.calibration_interval_days ?? ''}" placeholder="—"></div>
-          <div><label>Ultima manutenzione</label><input type="date" data-k="last_maintenance_on" value="${r.last_maintenance_on || ''}"></div>
-          <div><label>Ogni (giorni)</label><input type="number" data-k="maintenance_interval_days" value="${r.maintenance_interval_days ?? ''}" placeholder="—"></div>
-          <div style="grid-column:1/-1"><label>Tecnico / contatto</label><input type="text" data-k="technician_contact" value="${esc(r.technician_contact || '')}" placeholder="nome, telefono"></div>
-        </div>`;
-      const row = document.createElement('div'); row.className = 'row';
-      row.append(saveBtn(async () => {
-        const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
-        await upd('equipment', { id: r.id }, v); loadSettings();
-      }));
-      c.append(row); box.append(c);
-    });
-  }
-  function renderDeadlines(rows) {
-    const box = $('set-deadlines'); box.innerHTML = '';
-    if (!rows.length) box.innerHTML = '<div class="empty">Nessuna scadenza aperta.</div>';
-    rows.forEach(r => {
-      const c = document.createElement('details'); c.className = 'eq';
-      c.innerHTML = `<summary class="h"><b>${esc(r.subject_it)}</b><span class="status ${dueCls(r.due_on) || (r.due_on ? '' : 'ko')}">${r.due_on ? 'scade ' + fmtD(r.due_on) : 'data da impostare'}</span></summary>
-        <div class="f">
-          <div><label>Scadenza</label><input type="date" data-k="due_on" value="${r.due_on || ''}"></div>
-          <div><label>Ogni (giorni)</label><input type="number" data-k="interval_days" value="${r.interval_days ?? ''}" placeholder="una tantum"></div>
-          <div><label>Responsabile</label><input type="text" data-k="responsible" value="${esc(r.responsible || '')}"></div>
-          <div><label>Fornitore / contatto</label><input type="text" data-k="contact" value="${esc(r.contact || '')}"></div>
-          <div style="grid-column:1/-1"><label>Note</label><input type="text" data-k="notes" value="${esc(r.notes || '')}"></div>
-        </div>`;
-      const row = document.createElement('div'); row.className = 'row';
-      row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); loadSettings(); }));
-      const done = document.createElement('button'); done.className = 'btn sm sec'; done.textContent = 'Fatto oggi';
-      done.onclick = async () => { done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadSettings(); };
-      row.append(done); c.append(row); box.append(c);
-    });
-  }
-  $('dl-add').onclick = async () => {
-    const subj = $('dl-new-subject').value.trim(); if (!subj) return toast('Scrivi la descrizione', 'err');
-    const { error } = await sb.from('compliance_deadlines').insert({ kind: 'other', subject_it: subj, due_on: dOrNull($('dl-new-due').value), interval_days: nOrNull($('dl-new-int').value), responsible: 'partner' });
-    if (error) return toast(error.message, 'err');
-    $('dl-new-subject').value = ''; $('dl-new-due').value = ''; $('dl-new-int').value = ''; toast('Aggiunta'); loadSettings();
-  };
   function renderStaff(rows) {
     const box = $('set-staff'); box.innerHTML = '';
     rows.forEach(r => {
