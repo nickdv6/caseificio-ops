@@ -121,7 +121,7 @@
     const age = a => Math.max(0, Math.round((Date.now() - new Date(a.requested_at)) / 864e5));
     box.innerHTML = list.map(a => { const v = approvalView(a, today); return `
       <div class="appr" data-id="${a.id}">
-        <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><span class="t">${v.title}</span><div class="by">proposto da ${esc(String(a.requested_by || '').replace('agent:', 'bot ').replace('_', ' '))} · ${age(a) === 0 ? 'oggi' : age(a) + ' g fa'}</div></div><div class="amt">${v.amount}</div></div>
+        <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><div class="t">${v.title}</div><div class="by">proposto da ${esc(String(a.requested_by || '').replace('agent:', 'bot ').replace('_', ' '))} · ${age(a) === 0 ? 'oggi' : age(a) + ' g fa'}</div></div><div class="amt">${v.amount}</div></div>
         ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
         <div class="row"><input type="text" placeholder="Nota (facoltativa)" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>
       </div>`; }).join('');
