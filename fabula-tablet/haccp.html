@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>La Perla · HACCP</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Food-safety console (v0.28): HACCP plan with editable limits, register (holds, NCs, recent CCP logs), sampling plan + lab results, pest control, training matrix, instruments. Same look as console.html. */
+:root{
+  --bg:#f6f4ef; --paper:#fff; --fg:#161514; --muted:#5d6168; --rule:#e4e0d6; --tile:#eef2f7;
+  --accent:#1e3a5f; --accent-fg:#fff; --warn:#b4472c; --good:#2f7a4d; --gold:#c99a3c;
+  --display:"Fraunces",Georgia,"Times New Roman",serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.35;padding-block:0 32px;padding-inline:16px}
+.wrap{max-width:1180px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:3px solid var(--accent);margin-bottom:16px;flex-wrap:wrap}
+header h1{font-family:var(--display);font-size:1.8rem;margin:0;font-weight:700}
+header .sub{color:var(--muted);font-size:.9rem}
+.view{display:none}.view.active{display:block}
+.tabs{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--rule);margin:0 -16px 16px;padding:6px 16px 0;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--body);padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.tab[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent)}
+.tab .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px}.tab .n.on{display:inline-block}
+.pane{display:none}.pane.active{display:block}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:10px 12px;min-width:0}
+.tile .l{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.tile .v{font-family:var(--display);font-size:2rem;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.tile.bad .v{color:var(--warn)}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;min-width:0;margin-bottom:16px;overflow-x:auto}
+.card h3{font-family:var(--display);font-size:1.05rem;text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px;color:var(--muted)}
+.hint{font-size:.85rem;color:var(--muted);margin-bottom:8px}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+td,th{text-align:left;padding:6px 6px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.nw{white-space:nowrap}
+.empty{color:var(--muted);font-style:italic;padding:8px 0}
+.pill{display:inline-block;font-size:.75rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:10px;border:1.5px solid var(--rule);color:var(--muted);white-space:nowrap}
+.pill.ok{border-color:var(--good);color:var(--good)}.pill.ko{border-color:var(--warn);color:var(--warn);background:#fbefeb}.pill.warn{border-color:var(--gold);color:#8a6a24}.pill.ccp{border-color:var(--accent);color:var(--accent)}
+.ok{color:var(--good)}.ko{color:var(--warn);font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.btn{border:0;border-radius:6px;padding:8px 14px;font:600 .95rem var(--body);cursor:pointer;background:var(--accent);color:var(--accent-fg);text-decoration:none;display:inline-block}
+.btn.sec{background:var(--paper);color:var(--fg);border:1px solid var(--rule)}
+.btn.warn{background:var(--warn);color:#fff}.btn.sm{padding:4px 9px;font-size:.82rem}
+.btn:disabled{opacity:.5}
+input,select,textarea{font:.95rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);min-width:0}
+input[type=number]{width:84px;font-variant-numeric:tabular-nums}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 12px;align-items:end}
+.form label{display:block;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.form input,.form select{width:100%}
+details.more{font-size:.88rem;color:var(--muted)}details.more summary{cursor:pointer;color:var(--accent);font-weight:600}
+details.more dl{display:grid;grid-template-columns:140px 1fr;gap:4px 10px;margin:6px 0}details.more dt{font-weight:600;color:var(--fg)}details.more dd{margin:0}
+.toast{position:fixed;left:16px;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:12px 16px;border-radius:8px;font-weight:600;display:none;z-index:9;max-width:620px;margin:0 auto}
+.toast.err{background:var(--warn);color:#fff}
+.login{max-width:380px;margin:60px auto}.login label{display:block;font-size:.85rem;text-transform:uppercase;color:var(--muted);margin-top:12px}.login input{width:100%;margin-top:4px;font-size:1.1rem}.login .btn{width:100%;margin-top:16px;padding:12px}
+@media (max-width:640px){ header h1{font-size:1.4rem} details.more dl{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>Sicurezza alimentare</h1><div class="sub">Piano HACCP, analisi, infestanti, formazione, strumenti · La Perla del Cilento</div></div>
+  <div class="row" style="margin:0"><span class="sub" id="who"></span><a class="btn sec" href="console.html">← Console</a><button class="btn sec" id="btn-refresh">Aggiorna</button></div>
+</header>
+
+<section class="view login" id="v-login">
+  <label for="email">Email</label><input id="email" type="email" autocomplete="username">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+  <button class="btn" id="btn-login">Entra</button>
+</section>
+
+<section class="view" id="v-main">
+  <div class="tiles" id="tiles"></div>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="registro" aria-selected="true">Registro <span class="n" id="n-registro"></span></button>
+    <button class="tab" role="tab" data-tab="piano">Piano HACCP</button>
+    <button class="tab" role="tab" data-tab="analisi">Analisi <span class="n" id="n-analisi"></span></button>
+    <button class="tab" role="tab" data-tab="infestanti">Infestanti</button>
+    <button class="tab" role="tab" data-tab="formazione">Formazione <span class="n" id="n-formazione"></span></button>
+    <button class="tab" role="tab" data-tab="strumenti">Strumenti <span class="n" id="n-strumenti"></span></button>
+  </nav>
+
+  <div class="pane active" id="p-registro">
+    <div class="card"><h3>Lotti bloccati</h3><div class="hint">Un lotto si blocca da solo quando un CCP esce dal limite o un'analisi di sicurezza è non conforme. Il tablet non lo vende né lo spedisce. Lo sblocco richiede una motivazione.</div><div id="holds"></div></div>
+    <div class="card"><h3>Non conformità aperte</h3><div id="ncs"></div></div>
+    <div class="card"><h3>Registrazioni HACCP · ultimi 7 giorni</h3><div id="logs"></div></div>
+  </div>
+
+  <div class="pane" id="p-piano">
+    <div class="card"><h3>Punti critici e prerequisiti</h3><div class="hint">Limite critico = oltre questo valore si apre una non conformità e il lotto si blocca. Allerta = avviso al tablet, nessun blocco. Modificabili solo da titolare/soci, dopo averlo deciso con il consulente HACCP. Il piano completo è nel documento "Piano HACCP — La Perla del Cilento".</div><div id="plan"></div></div>
+  </div>
+
+  <div class="pane" id="p-analisi">
+    <div class="card"><h3>Piano di campionamento</h3><div class="hint" id="plan-state"></div><div id="labplan"></div></div>
+    <div class="card"><h3>Campioni e referti</h3><div class="hint">Un campione nasce dal tablet (🛡 HACCP → Campione) o qui con "Prelevato". Quando arriva il referto: esito, numero, PDF. Un esito non conforme apre la NC; se è un'analisi di sicurezza blocca il lotto e chiede la valutazione del ritiro.</div><div id="samples"></div></div>
+  </div>
+
+  <div class="pane" id="p-infestanti">
+    <div class="card"><h3>Postazioni</h3><div id="stations"></div></div>
+    <div class="card"><h3>Visita della ditta</h3><div class="hint">Carica il rapporto firmato: chiude la scadenza e apre la successiva (ogni 45 giorni). Il giro interno settimanale si fa dal tablet.</div>
+      <div class="form"><div><label>Ditta</label><input id="pc-company" type="text"></div><div><label>N. rapporto</label><input id="pc-report" type="text"></div><div><label>Data</label><input id="pc-date" type="date"></div><div><label>Prodotti usati</label><input id="pc-products" type="text"></div><div><label>Rapporto (PDF/foto)</label><input id="pc-file" type="file" accept="application/pdf,image/*"></div></div>
+      <div class="hint" style="margin-top:8px">Postazioni con attività (lascia vuoto se tutto ok):</div><div id="pc-findings" class="form"></div>
+      <div class="row"><input id="pc-actions" type="text" placeholder="Azioni della ditta" style="flex:1"><button class="btn" id="pc-save">Registra visita</button></div></div>
+    <div class="card"><h3>Ultime ispezioni</h3><div id="inspections"></div></div>
+  </div>
+
+  <div class="pane" id="p-formazione">
+    <div class="card"><h3>Matrice formazione</h3><div class="hint">Corsi obbligatori per ruolo. Rischio 2 (latte e formaggi): 8 h + 3 h ogni 3 anni · responsabile: 12 h + 6 h ogni 3 anni (Regione Campania).</div><div id="matrix"></div></div>
+    <div class="card"><h3>Registra un attestato</h3>
+      <div class="form"><div><label>Persona</label><select id="tr-staff"></select></div><div><label>Oppure nome (non in anagrafica)</label><input id="tr-name" type="text"></div><div><label>Corso</label><select id="tr-course"></select></div><div><label>Ente</label><input id="tr-provider" type="text"></div><div><label>Data attestato</label><input id="tr-date" type="date"></div><div><label>Ore</label><input id="tr-hours" type="number" step="0.5"></div><div><label>Attestato (PDF)</label><input id="tr-file" type="file" accept="application/pdf,image/*"></div></div>
+      <div class="row"><button class="btn" id="tr-save">Salva attestato</button></div></div>
+  </div>
+
+  <div class="pane" id="p-strumenti">
+    <div class="card"><h3>Strumenti di misura</h3><div class="hint">Verifica interna dal tablet (codice CAL:&lt;strumento&gt;). Taratura esterna o verificazione metrologica qui, con il certificato. Uno strumento fuori tolleranza è fuori servizio finché una verifica non torna ok.</div><div id="instruments"></div></div>
+    <div class="card"><h3>Registra una taratura esterna / certificato</h3>
+      <div class="form"><div><label>Strumento</label><select id="ce-code"></select></div><div><label>Centro / tecnico</label><input id="ce-provider" type="text"></div><div><label>N. certificato</label><input id="ce-cert" type="text"></div><div><label>Data</label><input id="ce-date" type="date"></div><div><label>Scarto max rilevato</label><input id="ce-dev" type="number" step="0.01"></div><div><label>Certificato (PDF)</label><input id="ce-file" type="file" accept="application/pdf,image/*"></div></div>
+      <div class="row"><button class="btn" id="ce-save">Salva taratura</button></div></div>
+    <div class="card"><h3>Ultime verifiche</h3><div id="checks"></div></div>
+  </div>
+</section>
+</div>
+<div class="toast" id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="haccp.js"></script>
+</body>
+</html>

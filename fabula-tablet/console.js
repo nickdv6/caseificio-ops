@@ -71,7 +71,7 @@
 
   // ---------- approvals: one structured card per request, facts laid out as a grid instead of a sentence ----------
   let PRODUCTS = {};
-  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], content_post: ['Post social', 'milk'], other: ['Richiesta', ''] };
+  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], content_post: ['Post social', 'milk'], recall_assessment: ['Sicurezza alimentare', ''], other: ['Richiesta', ''] };
   const WDAY = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
   const dShort = s => s ? WDAY[new Date(s + 'T12:00:00').getDay()] + ' ' + fmtD(s) : '—';
   const fact = (l, v, cls = '') => `<div><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
@@ -113,6 +113,13 @@
         title = `Post ${esc(p.platform || '')}`;
         facts = fact('Canale', esc(p.platform || '—')) + fact('Problemi nel testo', blk ? `${blk} da correggere` : 'nessuno', blk ? 'ko' : '') + fact('Avvisi', String(cl.filter(c => c.severity === 'warn').length));
         more = `<details open><summary>Testo</summary><div style="white-space:pre-wrap;color:var(--fg)">${esc(p.caption_it || '')}</div>${cl.filter(c => c.severity !== 'info').map(c => `<div class="${c.severity === 'block' ? 'ko' : 'status'}">• ${esc(c.message)}</div>`).join('')}<div><a href="marketing.html#calendario">Apri nel calendario ↗</a></div></details>`;
+        break;
+      }
+      case 'recall_assessment': {
+        const dist = p.distribution || [];
+        title = `Valutare ritiro/richiamo · lotto ${esc(p.lot || 'n/d')}`;
+        facts = fact('Analisi', esc(p.test || '')) + fact('Campione', esc(p.sample_code || '')) + fact('Destinazioni', String(dist.length), dist.length ? 'ko' : '');
+        more = `<details open><summary>A chi è andato il lotto</summary>${dist.length ? dist.map(d => `<div>• ${esc(d.on_date || '')} · ${esc(d.channel || '')} · ${esc(d.customer || 'banco')} · ${num(d.qty)} kg</div>`).join('') : '<div>Nessuna uscita registrata: il lotto è tutto in giacenza (bloccato).</div>'}<div style="margin-top:6px">Approva = ritiro/richiamo deciso (avvisare ASL Salerno e clienti) · Rifiuta = non necessario, motivare nella nota. <a href="haccp.html#registro">Apri HACCP</a></div></details>`;
         break;
       }
       case 'dop_declaration':

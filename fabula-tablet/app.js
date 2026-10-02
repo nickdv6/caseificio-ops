@@ -33,7 +33,11 @@
   async function save(ops) {                 // ops: [{table, row}] executed in order; later rows may reference earlier via $0.id
     if (!navigator.onLine) { setQueue([...queue(), { at: Date.now(), ops }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
     try { await run(ops); return true; }
-    catch (e) { console.error(e); setQueue([...queue(), { at: Date.now(), ops }]); toast('Rete assente: messo in coda', 'err'); return true; }
+    catch (e) {
+      console.error(e);
+      if (e && e.code && !/fetch|network/i.test(e.message || '')) { toast(e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
+      setQueue([...queue(), { at: Date.now(), ops }]); toast('Rete assente: messo in coda', 'err'); return true;
+    }
   }
   async function run(ops) {
     const out = [];
@@ -109,7 +113,8 @@
     data.forEach(t => {
       const d = document.createElement('div'); d.className = 'task ' + t.status;
       d.innerHTML = `<div><div>${t.title_it}</div><div class="code">${t.equipment_code || t.code}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
-      d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : t.code === 'T-COUNT' ? stepStockCount() : t.code === 'T-CLEAN' ? handleCode('CLEAN:') : startScan();
+      d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : t.code === 'T-COUNT' ? stepStockCount() : t.code === 'T-CLEAN' ? handleCode('CLEAN:')
+        : t.code === 'T-CL' ? handleCode('CCP:PRP-WATER-CL') : t.code === 'T-PEST' ? handleCode('PEST:') : startScan();
       box.append(d);
     });
   }
@@ -177,6 +182,11 @@
       if (kind === 'SHIP') return await stepShipList();
       if (kind === 'METER') return stepMeter(ref || 'elec_main');
       if (kind === 'CLEAN') return stepClean();
+      if (kind === 'CCP') { const [cp, ...lot] = rest; return await stepCcp(cp, lot.join(':')); }   // CCP:<control point>[:<lot>]
+      if (kind === 'CAL') return await stepEquipment(ref);
+      if (kind === 'PEST') return await stepPest();
+      if (kind === 'SAMPLE') return await stepSample(ref);
+      if (kind === 'HACCP') return stepHaccpMenu();
       if (kind === 'STAFF') {                       // one scan = clock in, next scan = clock out
         const { data: r, error } = await sb.rpc('toggle_shift', { p_badge: code });
         if (error) throw error;
@@ -195,26 +205,29 @@
     const { data: eq } = await sb.from('equipment').select('*').eq('code', code).single();
     if (!eq) throw new Error('Macchina sconosciuta: ' + code);
     if (eq.kind === 'pos') return stepZ(eq);
-    const { data: cp } = await sb.from('haccp_control_points').select('*').eq('equipment_id', eq.id).eq('active', true).maybeSingle();
+    if (eq.kind === 'thermometer' || eq.kind === 'scale' || eq.code.startsWith('PH-') || current.code.startsWith('CAL:')) return stepCalibration(eq);
+    const { data: cp } = await sb.from('haccp_control_points').select('*').eq('equipment_id', eq.id).eq('active', true).neq('code', 'CCP-MILK-TEMP').maybeSingle();
     const lim = cp ? `limite ${cp.min_value ?? ''}${cp.min_value != null && cp.max_value != null ? '–' : ''}${cp.max_value ?? ''} ${cp.unit || ''}`.replace('limite –', 'limite max ') : '';
     const t = field('temp', 'Temperatura °C', 'number', { limit: lim });
     let note = null;
     t.oninput = () => { const v = Number(t.value); const bad = cp && ((cp.max_value != null && v > cp.max_value) || (cp.min_value != null && v < cp.min_value)); if (bad && !note) { note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); } t.style.borderColor = bad ? 'var(--warn)' : ''; };
     openForm(eq.name, eq.code, async () => {
       const v = val('temp'); const bad = cp && ((cp.max_value != null && v > cp.max_value) || (cp.min_value != null && v < cp.min_value));
+      const warn = cp && ((cp.warn_max != null && v > cp.warn_max) || (cp.warn_min != null && v < cp.warn_min));
       const ops = [scanEvent(current.code, 'temp_check', { equipment_id: eq.id, payload: { temp_c: v } })];
-      if (cp) ops.push({ table: 'haccp_log', row: { control_point_id: cp.id, equipment_id: eq.id, measured_value: v, result: bad ? 'non_conformity' : 'ok', operator: staff.full_name, operator_id: staff.id, corrective_action: val('action'), source: 'tablet' } });
-      if (bad) ops.push({ table: 'non_conformities', row: { severity: 'major', description: `${eq.name}: ${v} °C fuori limite`, equipment_id: eq.id, corrective_action: val('action'), opened_by_id: staff.id, haccp_log_id: '$1.id' } });
-      await save(ops); await closeTask({ equipment_id: eq.id }); toast(bad ? 'Registrato come NON CONFORMITÀ' : 'Registrato ✓', bad ? 'err' : 'ok');
+      if (cp) ops.push({ rpc: 'log_ccp', args: { p_cp_code: cp.code, p_value: v, p_staff_id: staff.id, p_action: val('action'), p_source: 'tablet', p_equipment_code: eq.code } });   // server opens the NC
+      await save(ops); await closeTask({ equipment_id: eq.id });
+      toast(bad ? 'Registrato come NON CONFORMITÀ' : warn ? 'Registrato · ALLERTA: ricontrolla entro 1 ora' : 'Registrato ✓', bad || warn ? 'err' : 'ok');
     });
   }
-  // 9 — till close
-  function stepZ(eq) {
-    field('z', 'Totale scontrino Z €', 'number', { step: '0.01' }); field('cash', 'Contanti contati €', 'number', { step: '0.01', required: false }); field('card', 'Carte €', 'number', { step: '0.01', required: false });
-    openForm('Chiusura cassa', eq.code, async () => {
-      await save([scanEvent(current.code, 'task_done', { equipment_id: eq.id }), { table: 'pos_daily_closings', row: { closing_date: today(), rt_total_eur: val('z'), cash_counted_eur: val('cash'), card_eur: val('card'), closed_by_id: staff.id } }]);
-      await closeTask({ code: 'T-Z' }); toast('Cassa chiusa ✓');
-    });
+  // 9 — till: closes itself from Shopify POS (bot Ordini Shopify writes pos_daily_closings)
+  async function stepZ(eq) {
+    const { data: pc } = await sb.from('pos_daily_closings').select('rt_total_eur, rt_receipts, source').eq('closing_date', today()).maybeSingle();
+    const d = document.createElement('div'); d.className = 'card';
+    d.innerHTML = `<div class="scan">La cassa è Shopify POS</div><div>Le vendite al banco si battono sul POS; ogni mattina il bot Ordini Shopify le copia qui e chiude la giornata da solo. Non c'è più nulla da digitare.</div>` +
+      (pc ? `<div style="margin-top:8px">Oggi finora: <b>€ ${Number(pc.rt_total_eur).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</b> · ${pc.rt_receipts} scontrini${pc.source === 'shopify_pos' ? ' (da Shopify POS)' : ''}</div>` : `<div style="margin-top:8px" class="status">Oggi non è ancora stata sincronizzata nessuna vendita POS.</div>`);
+    $('form').append(d);
+    openForm('Chiusura cassa', eq.code, async () => {}); $('btn-form-save').style.display = 'none';
   }
   // 10 — meter
   function stepMeter(meter) {
@@ -240,20 +253,27 @@
   async function stepMilk(ddt) {
     const { data: sup } = await sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true);
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
-    field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: 'latte ≤ 4 °C' });
+    const { data: cpT } = await sb.from('haccp_control_points').select('max_value, warn_max').eq('code', 'CCP-MILK-TEMP').maybeSingle();
+    const tMax = Number(cpT?.max_value ?? 8), tWarn = Number(cpT?.warn_max ?? 6);
+    field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
+    field('abx', 'Test antibiotici (CCP 1b)', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Test rapido prima dello scarico' });
     field('fat', 'Grasso % (se noto)', 'number', { step: '0.01', required: false }); field('photo', 'Foto DDT', 'file', { required: false });
     // today's milk plan, if the planning bot made one (approved or still proposed)
     let planTxt = '';
     try { const { data: plan } = await sb.from('milk_plans').select('milk_kg, status').eq('plan_date', today()).in('status', ['proposed', 'approved']).maybeSingle();
       if (plan) planTxt = ` · piano ${plan.status === 'approved' ? 'approvato' : 'PROPOSTO (non approvato)'}: ${Number(plan.milk_kg).toLocaleString('it-IT')} kg`; } catch {}
     openForm('Arrivo latte', 'DDT ' + ddt + planTxt, async () => {
-      const accepted = val('temp') <= 4;
-      const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp') } }),
-        { table: 'milk_intake', row: { intake_date: today(), supplier_id: val('supplier'), milk_lot: val('lot'), qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), ddt_number: ddt, accepted, rejection_reason: accepted ? null : 'temperatura > 4 °C', received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
-        { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + val('lot'), lot_number: val('lot'), milk_intake_id: '$1.id', printed_by_id: staff.id } }];
+      if (val('abx') === '') { toast('Registra l\'esito del test antibiotici', 'err'); throw new Error('abx'); }
+      const hot = val('temp') > tMax, abxPos = val('abx') === '1', accepted = !hot && !abxPos;
+      const why = [hot ? `temperatura > ${tMax} °C` : null, abxPos ? 'test antibiotici positivo' : null].filter(Boolean).join(' · ');
+      const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')) } }),
+        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: val('lot'), qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), ddt_number: ddt, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
+        { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + val('lot'), lot_number: val('lot'), milk_intake_id: '$1.id', printed_by_id: staff.id } },
+        { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: staff.id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
+        { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: staff.id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
       await save(ops);
       const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${ddt}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
-      toast(accepted ? 'Latte registrato ✓' : 'Latte registrato come RIFIUTATO', accepted ? 'ok' : 'err');
+      toast(accepted ? (val('temp') > tWarn ? `Latte accettato · ${val('temp')} °C: iniziare la lavorazione entro 2 ore` : 'Latte registrato ✓') : 'Latte RIFIUTATO: ' + why, accepted && val('temp') <= tWarn ? 'ok' : 'err');
     });
   }
   // 3/5/6 — a lot label: milk lot → start/end batch; batch lot → sale or shipment
@@ -320,30 +340,24 @@
       return 'stay';
     });
   }
-  // 6 — sale at the counter or shipment line
+  // 6 — direct shipment line from a batch QR (counter sales live on Shopify POS; online/wholesale orders go through 🚚 Da spedire)
   async function stepPick(b) {
-    field('mode', 'Operazione', 'select', { options: [['sale', 'Vendita banco'], ['ship', 'Spedizione']] }); field('kg', 'kg', 'number', { step: '0.01' });
     const { data: prod } = await sb.from('products').select('*').eq('id', b.product_id).single();
-    const { data: custs } = await sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true);
-    const c = field('cust', 'Cliente (spedizione)', 'select', { options: [['', '—'], ...custs.map(x => [x.id, x.legal_name])], required: false });
-    openForm(prod.name, 'lotto ' + b.batch_lot, async () => {
+    const { data: custs } = await sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name');
+    const d = document.createElement('div'); d.className = 'card';
+    d.innerHTML = `<div class="scan">${prod.name}</div><div class="status">Spedizione diretta senza ordine. Le vendite al banco si battono su Shopify POS; gli ordini online e ingrosso si preparano da 🚚 Da spedire.</div>`;
+    $('form').append(d);
+    field('kg', 'kg', 'number', { step: '0.01' });
+    field('cust', 'Cliente', 'select', { options: [['', '—'], ...custs.map(x => [x.id, x.legal_name])] });
+    openForm('Spedizione', 'lotto ' + b.batch_lot, async () => {
       const kg = val('kg');
-      if (val('mode') === 'sale') {
-        const price = prod.default_sale_price_eur || 0, total = Math.round(kg * price * 100) / 100, n = 'POS-' + Date.now();
-        await save([scanEvent(current.code, 'pick', { payload: { kg, mode: 'sale' } }),
-          { table: 'sales_orders', row: { order_number: n, channel: 'store_pos', order_date: today(), subtotal_eur: total, total_eur: total, source: 'tablet' } },
-          { table: 'sales_order_lines', row: { sales_order_id: '$1.id', product_id: prod.id, lot_number: b.batch_lot, qty: kg, unit_price_eur: price, iva_rate: prod.iva_rate || 4 } },
-          { table: 'stock_moves', row: { product_id: prod.id, lot_number: b.batch_lot, qty: -kg, move_type: 'sale', sales_order_id: '$1.id', source: 'tablet' } }]);
-        toast(`Venduti ${kg} kg · € ${total} ✓`);
-      } else {
-        if (!val('cust')) { toast('Scegli il cliente', 'err'); throw new Error('cliente'); }
-        const ddt = 'DDT-' + today().replace(/-/g, '') + '-' + Date.now().toString().slice(-4);
-        await save([scanEvent(current.code, 'pick', { payload: { kg, mode: 'ship' } }),
-          { table: 'shipments', row: { ddt_number: ddt, customer_id: val('cust'), status: 'picked', driver_id: staff.id } },
-          { table: 'shipment_lines', row: { shipment_id: '$1.id', product_id: prod.id, lot_number: b.batch_lot, qty: kg } },
-          { table: 'stock_moves', row: { product_id: prod.id, lot_number: b.batch_lot, qty: -kg, move_type: 'sale', source: 'tablet' } }]);
-        toast(`Spedizione ${ddt} · ${kg} kg ✓`);
-      }
+      if (!val('cust')) { toast('Scegli il cliente', 'err'); throw new Error('cliente'); }
+      const ddt = 'DDT-' + today().replace(/-/g, '') + '-' + Date.now().toString().slice(-4);
+      await save([scanEvent(current.code, 'pick', { payload: { kg, mode: 'ship' } }),
+        { table: 'shipments', row: { ddt_number: ddt, customer_id: val('cust'), status: 'picked', driver_id: staff.id } },
+        { table: 'shipment_lines', row: { shipment_id: '$1.id', product_id: prod.id, lot_number: b.batch_lot, qty: kg } },
+        { table: 'stock_moves', row: { product_id: prod.id, lot_number: b.batch_lot, qty: -kg, move_type: 'sale', source: 'tablet' } }]);
+      toast(`Spedizione ${ddt} · ${kg} kg ✓`);
     });
   }
   // 11 — goods receipt: approved PO arrives → stock goes up
@@ -586,6 +600,103 @@
     };
     render();
   }
+
+  // ---------- Sicurezza alimentare (v0.28) ----------
+  const rpcNow = async (fn, args) => {          // online: run now and return the answer · offline: queue it
+    if (!navigator.onLine) { await save([{ rpc: fn, args }]); return null; }
+    const { data, error } = await sb.rpc(fn, args); if (error) throw error; return data;
+  };
+  function stepHaccpMenu() {
+    $('form').innerHTML = ''; current = { code: 'HACCP:' };
+    const items = [['🥛 Test antibiotici latte (CCP 1b)', 'CCP:CCP-MILK-ABX'], ['🔥 Temperatura pasta filata (CCP 3)', 'CCP:CCP-STRETCH'], ['🍶 Ricotta: affioramento (CCP 4)', 'CCP:CCP-RIC'],
+      ['♨ Pastorizzazione (CCP 2)', 'CCP:CCP-PAST'], ['💧 Cloro acqua (settimanale)', 'CCP:PRP-WATER-CL'], ['🌡 Verifica termometro sonda', 'CAL:TERM-01'], ['🌡 Verifica termometro alta temperatura', 'CAL:TERM-02'],
+      ['⚗ Calibrazione pH-metro', 'CAL:PH-01'], ['🐭 Giro infestanti', 'PEST:'], ['🧪 Campione prelevato per il laboratorio', 'SAMPLE:']];
+    items.forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode(c); $('form').append(b); });
+    openForm('Sicurezza alimentare', 'Scegli cosa registrare', async () => {}); $('btn-form-save').style.display = 'none';
+  }
+  // CCP:<code>[:<lot>] — one measurement against the HACCP plan; the server opens the NC and blocks the lot when out of limit
+  async function stepCcp(cpCode, lot) {
+    const { data: cp } = await sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).single();
+    if (!cp) throw new Error('Punto di controllo sconosciuto: ' + cpCode);
+    const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
+    if (needsLot && !lot) {
+      const { data: bs } = await sb.from('production_batches').select('batch_lot, input_kind').eq('batch_date', today()).order('batch_lot');
+      const mine = (bs || []).filter(b => cp.code === 'CCP-RIC' ? b.input_kind === 'whey' : b.input_kind !== 'whey');
+      field('lot', 'Lotto', 'select', { options: [['', '— scegli —'], ...mine.map(b => [b.batch_lot, b.batch_lot])] });
+    }
+    const lim = [cp.min_value != null ? `≥ ${Number(cp.min_value)}` : null, cp.max_value != null ? `≤ ${Number(cp.max_value)}` : null].filter(Boolean).join(' e ');
+    if (cp.code === 'CCP-MILK-ABX') {
+      field('v', 'Esito test rapido', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Positivo = latte non accettato' });
+      field('action', 'Note / azione (se positivo)', 'text', { required: false });
+    } else {
+      const v = field('v', `${cp.name} (${cp.unit || ''})`, 'number', { step: cp.unit === 'mg/l' ? '0.01' : '0.1', limit: `${cp.ccp_no || ''} limite ${lim} ${cp.unit || ''}`.trim() });
+      let note = null;
+      v.oninput = () => { const x = Number(v.value); const bad = (cp.min_value != null && x < cp.min_value) || (cp.max_value != null && x > cp.max_value); if (bad && !note) note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); v.style.borderColor = bad ? 'var(--warn)' : ''; };
+    }
+    openForm(`${cp.ccp_no || ''} ${cp.name}`.trim(), lot ? 'lotto ' + lot : (cp.monitoring_it || ''), async () => {
+      const value = cp.code === 'CCP-MILK-ABX' ? (val('v') === '' ? null : Number(val('v'))) : val('v');
+      if (value == null) { toast('Inserisci il valore', 'err'); throw new Error('valore'); }
+      const theLot = lot || val('lot') || null;
+      if (needsLot && !theLot) { toast('Scegli il lotto', 'err'); throw new Error('lotto'); }
+      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_staff_id: staff.id, p_batch_lot: theLot, p_action: val('action'), p_source: 'tablet', p_equipment_code: needsLot ? 'TERM-02' : null });
+      if (cp.code === 'PRP-WATER-CL') await closeTask({ code: 'T-CL' });
+      if (!r) return toast('Salvato offline');
+      if (r.result === 'non_conformity') toast(`NON CONFORMITÀ${r.lot_on_hold ? ' · lotto ' + theLot + ' BLOCCATO' : ''}. ${r.corrective_it || ''}`, 'err');
+      else if (r.result === 'warning') toast('Registrato · ALLERTA vicino al limite', 'err');
+      else toast(`${r.ccp} registrato ✓`);
+    });
+  }
+  // CAL:<code> or EQ:<thermometer|pH|scale> — internal verification against a reference
+  async function stepCalibration(eq) {
+    let method, pts;
+    const isPh = eq.code.startsWith('PH-'), isScale = eq.kind === 'scale', isHot = eq.code === 'TERM-02', isRoom = eq.kind === 'cold_room';
+    if (eq.reference_instrument) { toast('Il termometro di riferimento si tara solo in laboratorio: registra il certificato nella console HACCP', 'err'); return show('home'); }
+    if (isPh) { method = 'tamponi_ph'; field('r4', 'Lettura nel tampone pH 4,01', 'number', { step: '0.01' }); field('r7', 'Lettura nel tampone pH 7,00', 'number', { step: '0.01' }); field('slope', 'Pendenza % (se lo strumento la mostra)', 'number', { step: '0.1', required: false, limit: 'Tolleranza ±0,05 pH · pendenza 95–105 %' }); }
+    else if (isScale) { method = 'pesi_campione'; field('ref', 'Peso campione (kg)', 'number', { step: '0.001' }); field('read', 'Lettura bilancia (kg)', 'number', { step: '0.001' }); }
+    else if (isRoom) { method = 'confronto_display'; field('ref', 'Termometro sonda TERM-01 nella cella (°C)', 'number'); field('read', 'Display della cella (°C)', 'number', { limit: 'Tolleranza ±1 °C' }); }
+    else {
+      method = 'confronto_riferimento';
+      field('p1', isHot ? 'Acqua in ebollizione: lettura (riferimento 100 °C)' : 'Ghiaccio fondente: lettura (riferimento 0 °C)', 'number');
+      field('ref', `Termometro di riferimento TERM-REF a ~${isHot ? 90 : 60} °C`, 'number', { required: false });
+      field('read', `${eq.code} nello stesso punto`, 'number', { required: false, limit: `Tolleranza ±${eq.tolerance ?? 0.5} °C` });
+    }
+    openForm('Verifica ' + eq.name, eq.code, async () => {
+      if (isPh) pts = [{ ref: 4.01, reading: val('r4') }, { ref: 7.00, reading: val('r7') }, ...(val('slope') != null ? [{ slope: val('slope') }] : [])];
+      else if (isScale || isRoom) pts = [{ ref: val('ref'), reading: val('read') }];
+      else pts = [{ ref: isHot ? 100 : 0, reading: val('p1') }, ...(val('ref') != null && val('read') != null ? [{ ref: val('ref'), reading: val('read') }] : [])];
+      const r = await rpcNow('record_calibration_check', { p_code: eq.code, p_kind: 'verifica_interna', p_method: method, p_points: pts, p_staff_id: staff.id });
+      await closeTask({ equipment_id: eq.id });
+      if (!r) return toast('Salvato offline');
+      if (r.result === 'ko') toast(`${eq.code} FUORI TOLLERANZA (scarto ${r.max_deviation}): non usarlo, è fuori servizio. ${r.records_to_review} registrazioni da rivalutare.`, 'err');
+      else toast(`${eq.code} ok · scarto ${r.max_deviation ?? 0} ✓`);
+    });
+  }
+  // PEST: — weekly internal round of the stations
+  async function stepPest() {
+    const { data: st } = await sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code');
+    if (!st || !st.length) throw new Error('Nessuna postazione registrata');
+    const opts = [['ok', 'OK'], ['consumo', 'Esca consumata'], ['cattura', 'Cattura'], ['insetti', 'Insetti'], ['tracce', 'Tracce / escrementi'], ['danneggiata', 'Danneggiata'], ['mancante', 'Mancante']];
+    st.forEach((x, k) => field('st' + k, `${x.code} · ${x.location_it}`, 'select', { options: opts }));
+    field('note', 'Note / azioni', 'text', { required: false });
+    openForm('Giro infestanti', 'Una postazione per riga · dentro solo trappole senza veleno', async () => {
+      const findings = st.map((x, k) => ({ station: x.code, status: val('st' + k) }));
+      const r = await rpcNow('record_pest_inspection', { p_by: 'interno', p_findings: findings, p_staff_id: staff.id, p_actions: val('note') });
+      if (!r) return toast('Salvato offline');
+      toast(r.activity_inside ? 'Infestanti ALL\'INTERNO: non conformità aperta, chiama la ditta' : r.activity_found ? 'Attività all\'esterno: segnalata' : 'Giro infestanti registrato ✓', r.activity_found ? 'err' : 'ok');
+    });
+  }
+  // SAMPLE:[test code] — a sample taken for the lab; the code goes on the container
+  async function stepSample(testCode) {
+    const { data: tests } = await sb.from('v_lab_plan_status').select('code, analyte_it, matrix, next_due').order('sort');
+    field('test', 'Analisi', 'select', { options: (tests || []).map(t => [t.code, `${t.code} · ${t.analyte_it}${t.next_due ? ' · entro ' + t.next_due.slice(8, 10) + '/' + t.next_due.slice(5, 7) : ''}`]) });
+    if (testCode) $('test').value = testCode;
+    field('lot', 'Lotto (prodotto) — facoltativo', 'text', { required: false }); field('point', 'Punto di prelievo (se diverso dal piano)', 'text', { required: false });
+    openForm('Campione per il laboratorio', 'Poi scrivi il codice sul contenitore', async () => {
+      const r = await rpcNow('record_sample_taken', { p_test_code: val('test'), p_lot: val('lot') || null, p_point: val('point') || null, p_staff_id: staff.id });
+      toast(r ? `Scrivi sul contenitore: ${r.sample_code}` : 'Salvato offline', 'ok');
+    });
+  }
+  window.__haccp = () => handleCode('HACCP:');
 
   let _rawId; async function rawMilkId() { if (!_rawId) { const { data } = await sb.from('products').select('id').eq('sku', 'RAW-MILK').single(); _rawId = data.id; } return _rawId; }
 
