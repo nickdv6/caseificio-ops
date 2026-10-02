@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La Perla · Ordine</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Printable purchase order: A4 sheet for the supplier, QR "PO:<number>" so goods receipt on the tablet is one scan. Data read straight from purchase_orders / lines / parties. */
+:root{ --bg:#f7f5f0; --paper:#fff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb; --accent:#0f6b4f; --warn:#b4472c; --tile:#eef3ef;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif; }
+@media (prefers-color-scheme: dark){ :root{ --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#2f9c74; --warn:#f08a6a; --tile:#232a27; color-scheme:dark } }
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.35;padding:16px}
+.ctl{max-width:800px;margin:0 auto 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input,button{font:1rem var(--body);padding:7px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg)}
+button.p{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;cursor:pointer}
+.sheet{max-width:800px;margin:0 auto;background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:28px 32px}
+.top{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;border-bottom:3px solid var(--accent);padding-bottom:14px}
+h1{font-family:var(--display);font-size:2rem;margin:0;line-height:1}
+.brand .sub{color:var(--muted);font-size:.9rem;margin-top:4px}
+.ponum{text-align:right}.ponum .l{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.ponum .n{font-family:var(--display);font-size:1.7rem;font-weight:700;line-height:1.1}
+.badge{display:inline-block;font-family:var(--display);font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--warn);color:#fff;margin-left:8px;vertical-align:middle}
+.badge.ok{background:var(--accent)}
+.parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}
+.box{border:1px solid var(--rule);border-radius:6px;padding:10px 12px}
+.box .l{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
+.box b{font-family:var(--display);font-size:1.2rem}
+.box div{font-size:.95rem}
+table{width:100%;border-collapse:collapse;margin-top:6px}
+th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display);font-size:1.25rem}
+.terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:18px 0;padding:12px;background:var(--tile);border-radius:6px}
+.terms .l{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.terms .v{font-weight:600}
+.foot{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:end;margin-top:18px;padding-top:14px;border-top:1px solid var(--rule)}
+.foot .note{font-size:.85rem;color:var(--muted)}
+.qr{text-align:center}.qr .l{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-top:4px}
+.qr canvas,.qr img{display:block;margin:0 auto;background:#fff;padding:6px;border-radius:4px}
+.sig{margin-top:26px;display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:.85rem;color:var(--muted)}
+.sig div{border-top:1px solid var(--rule);padding-top:4px}
+.empty{color:var(--muted);font-style:italic}
+@media (max-width:600px){ .parties,.top,.foot{grid-template-columns:1fr} .ponum{text-align:left} .sheet{padding:18px} }
+@media print{ body{background:#fff;padding:0} .ctl{display:none} .sheet{border:0;border-radius:0;max-width:none;padding:0} :root{--paper:#fff;--fg:#000;--muted:#444;--rule:#bbb;--tile:#f2f2f2;--accent:#0f6b4f} }
+</style>
+</head>
+<body>
+<div class="ctl"><label for="po">Ordine</label><input type="text" id="po" placeholder="PO-20261001-01" style="width:190px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
+<div class="sheet" id="sheet"><div class="empty">Accedi dalla console, poi indica il numero d'ordine.</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="config.js"></script>
+<script>
+(() => {
+  const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const eur = n => n == null ? '—' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
+  const num = (n, d = 0) => n == null ? '—' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
+  const STATUS = { pending_approval: ['in attesa di approvazione', ''], approved: ['approvato', 'ok'], sent: ['inviato', 'ok'], partially_received: ['ricevuto in parte', 'ok'], received: ['ricevuto', 'ok'], cancelled: ['annullato', ''] };
+  const COMPANY = { name: 'La Perla del Cilento', line1: 'Caseificio · Agropoli (SA)', line2: 'P.IVA 06052830657' };
+
+  async function show(poNumber) {
+    const sheet = $('sheet');
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
+    if (!poNumber) { sheet.innerHTML = '<div class="empty">Indica il numero d\'ordine (es. PO-20261001-01).</div>'; return; }
+    const { data: po, error } = await sb.from('purchase_orders').select('*, supplier:parties(legal_name, address, city, province, postcode, email, phone, piva, payment_terms_days), lines:purchase_order_lines(qty_ordered, qty_received, unit_price_eur, iva_rate, product:products(sku, name, unit))').eq('po_number', poNumber).maybeSingle();
+    if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!po) { sheet.innerHTML = `<div class="empty">Ordine ${esc(poNumber)} non trovato.</div>`; return; }
+    const s = po.supplier || {}, lines = po.lines || [];
+    const byIva = {}; let sub = 0;
+    lines.forEach(l => { const t = Number(l.qty_ordered) * Number(l.unit_price_eur || 0); sub += t; const r = Number(l.iva_rate ?? 22); byIva[r] = (byIva[r] || 0) + t; });
+    const iva = Object.entries(byIva).reduce((a, [r, t]) => a + t * r / 100, 0);
+    const [stLabel, stCls] = STATUS[po.status] || [po.status, ''];
+    const addr = [s.address, [s.postcode, s.city].filter(Boolean).join(' ') + (s.province ? ' (' + s.province + ')' : '')].filter(x => x && x.trim()).join(' · ');
+    sheet.innerHTML = `
+      <div class="top">
+        <div class="brand"><h1>${COMPANY.name}</h1><div class="sub">${COMPANY.line1} · ${COMPANY.line2}</div></div>
+        <div class="ponum"><div class="l">Ordine d'acquisto</div><div class="n">${esc(po.po_number)}</div><div class="l">del ${fmtD(po.order_date)} <span class="badge ${stCls}">${stLabel}</span>${po.source === 'simulation' ? '<span class="badge">simulazione</span>' : ''}</div></div>
+      </div>
+      <div class="parties">
+        <div class="box"><div class="l">Fornitore</div><b>${esc(s.legal_name || '—')}</b>${addr ? `<div>${esc(addr)}</div>` : ''}${s.piva ? `<div>P.IVA ${esc(s.piva)}</div>` : ''}${s.email ? `<div>${esc(s.email)}</div>` : ''}${s.phone ? `<div>${esc(s.phone)}</div>` : ''}</div>
+        <div class="box"><div class="l">Consegnare a</div><b>${COMPANY.name}</b><div>${COMPANY.line1}</div><div>Orario ricevimento merce: lun–sab 7:00–13:00</div><div>Rif. ordine da riportare su DDT e fattura: <b>${esc(po.po_number)}</b></div></div>
+      </div>
+      <table>
+        <tr><th>#</th><th>Articolo</th><th>Codice</th><th class="num">Quantità</th><th class="num">Prezzo</th><th class="num">IVA</th><th class="num">Importo</th></tr>
+        ${lines.map((l, i) => { const p = l.product || {}; const t = Number(l.qty_ordered) * Number(l.unit_price_eur || 0); return `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.sku)}</td><td class="num">${num(l.qty_ordered, Number(l.qty_ordered) % 1 ? 2 : 0)} ${esc(p.unit)}</td><td class="num">${l.unit_price_eur != null ? '€ ' + num(l.unit_price_eur, 3) + '/' + esc(p.unit) : '<span style="color:var(--warn)">da confermare</span>'}</td><td class="num">${num(l.iva_rate ?? 22)} %</td><td class="num">${eur(t)}</td></tr>`; }).join('')}
+        <tr class="tot"><td colspan="6" class="num">Imponibile</td><td class="num">${eur(sub)}</td></tr>
+        ${Object.entries(byIva).map(([r, t]) => `<tr class="tot"><td colspan="6" class="num" style="font-weight:400;color:var(--muted)">IVA ${num(r)} % su ${eur(t)}</td><td class="num" style="font-weight:400">${eur(t * r / 100)}</td></tr>`).join('')}
+        <tr class="tot g"><td colspan="6" class="num">Totale</td><td class="num">${eur(sub + iva)}</td></tr>
+      </table>
+      <div class="terms">
+        <div><div class="l">Consegna richiesta</div><div class="v">entro ${fmtD(po.expected_date)}</div></div>
+        <div><div class="l">Pagamento</div><div class="v">${s.payment_terms_days ?? 30} giorni data fattura</div></div>
+        <div><div class="l">Fatturazione elettronica</div><div class="v">P.IVA ${COMPANY.line2.replace('P.IVA ', '')}</div></div>
+        ${po.sent_at ? `<div><div class="l">Inviato</div><div class="v">${fmtD(po.sent_at.slice(0, 10))} via ${esc(po.sent_via || '')}</div></div>` : ''}
+      </div>
+      ${po.notes || po.rationale ? `<div class="foot" style="border:0;margin:0;padding:0"><div class="note">${esc(po.notes || '')}</div></div>` : ''}
+      <div class="foot">
+        <div class="note">Alla consegna il nostro operatore inquadra il codice qui a lato con il tablet: apre questo ordine, conferma le quantità e fotografa il DDT. Vi chiediamo di allegare questa pagina alla merce o riportare il numero d'ordine sul DDT.</div>
+        <div class="qr"><div id="qr"></div><div class="l">${esc(po.po_number)} · ricezione merce</div></div>
+      </div>
+      <div class="sig"><div>Per ${COMPANY.name}</div><div>Per accettazione (fornitore)</div></div>`;
+    new QRCode($('qr'), { text: 'PO:' + po.po_number, width: 132, height: 132, correctLevel: QRCode.CorrectLevel.M });
+    document.title = 'La Perla · ' + po.po_number;
+  }
+  const fromUrl = new URLSearchParams(location.search).get('po');
+  if (fromUrl) { $('po').value = fromUrl; show(fromUrl); } else show(null);
+  $('go').onclick = () => { const v = $('po').value.trim().toUpperCase(); history.replaceState(null, '', '?po=' + encodeURIComponent(v)); show(v); };
+  $('po').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+  $('print').onclick = () => print();
+})();
+</script>
+</body>
+</html>

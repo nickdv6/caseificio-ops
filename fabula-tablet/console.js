@@ -304,9 +304,10 @@
       mail.href = 'mailto:' + encodeURIComponent(pk?.email || '') + '?subject=' + encodeURIComponent(pk?.subject || '') + '&body=' + encodeURIComponent(pk?.body_it || ''); mail.target = '_blank';
       const wa = document.createElement('a'); wa.className = 'btn sm sec'; wa.style.textDecoration = 'none'; wa.textContent = '💬 WhatsApp'; wa.href = waLink(pk?.phone, pk?.whatsapp_it || ''); wa.target = '_blank';
       const cp = document.createElement('button'); cp.className = 'btn sm sec'; cp.textContent = 'Copia testo'; cp.onclick = () => copyText(pk?.body_it || '');
+      const pr = document.createElement('a'); pr.className = 'btn sm sec'; pr.style.textDecoration = 'none'; pr.textContent = '🖨 Stampa PO'; pr.href = 'ordine.html?po=' + encodeURIComponent(po.po_number); pr.target = '_blank';
       const sent = document.createElement('button'); sent.className = 'btn sm'; sent.textContent = '✓ Segna inviato';
       sent.onclick = async () => { sent.disabled = true; const { error } = await sb.rpc('mark_po_sent', { p_po_number: po.po_number, p_via: 'console' }); if (error) { toast(error.message, 'err'); sent.disabled = false; return; } toast('Ordine segnato come inviato'); renderPoSend(); refreshBadges(); };
-      row.append(mail, wa, cp, sent); c.append(row); box.append(c);
+      row.append(mail, wa, cp, pr, sent); c.append(row); box.append(c);
     }
   }
   async function renderWholesale() {
