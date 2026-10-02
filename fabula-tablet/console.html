@@ -32,6 +32,8 @@ h2{font-family:var(--display);font-size:1.25rem;text-transform:uppercase;letter-
 .tile.bad .v{color:var(--warn)}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
 .grid2.four{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.grid2.two{grid-template-columns:repeat(2,minmax(0,1fr))}.col{display:flex;flex-direction:column;gap:16px;min-width:0}@media (max-width:760px){.grid2.two{grid-template-columns:1fr}}
+table.nw2 td:nth-child(1),table.nw2 td:nth-child(2),table.nw2 td:nth-child(4){white-space:nowrap}
 .card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;min-width:0}
 .card h3{font-family:var(--display);font-size:1.05rem;text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px;color:var(--muted)}
 table{width:100%;border-collapse:collapse;font-size:.95rem}
@@ -84,9 +86,10 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 .set-row input[type=date]{width:150px}.set-row input.wide{width:200px}
 .set-row.dirty input{border-color:var(--accent)}
 .eq{border:1px solid var(--rule);border-radius:6px;padding:8px 10px;margin-bottom:8px}
-.eq .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.eq .h b{font-family:var(--display);font-size:1.1rem}
-.eq .f{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 10px;margin-top:6px}
-.eq label{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:block}
+.eq .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.eq .h b{font-family:var(--display);font-size:1.1rem}
+details.eq{padding:0}details.eq>summary{list-style:none;cursor:pointer;padding:8px 10px}details.eq>summary::-webkit-details-marker{display:none}details.eq>summary b::before{content:"▸ ";color:var(--muted);font-size:.9rem}details.eq[open]>summary b::before{content:"▾ "}details.eq>.f,details.eq>.row{padding:0 10px}details.eq>.row{padding-bottom:8px}
+.eq .f{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px 10px;margin-top:6px}
+.eq label{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:block;white-space:nowrap}
 .eq input{width:100%;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}
 .eq .next{font-size:.85rem;color:var(--muted);margin-top:4px}.eq .next .ko{font-weight:600}
 .btn.sm{padding:5px 10px;font-size:.85rem}
@@ -145,11 +148,15 @@ details.card>.body{padding:0 14px 12px}
 
   <!-- OPERAZIONI: orders in and out, milk supply -->
   <div class="pane" id="p-ops">
-    <div class="grid2">
-      <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati, pronti da inviare: email o WhatsApp, poi "Segna inviato".</div><div id="po-send"></div></div>
-      <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi.</div><div id="wholesale"></div></div>
-      <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone, tu approvi in Oggi.</div><div id="procurement"></div></div>
-      <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="hint">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
+    <div class="grid2 two">
+      <div class="col">
+        <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati, pronti da inviare: email o WhatsApp, poi "Segna inviato".</div><div id="po-send"></div></div>
+        <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone, tu approvi in Oggi.</div><div id="procurement"></div></div>
+        <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi.</div><div id="wholesale"></div></div>
+      </div>
+      <div class="col">
+        <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="hint">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
+      </div>
     </div>
   </div>
 

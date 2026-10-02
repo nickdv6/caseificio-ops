@@ -228,16 +228,16 @@
   function renderEquipment(rows) {
     const box = $('set-equipment'); box.innerHTML = '';
     rows.filter(r => r.active).forEach(r => {
-      const c = document.createElement('div'); c.className = 'eq';
-      c.innerHTML = `<div class="h"><b>${esc(r.name)}</b><span class="status">${esc(r.code)}</span></div>
+      const c = document.createElement('details'); c.className = 'eq';
+      const nc = r.next_calibration_on, nm = r.next_maintenance_on, unset = !nc && !nm;
+      c.innerHTML = `<summary class="h"><b>${esc(r.name)} <small class="status">${esc(r.code)}</small></b><span class="status">${unset ? '<span class="ko">date da impostare</span>' : `taratura <span class="${dueCls(nc)}">${fmtD(nc)}</span> · manutenzione <span class="${dueCls(nm)}">${fmtD(nm)}</span>`}</span></summary>
         <div class="f">
           <div><label>Ultima taratura</label><input type="date" data-k="last_calibrated_on" value="${r.last_calibrated_on || ''}"></div>
           <div><label>Ogni (giorni)</label><input type="number" data-k="calibration_interval_days" value="${r.calibration_interval_days ?? ''}" placeholder="—"></div>
           <div><label>Ultima manutenzione</label><input type="date" data-k="last_maintenance_on" value="${r.last_maintenance_on || ''}"></div>
           <div><label>Ogni (giorni)</label><input type="number" data-k="maintenance_interval_days" value="${r.maintenance_interval_days ?? ''}" placeholder="—"></div>
           <div style="grid-column:1/-1"><label>Tecnico / contatto</label><input type="text" data-k="technician_contact" value="${esc(r.technician_contact || '')}" placeholder="nome, telefono"></div>
-        </div>
-        <div class="next">prossima taratura <span class="${dueCls(r.next_calibration_on)}">${fmtD(r.next_calibration_on)}</span> · prossima manutenzione <span class="${dueCls(r.next_maintenance_on)}">${fmtD(r.next_maintenance_on)}</span></div>`;
+        </div>`;
       const row = document.createElement('div'); row.className = 'row';
       row.append(saveBtn(async () => {
         const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
@@ -250,8 +250,8 @@
     const box = $('set-deadlines'); box.innerHTML = '';
     if (!rows.length) box.innerHTML = '<div class="empty">Nessuna scadenza aperta.</div>';
     rows.forEach(r => {
-      const c = document.createElement('div'); c.className = 'eq';
-      c.innerHTML = `<div class="h"><b>${esc(r.subject_it)}</b><span class="status ${dueCls(r.due_on)}">${r.due_on ? 'scade ' + fmtD(r.due_on) : 'data da impostare'}</span></div>
+      const c = document.createElement('details'); c.className = 'eq';
+      c.innerHTML = `<summary class="h"><b>${esc(r.subject_it)}</b><span class="status ${dueCls(r.due_on) || (r.due_on ? '' : 'ko')}">${r.due_on ? 'scade ' + fmtD(r.due_on) : 'data da impostare'}</span></summary>
         <div class="f">
           <div><label>Scadenza</label><input type="date" data-k="due_on" value="${r.due_on || ''}"></div>
           <div><label>Ogni (giorni)</label><input type="number" data-k="interval_days" value="${r.interval_days ?? ''}" placeholder="una tantum"></div>
@@ -314,7 +314,7 @@
     const { data, error } = await sb.from('v_wholesale_tomorrow').select('*').limit(12);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessuna consegna ingrosso prenotata. Il bot "Ordini ingrosso" prenota ogni giorno alle 18:20 per il giorno dopo.</div>'; return; }
-    box.innerHTML = '<table><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${fmtD(o.order_date)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, La Perla del Cilento conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
+    box.innerHTML = '<table class="nw2"><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${dShort(o.order_date).replace(/^(\w{3})\w*/, '$1').slice(0, -5)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, La Perla del Cilento conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
   }
 
   // ---------- Tier 2 settings: parties, standing orders, farm supply ----------
