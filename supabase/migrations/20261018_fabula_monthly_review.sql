@@ -127,8 +127,8 @@ returns jsonb language plpgsql as $$
 declare m0 date; m1 date; pm0 date; v_moz uuid; drill jsonb; rec jsonb; milkq jsonb; cost jsonb; pkg jsonb;
         v_out numeric; v_milk_eur numeric; v_cons_eur numeric; v_energy_eur numeric; v_labor_eur numeric; v_hours numeric; v_kwh numeric; v_cost_kg numeric;
 begin
-  -- default: the month that just ended
-  m0 := coalesce(p_month, date_trunc('month', (now() at time zone 'Europe/Rome')::date - 1)::date); m0 := date_trunc('month', m0)::date;
+  -- default: the previous calendar month, whatever day it runs
+  m0 := date_trunc('month', coalesce(p_month, (date_trunc('month', (now() at time zone 'Europe/Rome')::date) - interval '1 month')::date))::date;
   m1 := (m0 + interval '1 month')::date - 1; pm0 := (m0 - interval '1 month')::date;
   select id into v_moz from fabula.products where sku = 'MOZ-DOP-KG';
 
@@ -189,7 +189,7 @@ insert into fabula.settings (key, value, description) values ('energy.eur_per_kw
 -- 5. Commercialista package: one JSON per month, rendered by the console as a printable page
 create or replace function fabula.monthly_package(p_month date default null)
 returns jsonb language sql stable as $$
-with b as (select date_trunc('month', coalesce(p_month, (now() at time zone 'Europe/Rome')::date - 1))::date m0),
+with b as (select date_trunc('month', coalesce(p_month, (date_trunc('month', (now() at time zone 'Europe/Rome')::date) - interval '1 month')::date))::date m0),
 r as (select m0, (m0 + interval '1 month')::date - 1 m1 from b)
 select jsonb_build_object(
   'month', to_char(r.m0, 'YYYY-MM'), 'from', r.m0, 'to', r.m1,

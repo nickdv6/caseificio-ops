@@ -75,9 +75,10 @@ grant execute on function fabula.haccp_evening_status(date) to authenticated, se
 
 -- Expected bot runs by weekday (Europe/Rome day). Edit here when a bot is added.
 create or replace function fabula.expected_bots(p_date date) returns table (agent text) language sql immutable as $$
-  select a from unnest(array['daily_brief','procurement','milk_planning','sell_down']) a where extract(isodow from p_date) between 1 and 6
+  select a from unnest(array['daily_brief','procurement','milk_planning','sell_down','haccp_nudge']) a where extract(isodow from p_date) between 1 and 6
   union all select 'weekly_brief' where extract(isodow from p_date) = 1
   union all select 'compliance_calendar' where extract(isodow from p_date) = 2
+  union all select 'monthly_review' where extract(day from p_date) = 1
 $$;
 
 create or replace function fabula.ops_health_check(p_date date default (now() at time zone 'Europe/Rome')::date)
