@@ -107,6 +107,7 @@ input[type=number]{font-variant-numeric:tabular-nums}
   <div class="bar"><div id="d-bar"></div></div>
   <div class="dose-card">
     <div class="dose-name" id="d-name"></div>
+    <div class="dose-src" id="d-mach"></div>
     <div class="dose-qty" id="d-qty"></div>
     <div class="dose-instr" id="d-instr"></div>
     <div class="dose-src" id="d-src"></div>
@@ -114,10 +115,12 @@ input[type=number]{font-variant-numeric:tabular-nums}
   <button class="btn huge" id="d-ok">✓ Fatto</button>
   <button class="btn secondary" id="d-diff">Ho usato una quantità diversa</button>
   <div id="d-alt" style="display:none">
-    <label for="d-alt-in">Quantità usata</label>
+    <label for="d-alt-in" id="d-alt-l">Quantità usata</label>
     <div class="alt-row"><input id="d-alt-in" type="number" inputmode="decimal" step="0.1"><span id="d-alt-u"></span></div>
     <div class="limit" id="d-warn"></div>
     <button class="btn" id="d-alt-ok">Conferma</button>
+  </div>
+  <div style="text-align:center;margin-top:10px"><button class="btn secondary" id="d-skip" style="display:none">Salta questo passo</button> <button class="btn secondary" id="d-pause" style="display:none">Continua più tardi</button>
   </div>
 </section>
 

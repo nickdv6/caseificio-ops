@@ -280,29 +280,45 @@
   async function stepLot(lot) {
     const { data: milk } = await sb.from('milk_intake').select('id, qty_kg, intake_date').eq('milk_lot', lot).order('intake_date', { ascending: false }).limit(1).maybeSingle();
     const { data: batch } = await sb.from('production_batches').select('*').eq('batch_lot', lot).maybeSingle();
-    if (batch) return batch.output_kg == null ? stepBatchEnd(batch) : stepPick(batch);   // open batch (e.g. ricotta) → close it
+    if (batch) return batch.output_kg == null ? stepBatchWork(batch) : stepPick(batch);   // open batch → working steps, then close
     if (!milk) throw new Error('Lotto sconosciuto: ' + lot);
     const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
-    if (open && open[0]) return stepBatchEnd(open[0].production_batches);
+    if (open && open[0]) return stepBatchWork(open[0].production_batches);
     return stepBatchStart(milk, lot);
+  }
+  // 5b — the 'make' steps of the preset (maturazione, filatura, formatura…): run once per batch, then the lot closes
+  async function stepBatchWork(b) {
+    const presets = await loadPresets();
+    const preset = b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id;
+    const make = processSteps(presets, preset, 'make');
+    if (!make.length) return stepBatchEnd(b);
+    const { data: done } = await sb.from('batch_step_logs').select('step_id').eq('batch_id', b.id);
+    const doneIds = new Set((done || []).map(d => d.step_id));
+    const left = make.filter(st => !doneIds.has(st.step_id));
+    if (!left.length) return stepBatchEnd(b);
+    runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo LOT:' + b.batch_lot); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
   async function stepBatchStart(milk, lot) {
     const { data: prods } = await sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true);
     const { count } = await sb.from('production_batches').select('*', { count: 'exact', head: true }).eq('batch_date', today());
     const batchLot = 'L' + today().replace(/-/g, '') + '-' + String.fromCharCode(65 + (count || 0));
-    field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) });
+    const prodSel = field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) });
+    const presets = await loadPresets();
+    const preSel = field('preset', 'Impostazioni di processo', 'select', { options: [['', '—']], required: false });
+    const fillPresets = () => { const mine = presetsFor(presets, prodSel.value); preSel.innerHTML = mine.length ? mine.map(p => `<option value="${p.id}" ${p.is_default ? 'selected' : ''}>${p.name}${p.is_default ? ' · predefinito' : ''}</option>`).join('') : '<option value="">nessun preset: solo dosi</option>'; };
+    prodSel.onchange = fillPresets; fillPresets();
     field('mu', 'Unità', 'select', { options: [['kg', 'kg (bilancia)'], ['l', 'litri (contalitri)']] });
     field('kg', 'Latte in caldaia', 'number', { step: '0.1' });
     openForm('Inizio lotto ' + batchLot, `latte ${lot} · disponibili ${milk.qty_kg} kg`, async () => {
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
-      const product = val('product');
-      await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu') } }),
-        { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
+      const product = val('product'), preset = val('preset') || null;
+      await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset } }),
+        { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
         { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
         { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -kg, move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }]);
-      const steps = await doseSteps(product, 'start', { milk: kg });
+      const steps = mergeSteps(await doseSteps(product, 'start', { milk: kg }), processSteps(presets, preset, 'start'));
       if (!steps.length) { toast('Lotto ' + batchLot + ' avviato ✓'); return; }
-      runDosing(`Dosaggio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => toast('Lotto ' + batchLot + ' avviato, dosaggio confermato ✓'));
+      runDosing(`Avvio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => toast('Lotto ' + batchLot + ' avviato ✓ · scansiona di nuovo il lotto per la lavorazione'));
       return 'stay';
     });
   }
@@ -334,7 +350,8 @@
         toast(`Resa ${y}% · ${out} kg ✓`);
         if (whey > 0) return startRicotta();
       };
-      const steps = await doseSteps(b.product_id, 'close', { milk: b.milk_in_kg, out });
+      const presets = await loadPresets();
+      const steps = mergeSteps(await doseSteps(b.product_id, 'close', { milk: b.milk_in_kg, out }), processSteps(presets, b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id, 'close'));
       if (!steps.length) return close();
       runDosing(`Confezionamento ${b.batch_lot} · ${out} kg`, b.batch_lot, steps, close);
       return 'stay';
@@ -557,6 +574,20 @@
     try { const { data, error } = await sb.from('v_recipe_active').select('*'); if (error) throw error; try { localStorage.setItem(RK, JSON.stringify(data)); } catch {} return data; }
     catch { try { return JSON.parse(localStorage.getItem(RK) || '[]'); } catch { return []; } }
   }
+  const PK = 'perla_process_v1';
+  async function loadPresets() {
+    try { const { data, error } = await sb.from('v_process_steps').select('*').eq('preset_active', true).eq('active', true); if (error) throw error; try { localStorage.setItem(PK, JSON.stringify(data)); } catch {} return data; }
+    catch { try { return JSON.parse(localStorage.getItem(PK) || '[]'); } catch { return []; } }
+  }
+  const presetsFor = (rows, productId) => { const m = new Map(); rows.filter(r => r.product_id === productId).forEach(r => m.set(r.preset_id, { id: r.preset_id, name: r.preset_name, is_default: r.is_default })); return [...m.values()].sort((a, b) => (b.is_default - a.is_default) || a.name.localeCompare(b.name)); };
+  const METRIC = { temp: ['°C', 'Temperatura misurata'], duration: ['min', 'Minuti effettivi'], ph: ['pH', 'pH misurato'], speed: ['', 'Velocità usata'] };
+  const processSteps = (rows, presetId, phase) => presetId ? rows.filter(r => r.preset_id === presetId && r.phase === phase).sort((a, b) => a.step_order - b.step_order).map(r => {
+    const t = r.record_metric === 'temp' ? r.target_temp_c : r.record_metric === 'duration' ? r.duration_min : r.record_metric === 'ph' ? r.target_ph : r.record_metric === 'speed' ? r.speed : null;
+    const lo = r.record_metric === 'temp' ? r.temp_min_c : r.record_metric === 'duration' ? r.duration_min_min : r.record_metric === 'ph' ? r.ph_min : null;
+    const hi = r.record_metric === 'temp' ? r.temp_max_c : r.record_metric === 'duration' ? r.duration_max_min : r.record_metric === 'ph' ? r.ph_max : null;
+    return { kind: 'process', step_id: r.step_id, step_order: r.step_order, name: r.name_it, machine: r.equipment_code ? `${r.equipment_name} · ${r.equipment_code}` : '', target_txt: r.target_txt || '', instruction_it: r.instruction_it, metric: r.record_metric, target: t == null ? null : Number(t), lo: lo == null ? null : Number(lo), hi: hi == null ? null : Number(hi) };
+  }) : [];
+  const mergeSteps = (doses, proc) => [...doses.map(d => ({ ...d, kind: 'dose' })), ...proc].sort((a, b) => a.step_order - b.step_order);
   async function doseSteps(productId, phase, base) {
     const all = await loadRecipes();
     return all.filter(r => r.finished_product_id === productId && r.phase === phase)
@@ -570,36 +601,58 @@
   // show in a unit people can weigh: litres → ml, small kg → g
   const disp = s => s.unit === 'l' ? { f: 1000, u: 'ml' } : (s.unit === 'kg' && s.qty < 1) ? { f: 1000, u: 'g' } : { f: 1, u: s.unit === 'pz' ? 'pz' : s.unit };
   const fmtQty = (q, s) => { const d = disp(s); const v = q * d.f; return (d.u === 'pz' ? Math.ceil(v) : Math.round(v * 10) / 10).toLocaleString('it-IT') + ' ' + d.u; };
-  function runDosing(title, batchLot, steps, onDone) {
+  function runDosing(title, batchLot, steps, onDone, opts = {}) {
     let k = 0, warned = false;
-    const btns = ['d-ok', 'd-diff', 'd-alt-ok'].map($);
+    const btns = ['d-ok', 'd-diff', 'd-alt-ok', 'd-skip', 'd-pause'].map($);
     const render = () => {
       const s = steps[k]; warned = false;
       $('d-title').textContent = title; $('d-prog').textContent = `Passo ${k + 1} di ${steps.length}`;
       $('d-bar').style.width = (k / steps.length * 100) + '%';
-      $('d-name').textContent = s.name; $('d-qty').textContent = fmtQty(s.qty, s);
-      $('d-instr').textContent = s.instruction_it || ''; $('d-src').textContent = s.source === 'placeholder' ? 'ricetta provvisoria' : '';
-      $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-alt-u').textContent = disp(s).u; $('d-warn').textContent = '';
+      $('d-name').textContent = s.name;
+      if (s.kind === 'process') {
+        $('d-mach').textContent = s.machine; $('d-qty').textContent = s.target_txt || '—'; $('d-src').textContent = '';
+        $('d-diff').textContent = s.metric === 'none' ? '' : (METRIC[s.metric] || [])[1] + ' diversa'; $('d-diff').style.display = s.metric === 'none' ? 'none' : '';
+        $('d-alt-l').textContent = (METRIC[s.metric] || ['', 'Valore'])[1]; $('d-alt-u').textContent = (METRIC[s.metric] || [''])[0]; $('d-alt-in').step = s.metric === 'ph' ? '0.01' : '0.5';
+        $('d-ok').textContent = s.metric === 'none' ? '✓ Fatto' : `✓ Fatto · ${s.target}${(METRIC[s.metric] || [''])[0] ? ' ' + METRIC[s.metric][0] : ''}`;
+      } else {
+        $('d-mach').textContent = ''; $('d-qty').textContent = fmtQty(s.qty, s); $('d-src').textContent = s.source === 'placeholder' ? 'ricetta provvisoria' : '';
+        $('d-diff').textContent = 'Ho usato una quantità diversa'; $('d-diff').style.display = ''; $('d-alt-l').textContent = 'Quantità usata'; $('d-alt-u').textContent = disp(s).u; $('d-alt-in').step = '0.1'; $('d-ok').textContent = '✓ Fatto';
+      }
+      $('d-instr').textContent = s.instruction_it || '';
+      $('d-skip').style.display = opts.skippable ? '' : 'none'; $('d-pause').style.display = opts.skippable ? '' : 'none';
+      $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-warn').textContent = '';
       btns.forEach(b => b.disabled = false); show('dose');
     };
+    const finish = async () => { $('d-bar').style.width = '100%'; const r = await onDone(); if (r !== 'stay') { show('home'); loadTasks(); } };   // 'stay' = next sequence took over
     const next = async q => {
       const s = steps[k]; btns.forEach(b => b.disabled = true);
-      try { await save([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: staff.id } }]); }
-      finally { btns.forEach(b => b.disabled = false); }
+      try {
+        if (s.kind === 'process') await save([{ rpc: 'log_batch_step', args: { p_batch_lot: batchLot, p_step_id: s.step_id, p_actual: q, p_staff_id: staff.id } }]);
+        else await save([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: staff.id } }]);
+      } finally { btns.forEach(b => b.disabled = false); }
       k++; if (k < steps.length) return render();
-      $('d-bar').style.width = '100%'; const r = await onDone(); if (r !== 'stay') { show('home'); loadTasks(); }   // 'stay' = next sequence (e.g. ricotta) took over
+      return finish();
     };
-    $('d-ok').onclick = () => next(steps[k].qty);
+    $('d-ok').onclick = () => { const s = steps[k]; next(s.kind === 'process' ? s.target : s.qty); };
     $('d-diff').onclick = () => { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); };
+    $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona di nuovo il lotto per continuare'); show('home'); loadTasks(); };
+    $('d-skip').onclick = () => { k++; if (k < steps.length) return render(); if (opts.onSkipAll && steps.every(st => st.kind === 'process')) { $('form').innerHTML = ''; return opts.onSkipAll(); } return finish(); };
     $('d-alt-ok').onclick = () => {
       const s = steps[k], raw = $('d-alt-in').value;
-      if (raw === '' || !(Number(raw) >= 0)) return toast('Scrivi la quantità usata', 'err');
+      if (raw === '' || isNaN(Number(raw))) return toast(s.kind === 'process' ? 'Scrivi il valore misurato' : 'Scrivi la quantità usata', 'err');
+      if (s.kind === 'process') {
+        const v = Number(raw), out = (s.lo != null && v < s.lo) || (s.hi != null && v > s.hi);
+        if (out && !warned) { warned = true; $('d-warn').textContent = `Fuori dall'intervallo ${s.lo ?? '…'}–${s.hi ?? '…'} ${(METRIC[s.metric] || [''])[0]}. Ricontrolla e premi di nuovo Conferma.`; return; }
+        return next(v);
+      }
+      if (!(Number(raw) >= 0)) return toast('Scrivi la quantità usata', 'err');
       const q = Number(raw) / disp(s).f, dev = Math.abs(q - s.qty) / s.qty;
       if (dev > 0.2 && !warned) { warned = true; $('d-warn').textContent = `Differenza ${Math.round(dev * 100)}% dalla ricetta. Ricontrolla e premi di nuovo Conferma.`; return; }
       next(s.unit === 'pz' ? Math.ceil(q) : Math.round(q * 1000) / 1000);
     };
     render();
   }
+
 
   // ---------- Sicurezza alimentare (v0.28) ----------
   const rpcNow = async (fn, args) => {          // online: run now and return the answer · offline: queue it

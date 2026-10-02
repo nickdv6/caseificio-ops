@@ -160,7 +160,7 @@
     if (t.open_non_conformities) items.push(['ko', `${t.open_non_conformities} non conformità aperte`]);
     (t.calibration_due || []).forEach(c => items.push(['ko', `Taratura ${esc(c.code)} entro ${c.due}`]));
     (t.training_expiring || []).forEach(s => items.push(['ko', `Formazione HACCP ${esc(s.name)} scade ${s.expires}`]));
-    const pc = b.pos_close || {}; if (pc.missing) items.push(['ko', 'Chiusura cassa mancante']); else if (pc.variance_eur && Math.abs(pc.variance_eur) > 0.5) items.push(['ko', `Cassa: scostamento ${eur(pc.variance_eur)} tra scontrino Z e registrato`]);
+    const pc = b.pos_close || {}; if (pc.missing) items.push(['status', 'Nessuna vendita POS sincronizzata per ieri']); else if (pc.variance_eur && Math.abs(pc.variance_eur) > 0.5) items.push(['ko', `Cassa: scostamento ${eur(pc.variance_eur)} tra scontrino Z e registrato`]);
     const e = b.energy || {}; if (e.yesterday_kwh_per_kg && e.avg_30d_kwh_per_kg && e.yesterday_kwh_per_kg > e.avg_30d_kwh_per_kg * 1.15) items.push(['ko', `Energia ${num(e.yesterday_kwh_per_kg, 2)} kWh/kg vs media ${num(e.avg_30d_kwh_per_kg, 2)}`]);
     $('haccp').innerHTML = items.length ? '<ul style="margin:0;padding-left:18px">' + items.map(([c, s]) => `<li class="${c}">${s}</li>`).join('') + '</ul>' : `<div class="ok">${h.checks_logged || 0} controlli registrati, nessuna anomalia.</div>`;
   }
@@ -174,7 +174,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => loadRecipes() };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); } };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -388,6 +388,91 @@
   // ---------- recipes: dose per kg, versioned by date ----------
   const BASIS = (fin) => ({ per_kg_milk: fin === 'RIC-BUF-KG' ? 'per kg siero' : 'per kg latte', per_kg_output: 'per kg prodotto', per_batch: 'per lotto' });
   const PHASE = { start: 'Avvio', close: 'Chiusura' };
+  // ---------- process presets (machine settings per step) ----------
+  const PPHASE = { start: 'Avvio', make: 'Lavorazione', close: 'Chiusura' };
+  const PMETRIC = { none: '—', temp: 'temperatura', duration: 'durata', ph: 'pH', speed: 'velocità' };
+  const chosenPreset = {};
+  async function loadPresets() {
+    const box = $('presets'); box.innerHTML = '';
+    const [{ data: res, error }, { data: steps }, { data: eq }] = await Promise.all([
+      sb.from('v_preset_results').select('*').order('product_sku').order('created_at'),
+      sb.from('v_process_steps').select('*').eq('active', true).order('phase').order('step_order'),
+      sb.from('equipment').select('id, code, name').eq('active', true).order('code')]);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const byProd = {}; (res || []).forEach(r => (byProd[r.product_id] = byProd[r.product_id] || []).push(r));
+    Object.values(byProd).forEach(list => {
+      const prod = list[0];
+      const card = document.createElement('div'); card.className = 'card'; card.style.marginBottom = '16px';
+      card.innerHTML = `<h3>${esc(prod.product_name)} <small class="status">${esc(prod.product_sku)}</small></h3>`;
+      const active = list.filter(p => p.active);
+      const cur = chosenPreset[prod.product_id] && active.find(p => p.preset_id === chosenPreset[prod.product_id]) ? chosenPreset[prod.product_id] : (active.find(p => p.is_default) || active[0] || {}).preset_id;
+      const chips = document.createElement('div');
+      active.forEach(p => { const b = document.createElement('span'); b.className = 'pchip' + (p.preset_id === cur ? ' on' : ''); b.innerHTML = `${p.is_default ? '★ ' : ''}${esc(p.name)} <small>· ${p.n_steps} passi${p.n_batches ? ` · ${p.n_batches} lotti · resa ${p.avg_yield_pct ?? '—'}%` : ''}</small>`; b.onclick = () => { chosenPreset[prod.product_id] = p.preset_id; loadPresets(); }; chips.append(b); });
+      card.append(chips);
+      const P = active.find(p => p.preset_id === cur); if (!P) { card.append(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'Nessun preset attivo.' })); box.append(card); return; }
+      const meta = document.createElement('div'); meta.className = 'status'; meta.style.margin = '6px 0 10px';
+      meta.innerHTML = `${esc(P.description || '')}${P.based_on_name ? ` · da «${esc(P.based_on_name)}»` : ''}${P.n_batches ? ` · <b>${P.n_batches} lotti</b>, resa media <b>${P.avg_yield_pct ?? '—'}%</b>, pH medio ${P.avg_curd_ph ?? '—'}, scostamento medio dai valori obiettivo ${P.avg_abs_dev_pct ?? '—'}%` : ' · nessun lotto ancora prodotto con questo preset'}`;
+      card.append(meta);
+      const bar = document.createElement('div'); bar.style.margin = '0 0 10px';
+      const mk = (t, cls, fn, title) => { const b = document.createElement('button'); b.className = 'btn sm ' + cls; b.textContent = t; b.title = title || ''; b.style.marginRight = '6px'; b.onclick = async () => { b.disabled = true; try { await fn(); } catch (e) { toast(e.message, 'err'); } b.disabled = false; }; return b; };
+      bar.append(mk('Copia come nuovo preset', '', async () => { const name = prompt('Nome del nuovo preset (es. "Estate · filatura 94")'); if (!name) return; const { data, error } = await sb.rpc('clone_preset', { p_preset_id: P.preset_id, p_name: name, p_staff_id: null }); if (error) throw error; chosenPreset[prod.product_id] = data; toast('Preset copiato: modifica i passi e provalo sul prossimo lotto'); loadPresets(); }, 'Duplica tutti i passi in un preset con un altro nome'));
+      if (!P.is_default) bar.append(mk('Rendi predefinito', 'sec', async () => { const { error } = await sb.rpc('set_default_preset', { p_preset_id: P.preset_id }); if (error) throw error; toast('Preset predefinito aggiornato'); loadPresets(); }, 'Il tablet lo propone all\'avvio del lotto'));
+      if (!P.is_default) bar.append(mk('Archivia', 'sec', async () => { if (!confirm('Archiviare il preset «' + P.name + '»? I lotti già prodotti restano collegati.')) return; await upd('process_presets', { id: P.preset_id }, { active: false, updated_at: new Date().toISOString() }); toast('Preset archiviato'); loadPresets(); }));
+      card.append(bar);
+      const mine = (steps || []).filter(s => s.preset_id === P.preset_id);
+      const tbl = document.createElement('table'); tbl.className = 'rec';
+      tbl.innerHTML = '<tr><th>Fase · ordine</th><th>Passo</th><th>Macchina</th><th>°C (min–max)</th><th>Minuti (min–max)</th><th>Velocità</th><th>pH (min–max)</th></tr>';
+      const num = (v, step = 'any', ph = '') => { const i = document.createElement('input'); i.type = 'number'; i.step = step; i.className = 'n'; i.value = v ?? ''; i.placeholder = ph; return i; };
+      const eqSel = (v) => { const sel = document.createElement('select'); sel.className = 'eq'; sel.innerHTML = '<option value="">—</option>' + (eq || []).map(e => `<option value="${e.id}" ${e.id === v ? 'selected' : ''}>${esc(e.code)} ${esc(e.name)}</option>`).join(''); return sel; };
+      const phSel = (v) => { const sel = document.createElement('select'); sel.className = 'phs'; sel.innerHTML = Object.entries(PPHASE).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join(''); return sel; };
+      const mSel = (v) => { const sel = document.createElement('select'); sel.innerHTML = Object.entries(PMETRIC).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join(''); return sel; };
+      const extraTxt = x => Object.entries(x || {}).map(([k, v]) => `${k}: ${v}`).join(' · ');
+      const parseExtra = t => { const o = {}; t.split(/\s*[·;\n]\s*/).map(p => p.trim()).filter(Boolean).forEach(p => { const m = p.match(/^([^:]+):\s*(.+)$/); if (m) o[m[1].trim()] = m[2].trim(); }); return o; };
+      const row = (st) => {
+        const tr = document.createElement('tr'); if (!st) tr.style.background = 'var(--tile)';
+        const ph = phSel(st?.phase || 'make'), ord = num(st?.step_order ?? (mine.length + 1) * 10, '1', 'ordine'); ord.style.width = '58px';
+        const name = document.createElement('input'); name.type = 'text'; name.className = 'w'; name.value = st?.name_it || ''; name.placeholder = 'es. Filatura';
+        const eqs = eqSel(st?.equipment_id);
+        const t1 = num(st?.target_temp_c, '0.5', '°C'), t2 = num(st?.temp_min_c, '0.5', 'min'), t3 = num(st?.temp_max_c, '0.5', 'max');
+        const d1 = num(st?.duration_min, '1', 'min'), d2 = num(st?.duration_min_min, '1', 'min'), d3 = num(st?.duration_max_min, '1', 'max');
+        const sp = num(st?.speed, '0.1', 'vel.'), su = document.createElement('input'); su.type = 'text'; su.className = 'sh'; su.value = st?.speed_unit || ''; su.placeholder = 'unità';
+        const p1 = num(st?.target_ph, '0.01', 'pH'), p2 = num(st?.ph_min, '0.01', 'min'), p3 = num(st?.ph_max, '0.01', 'max');
+        const ex = document.createElement('input'); ex.type = 'text'; ex.className = 'w'; ex.value = extraTxt(st?.extra); ex.placeholder = 'es. salamoia: 15% · tamburo: 250 g';
+        const ins = document.createElement('input'); ins.type = 'text'; ins.className = 'w'; ins.value = st?.instruction_it || ''; ins.placeholder = 'cosa deve fare il casaro';
+        const met = mSel(st?.record_metric || 'none');
+        const payload = () => ({ preset_id: P.preset_id, phase: ph.value, step_order: Number(ord.value) || 10, name_it: name.value.trim(), equipment_id: eqs.value || null,
+          target_temp_c: t1.value === '' ? null : Number(t1.value), temp_min_c: t2.value === '' ? null : Number(t2.value), temp_max_c: t3.value === '' ? null : Number(t3.value),
+          duration_min: d1.value === '' ? null : Number(d1.value), duration_min_min: d2.value === '' ? null : Number(d2.value), duration_max_min: d3.value === '' ? null : Number(d3.value),
+          speed: sp.value === '' ? null : Number(sp.value), speed_unit: su.value.trim() || null, target_ph: p1.value === '' ? null : Number(p1.value), ph_min: p2.value === '' ? null : Number(p2.value), ph_max: p3.value === '' ? null : Number(p3.value),
+          extra: parseExtra(ex.value), instruction_it: ins.value.trim() || null, record_metric: met.value, updated_at: new Date().toISOString() });
+        const rng = () => Object.assign(document.createElement('span'), { className: 'rng', textContent: '–' });
+        const cells = [[ph, ' ', ord], [name], [eqs], [t1, ' ', t2, rng(), t3], [d1, ' ', d2, rng(), d3], [sp, ' ', su], [p1, ' ', p2, rng(), p3]];
+        cells.forEach(parts => { const td = document.createElement('td'); td.style.whiteSpace = 'nowrap'; parts.forEach(p => td.append(typeof p === 'string' ? document.createTextNode(p) : p)); tr.append(td); });
+        // second line: free-text settings + the instruction the casaro reads
+        const sub = document.createElement('tr'); sub.className = 'stepsub'; if (!st) sub.style.background = 'var(--tile)';
+        const sTd = document.createElement('td'); sTd.colSpan = 7; sTd.style.whiteSpace = 'nowrap'; sTd.style.flex = '1 1 100%';
+        const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:auto 1fr auto 2fr auto auto auto;gap:6px 8px;align-items:center;padding-bottom:6px';
+        const tdB = document.createElement('span'); tdB.style.whiteSpace = 'nowrap';
+        grid.append(Object.assign(document.createElement('span'), { textContent: 'Altro' }), ex, Object.assign(document.createElement('span'), { textContent: 'Istruzione' }), ins, Object.assign(document.createElement('span'), { textContent: 'Il tablet registra' }), met, tdB);
+        sTd.append(grid); sub.append(sTd);
+        if (st) {
+          tdB.append(saveBtn(async () => { const p = payload(); if (!p.name_it) throw new Error('Dai un nome al passo'); await upd('process_steps', { id: st.step_id }, p); loadPresets(); }));
+          const rm = document.createElement('button'); rm.className = 'btn sm sec'; rm.textContent = 'Togli'; rm.style.marginLeft = '6px'; rm.title = 'Il passo non compare più sul tablet';
+          rm.onclick = async () => { rm.disabled = true; try { await upd('process_steps', { id: st.step_id }, { active: false, updated_at: new Date().toISOString() }); toast('Passo tolto'); loadPresets(); } catch (e) { toast(e.message, 'err'); rm.disabled = false; } };
+          tdB.append(rm);
+        } else {
+          const add = document.createElement('button'); add.className = 'btn sm'; add.textContent = 'Aggiungi';
+          add.onclick = async () => { const p = payload(); if (!p.name_it) return toast('Dai un nome al passo', 'err'); add.disabled = true; const { error } = await sb.from('process_steps').insert(p); add.disabled = false; if (error) return toast(error.message, 'err'); toast('Passo aggiunto'); loadPresets(); };
+          tdB.append(add);
+        }
+        const frag = document.createDocumentFragment(); frag.append(tr, sub); return frag;
+      };
+      mine.forEach(st => tbl.append(row(st))); tbl.append(row(null));
+      const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(tbl); card.append(wrap); box.append(card);
+    });
+    if (!Object.keys(byProd).length) box.innerHTML = '<div class="empty">Nessun preset: vengono creati con la migrazione v0.26.</div>';
+  }
+
   async function loadRecipes() {
     const box = $('recipes'); box.innerHTML = '';
     const [{ data: rows, error }, { data: fins }, { data: comps }] = await Promise.all([

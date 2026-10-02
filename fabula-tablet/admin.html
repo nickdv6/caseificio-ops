@@ -161,6 +161,7 @@ details.card>.body{padding:0 14px 12px}
   <div class="pane" id="p-vendite">
     <div class="set-grid">
       <div class="card"><h3>Prezzi</h3><div class="params" data-groups="price"></div></div>
+      <div class="card"><h3>Shopify POS e giacenze online</h3><div class="hint">Shopify è la cassa e il sito: le vendite arrivano qui ogni mattina (bot Ordini Shopify) e la chiusura cassa si scrive da sola. Il bot Giacenze Shopify spinge su Shopify i pezzi vendibili (scorte in corso di validità meno ordini pagati da spedire meno la riserva banco).</div><div class="params" data-groups="shopify"></div></div>
       <div class="card"><h3>Vendere prima (scorte in scadenza)</h3><div class="hint">Soglie del bot che propone promo e offerte ingrosso.</div><div class="params" data-groups="sell"></div></div>
       <div class="card" style="grid-column:1/-1"><h3>Prodotti Shopify → magazzino</h3><div class="hint">Ogni variante venduta online va collegata a un prodotto del magazzino con i kg per pezzo, così l'ordine scarica le giacenze. Le mozzarelle sono collegate automaticamente dal peso nel titolo; abbonamenti, forniture B2B e olio restano da decidere (lascia vuoto per "non scarica il magazzino").</div><div id="variant-map"></div></div>
     </div>
