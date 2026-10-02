@@ -174,7 +174,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); } };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadTerms(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); } };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -191,6 +191,45 @@
     badge('n-ops', (po.data || []).length);
     badge('n-anag', (pl.data || []).length);
     $('n-ops').title = `${(po.data || []).length} ordini da inviare · ${(ws.data || []).length} consegne ingrosso`;
+  }
+  async function loadTerms() {
+    const box = $('set-terms'); box.innerHTML = '';
+    const { data, error } = await sb.from('v_supplier_terms').select('*').order('supplier').order('sku');
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!(data || []).length) { box.innerHTML = '<div class="empty">Nessun articolo collegato a un fornitore: imposta un prezzo di listino o il fornitore preferito.</div>'; return; }
+    const tbl = document.createElement('table');
+    tbl.innerHTML = '<tr><th>Fornitore</th><th>Articolo</th><th class="num">Consegna gg</th><th class="num">Minimo</th><th class="num">Multipli</th><th>Pagamento</th><th class="num">Listino €</th><th class="num">Pagato €</th><th class="num">90 gg</th><th></th></tr>';
+    const ni = (v, step) => { const i = document.createElement('input'); i.type = 'number'; i.step = step; i.min = '0'; i.style.width = '70px'; i.value = v ?? ''; return i; };
+    data.forEach(r => {
+      const tr = document.createElement('tr');
+      const trend = r.price_90d_ago_eur && r.last_paid_eur ? Math.round((r.last_paid_eur / r.price_90d_ago_eur - 1) * 1000) / 10 : null;
+      tr.innerHTML = `<td>${esc(r.supplier)}${r.preferred ? ' <small class="status">preferito</small>' : ''}</td><td>${esc(r.product)} <small>${esc(r.unit || '')}</small></td>`;
+      const lead = ni(r.lead_time_days, '1'), mn = ni(r.min_order_qty, 'any'), mul = ni(r.order_multiple, 'any');
+      const pay = document.createElement('input'); pay.type = 'text'; pay.style.width = '110px'; pay.placeholder = 'es. 60 gg DFFM'; pay.value = r.payment_terms || '';
+      [lead, mn, mul].forEach(i => { const td = document.createElement('td'); td.className = 'num'; td.append(i); tr.append(td); });
+      const tdp = document.createElement('td'); tdp.append(pay); tr.append(tdp);
+      const c = (html, cls = 'num') => { const td = document.createElement('td'); td.className = cls; td.innerHTML = html; tr.append(td); };
+      c(r.list_price_eur != null ? num(r.list_price_eur, 3) : '–');
+      c(r.last_paid_eur != null ? `${num(r.last_paid_eur, 3)}<br><small>${fmtD(r.last_paid_on)}</small>` : '–', 'num' + (r.list_price_eur && r.last_paid_eur && Number(r.last_paid_eur) > Number(r.list_price_eur) ? ' ko' : ''));
+      c(trend == null ? '–' : `${trend > 0 ? '+' : ''}${num(trend, 1)}%`, 'num' + (trend > 5 ? ' ko' : ''));
+      const td = document.createElement('td'); td.style.whiteSpace = 'nowrap';
+      td.append(saveBtn(async () => { await upd('supplier_products', { supplier_id: r.supplier_id, product_id: r.product_id }, { lead_time_days: nOrNull(lead.value), min_order_qty: nOrNull(mn.value), order_multiple: nOrNull(mul.value), payment_terms: pay.value.trim() || null, updated_at: new Date().toISOString() }); loadTerms(); }));
+      const h = document.createElement('button'); h.className = 'btn sm sec'; h.textContent = '↗'; h.title = 'Storico prezzi'; h.style.marginLeft = '4px';
+      h.onclick = () => loadPriceHist(r); td.append(h); tr.append(td);
+      tbl.append(tr);
+    });
+    box.append(tbl);
+  }
+  async function loadPriceHist(r) {
+    const box = $('price-hist'); box.innerHTML = '<div class="status">Carico…</div>';
+    const { data, error } = await sb.from('v_supplier_price_history').select('*').eq('supplier_id', r.supplier_id).eq('product_id', r.product_id).order('price_date', { ascending: false }).limit(40);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    box.innerHTML = `<h4 style="margin:14px 0 6px">Storico prezzi · ${esc(r.product)} da ${esc(r.supplier)}</h4>`;
+    if (!(data || []).length) { box.innerHTML += '<div class="empty">Ancora nessun prezzo.</div>'; return; }
+    const tbl = document.createElement('table');
+    tbl.innerHTML = '<tr><th>Data</th><th>Fonte</th><th>Rif.</th><th class="num">Qtà</th><th class="num">€ / ' + esc(r.unit || 'unità') + '</th><th class="num">Var.</th></tr>' +
+      data.map(x => `<tr><td>${fmtD(x.price_date)}</td><td>${esc(x.source)}</td><td>${esc(x.ref || '')}</td><td class="num">${x.qty != null ? num(x.qty, 0) : ''}</td><td class="num">${num(x.price_eur, 4)}</td><td class="num ${Number(x.change_pct) > 5 ? 'ko' : ''}">${x.change_pct != null ? (x.change_pct > 0 ? '+' : '') + num(x.change_pct, 1) + '%' : ''}</td></tr>`).join('');
+    box.append(tbl);
   }
   async function loadStaffCard() {
     const { data } = await sb.from('staff').select('id, full_name, role, haccp_training_expires, active').eq('active', true).order('full_name');
