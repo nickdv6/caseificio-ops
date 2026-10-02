@@ -251,26 +251,51 @@
     const rows = PARTIES.filter(p => p.type === partyType);
     if (!rows.length) { box.innerHTML = `<div class="empty">Nessun ${partyType === 'supplier' ? 'fornitore' : 'cliente'}.</div>`; return; }
     const tbl = document.createElement('table'); tbl.className = 'par';
-    tbl.innerHTML = `<tr><th>Nome / ragione sociale</th><th>Email</th><th>Telefono / WhatsApp</th><th class="num">Pag. gg</th><th>${partyType === 'supplier' ? 'Articoli' : 'Ordini fissi'}</th><th></th></tr>`;
+    const isCus = partyType === 'customer';
+    tbl.innerHTML = isCus
+      ? `<tr><th>Cliente</th><th>Email</th><th>Telefono</th><th>Tag</th><th class="num">Ordini</th><th class="num">Speso</th><th class="num">Pag. gg</th><th>Ordini fissi</th><th></th></tr>`
+      : `<tr><th>Nome / ragione sociale</th><th>Email</th><th>Telefono / WhatsApp</th><th class="num">Pag. gg</th><th>Articoli</th><th></th></tr>`;
     rows.forEach(p => {
       const tr = document.createElement('tr'); if (p.is_placeholder) tr.className = 'ph';
       const mk = (type, k, v, ph = '') => { const i = document.createElement(type === 'number' ? 'input' : 'input'); i.type = type; i.dataset.k = k; i.value = v ?? ''; i.placeholder = ph; return i; };
-      const name = mk('text', 'legal_name', p.legal_name), email = mk('email', 'email', p.email, '—'), phone = mk('tel', 'phone', p.phone, '+39 …'), days = mk('number', 'payment_terms_days', p.payment_terms_days);
+      const days = mk('number', 'payment_terms_days', p.payment_terms_days);
+      if (isCus) {
+        // Shopify is the source of truth: name, e-mail, phone, tags are read-only here
+        const fromShopify = p.source === 'shopify';
+        const t1 = document.createElement('td'); t1.innerHTML = `<b>${esc(p.legal_name)}</b>${p.city ? ` <small class="status">${esc(p.city)}</small>` : ''}<br><small class="${p.is_placeholder ? 'status ko' : 'status'}">${p.is_placeholder ? 'segnaposto · crealo su Shopify' : fromShopify ? 'Shopify' : 'locale (non su Shopify)'}</small>`;
+        const t2 = document.createElement('td'); t2.textContent = p.email || '—'; const t3 = document.createElement('td'); t3.textContent = p.phone || '—';
+        const t4 = document.createElement('td'); t4.innerHTML = (p.is_wholesale ? '<span class="kind" style="border-color:var(--accent);color:var(--accent);font-size:.75rem;padding:0 5px;border-radius:3px;border:1.5px solid">ingrosso</span> ' : '') + (p.tags || []).filter(t => !['ingrosso', 'b2b', 'wholesale', 'horeca'].includes(t)).map(t => `<small class="status">${esc(t)}</small>`).join(' ');
+        const t5 = document.createElement('td'); t5.className = 'num'; t5.textContent = p.orders_count ?? '—'; const t6 = document.createElement('td'); t6.className = 'num'; t6.textContent = p.total_spent_eur != null ? eur(p.total_spent_eur) : '—';
+        const t7 = document.createElement('td'); t7.className = 'num'; t7.append(days);
+        const t8 = document.createElement('td'); t8.className = 'status'; t8.textContent = p.standing_orders ? p.standing_orders + ' giorni' : '—';
+        const t9 = document.createElement('td'); t9.style.whiteSpace = 'nowrap';
+        t9.append(saveBtn(async () => { await upd('parties', { id: p.id }, { payment_terms_days: nOrNull(days.value) }); loadParties(); }));
+        if (fromShopify && p.shopify_customer_id) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.cssText = 'text-decoration:none;margin-left:6px'; a.target = '_blank'; a.textContent = 'Shopify ↗'; a.href = 'https://admin.shopify.com/store/pxssjd-cq/customers/' + p.shopify_customer_id.split('/').pop(); t9.append(a); }
+        tr.append(t1, t2, t3, t4, t5, t6, t7, t8, t9); tbl.append(tr); return;
+      }
+      const name = mk('text', 'legal_name', p.legal_name), email = mk('email', 'email', p.email, '—'), phone = mk('tel', 'phone', p.phone, '+39 …');
       const t1 = document.createElement('td'); t1.append(name); if (p.is_placeholder) { const s = document.createElement('small'); s.className = 'status ko'; s.textContent = 'segnaposto'; t1.append(document.createElement('br'), s); }
       const t2 = document.createElement('td'); t2.append(email); const t3 = document.createElement('td'); t3.append(phone); const t4 = document.createElement('td'); t4.className = 'num'; t4.append(days);
-      const t5 = document.createElement('td'); t5.className = 'status'; t5.textContent = partyType === 'supplier' ? (p.products_supplied ? p.products_supplied + ' articoli' : '—') : (p.standing_orders ? p.standing_orders + ' giorni' : '—');
+      const t5 = document.createElement('td'); t5.className = 'status'; t5.textContent = p.products_supplied ? p.products_supplied + ' articoli' : '—';
       const t6 = document.createElement('td'); t6.style.whiteSpace = 'nowrap';
       t6.append(saveBtn(async () => {
         const v = {}; tr.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
         if (!v.legal_name) throw new Error('Il nome è obbligatorio');
-        if (p.is_placeholder && !/^(Fornitore|Cliente) \d/.test(v.legal_name)) v.notes = null;   // renamed → no longer a placeholder
+        if (p.is_placeholder && !/^(Fornitore|Cliente) \d/.test(v.legal_name)) { v.notes = null; v.source = 'manual'; }   // renamed → no longer a placeholder
         await upd('parties', { id: p.id }, v); loadParties(); refreshBadges();
       }));
       tr.append(t1, t2, t3, t4, t5, t6); tbl.append(tr);
     });
-    // new party row
+    if (isCus) {
+      box.append(tbl);
+      const h = document.createElement('div'); h.className = 'hint'; h.style.marginTop = '8px';
+      const last = PARTIES.filter(p => p.type === 'customer' && p.last_synced_at).map(p => p.last_synced_at).sort().pop();
+      h.innerHTML = `I clienti si creano e si modificano su <b>Shopify → Clienti</b>; il bot "Clienti Shopify" li copia qui ogni mattina (ultima sincronizzazione: ${last ? new Date(last).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'mai'}). Tag <b>ingrosso</b> su Shopify = cliente all'ingrosso qui. Un segnaposto con la stessa e-mail viene adottato automaticamente.`;
+      box.append(h); return;
+    }
+    // new supplier row
     const add = document.createElement('tr'); add.style.background = 'var(--tile)';
-    const nn = document.createElement('input'); nn.type = 'text'; nn.placeholder = partyType === 'supplier' ? 'Nuovo fornitore…' : 'Nuovo cliente…';
+    const nn = document.createElement('input'); nn.type = 'text'; nn.placeholder = 'Nuovo fornitore…';
     const ne = document.createElement('input'); ne.type = 'email'; ne.placeholder = 'email'; const np = document.createElement('input'); np.type = 'tel'; np.placeholder = '+39 …'; const nd = document.createElement('input'); nd.type = 'number'; nd.value = 30;
     const nb = document.createElement('button'); nb.className = 'btn sm'; nb.textContent = 'Aggiungi';
     nb.onclick = async () => { if (!nn.value.trim()) return toast('Scrivi il nome', 'err'); nb.disabled = true; const { error } = await sb.from('parties').insert({ type: partyType, legal_name: nn.value.trim(), email: ne.value.trim() || null, phone: np.value.trim() || null, payment_terms_days: nOrNull(nd.value) }); nb.disabled = false; if (error) return toast(error.message, 'err'); toast('Aggiunto'); loadParties(); };
@@ -283,7 +308,7 @@
     const box = $('set-standing'); box.innerHTML = '';
     const [{ data: so }, { data: cust }, { data: prod }] = await Promise.all([
       sb.from('standing_orders').select('*'),
-      sb.from('parties').select('id, legal_name').eq('type', 'customer').eq('active', true).order('legal_name'),
+      sb.from('parties').select('id, legal_name').eq('type', 'customer').eq('active', true).eq('is_wholesale', true).order('legal_name'),
       sb.from('products').select('id, name, sku').eq('sku', 'MOZ-DOP-KG').maybeSingle()]);
     const moz = prod; if (!moz) { box.innerHTML = '<div class="empty">Prodotto MOZ-DOP-KG non trovato.</div>'; return; }
     const tbl = document.createElement('table');
@@ -309,7 +334,7 @@
       tr.append(td); tbl.append(tr);
     });
     box.append(tbl);
-    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Prezzo ingrosso: Configurazione → Vendite. Nuovo cliente: aggiungilo nella tabella Clienti qui sopra, poi compare in questa griglia.'; box.append(note);
+    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Prezzo ingrosso: Configurazione → Vendite. Qui compaiono solo i clienti con tag ingrosso su Shopify.'; box.append(note);
   }
   async function loadFarm() {
     const box = $('set-farm'); box.innerHTML = '';
