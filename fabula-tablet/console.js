@@ -17,7 +17,7 @@
     if (!session) return show('login');
     const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
     staff = data || { id: null, full_name: session.user.email, role: 'owner' };
-    $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
+    $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false; $('btn-pkg').hidden = false;
     show('main'); load();
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La Perla · Pacchetto mensile</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Printable monthly package for the commercialista: one page per section, numbers only from fabula.monthly_package() */
+:root{ --bg:#f7f5f0; --paper:#fff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb; --accent:#0f6b4f; --warn:#b4472c;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif; }
+@media (prefers-color-scheme: dark){ :root{ --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#2f9c74; --warn:#f08a6a; color-scheme:dark } }
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.35;padding:16px}
+.wrap{max-width:900px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:3px solid var(--accent);padding-bottom:10px;margin-bottom:14px;flex-wrap:wrap}
+h1{font-family:var(--display);font-size:1.9rem;margin:0} .sub{color:var(--muted)}
+.ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input,button{font:1rem var(--body);padding:7px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg)}
+button.p{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;cursor:pointer}
+.badge{display:inline-block;font-family:var(--display);font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--warn);color:#fff;margin-left:8px;vertical-align:middle}
+h2{font-family:var(--display);font-size:1.2rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);margin:20px 0 6px}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;margin-bottom:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.k .l{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)} .k .v{font-family:var(--display);font-size:1.7rem;font-weight:700;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:.95rem} td,th{text-align:left;padding:5px 4px;border-bottom:1px solid var(--rule)} th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)} td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.note{color:var(--muted);font-size:.85rem;margin-top:6px} .empty{color:var(--muted);font-style:italic}
+@media print{ body{background:#fff;padding:0} .ctl,.noprint{display:none} .card{break-inside:avoid;border-color:#ccc} h2{color:#000} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>La Perla del Cilento · pacchetto mensile <span id="sim" class="badge" hidden>simulazione</span></h1><div class="sub" id="sub">per il commercialista · dati gestionali, non documenti fiscali</div></div>
+  <div class="ctl"><label for="m">Mese</label><input type="month" id="m"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html" style="color:var(--muted)">← console</a></div>
+</header>
+<div id="out"><div class="empty">Accedi dalla console, poi scegli il mese.</div></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+(() => {
+  const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
+  const $ = id => document.getElementById(id);
+  const eur = n => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
+  const num = (n, d = 1) => n == null ? '–' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const tbl = (rows, cols) => rows && rows.length ? '<table><tr>' + cols.map(c => `<th class="${c.n ? 'n' : ''}">${c.h}</th>`).join('') + '</tr>' + rows.map(r => '<tr>' + cols.map(c => `<td class="${c.n ? 'n' : ''}">${c.f(r)}</td>`).join('') + '</tr>').join('') + '</table>' : '<div class="empty">nessun dato</div>';
+  const prev = new Date(); prev.setMonth(prev.getMonth() - 1); $('m').value = prev.toISOString().slice(0, 7);
+  async function load() {
+    const { data: { session } } = await sb.auth.getSession(); if (!session) { $('out').innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
+    const month = $('m').value + '-01';
+    const { data: p, error } = await sb.rpc('monthly_package', { p_month: month });
+    if (error) { $('out').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    $('sim').hidden = !p.is_simulation; $('sub').textContent = `${p.from} – ${p.to} · ${p.company.note}`;
+    const s = p.sales, mk = p.milk, pu = p.purchases, pr = p.production, inv = p.inventory, lb = p.labor, en = p.energy, co = p.compliance, dc = p.documents;
+    $('out').innerHTML = `
+      <div class="card"><div class="kpis">
+        <div class="k"><div class="l">Vendite</div><div class="v">${eur(s.revenue_eur)}</div></div>
+        <div class="k"><div class="l">Corrispettivi (Z)</div><div class="v">${eur(s.pos_receipts_eur)}</div></div>
+        <div class="k"><div class="l">Latte acquistato</div><div class="v">${eur(mk.cost_eur)}</div></div>
+        <div class="k"><div class="l">Merci ricevute</div><div class="v">${eur(pu.received_eur)}</div></div>
+        <div class="k"><div class="l">Rimanenze al ${p.to.slice(8)}/${p.to.slice(5, 7)}</div><div class="v">${eur(inv.value_eur)}</div></div>
+        <div class="k"><div class="l">Mozzarella prodotta</div><div class="v">${num(pr.mozzarella_kg, 0)} kg</div></div>
+      </div></div>
+      <h2>1 · Vendite e corrispettivi</h2><div class="card">
+        ${tbl(s.by_channel, [{ h: 'Canale', f: r => esc(r.channel) }, { h: 'Ordini', n: 1, f: r => r.orders }, { h: '€', n: 1, f: r => eur(r.eur) }])}
+        <div class="note">Scontrini Z registrati: ${s.pos_days_closed} giorni · scostamento cassa cumulato ${eur(s.pos_variance_eur)}</div>
+        <h2 style="font-size:1rem;margin-top:12px">Imponibile per aliquota IVA</h2>
+        ${tbl(s.by_iva_rate, [{ h: 'Aliquota', f: r => num(r.iva_rate, 0) + ' %' }, { h: 'Imponibile €', n: 1, f: r => eur(r.imponibile_eur) }])}
+        <h2 style="font-size:1rem;margin-top:12px">Clienti ingrosso</h2>
+        ${tbl(s.wholesale_customers, [{ h: 'Cliente', f: r => esc(r.customer) }, { h: 'kg', n: 1, f: r => num(r.kg, 0) }, { h: '€', n: 1, f: r => eur(r.eur) }])}
+      </div>
+      <h2>2 · Acquisti</h2><div class="card">
+        <b>Latte di bufala</b>: ${mk.deliveries} consegne · ${num(mk.kg, 0)} kg · ${eur(mk.cost_eur)}
+        ${tbl(mk.by_supplier, [{ h: 'Fornitore latte', f: r => esc(r.supplier) }, { h: 'kg', n: 1, f: r => num(r.kg, 0) }, { h: '€', n: 1, f: r => eur(r.eur) }])}
+        <div style="margin-top:10px"><b>Consumabili e imballi ricevuti</b>: ${pu.orders_received} ordini · ${eur(pu.received_eur)} · ordini aperti ${eur(pu.open_orders_eur)}</div>
+        ${tbl(pu.by_supplier, [{ h: 'Fornitore', f: r => esc(r.supplier) }, { h: 'DDT', f: r => esc(r.ddt || '') }, { h: '€', n: 1, f: r => eur(r.eur) }])}
+        <div class="note">Valori da ordini e bolle; le fatture SDI arrivano con il collegamento contabile.</div>
+      </div>
+      <h2>3 · Produzione e rimanenze</h2><div class="card">
+        <div class="kpis">
+          <div class="k"><div class="l">Latte lavorato</div><div class="v">${num(pr.milk_processed_kg, 0)} kg</div></div>
+          <div class="k"><div class="l">Mozzarella</div><div class="v">${num(pr.mozzarella_kg, 0)} kg</div></div>
+          <div class="k"><div class="l">Ricotta</div><div class="v">${num(pr.ricotta_kg, 0)} kg</div></div>
+          <div class="k"><div class="l">Resa</div><div class="v">${num(pr.yield_pct)} %</div></div>
+          <div class="k"><div class="l">Scarti</div><div class="v">${num(pr.waste_kg, 0)} kg</div></div>
+          <div class="k"><div class="l">Lotti</div><div class="v">${pr.batches}</div></div>
+        </div>
+        <h2 style="font-size:1rem;margin-top:12px">Rimanenze finali al ${p.to}</h2>
+        ${tbl(inv.lines, [{ h: 'Articolo', f: r => esc(r.name) }, { h: 'Q.tà', n: 1, f: r => num(r.qty, 1) + ' ' + esc(r.unit) }, { h: 'Costo unit.', n: 1, f: r => eur(r.unit_cost_eur) }, { h: 'Valore', n: 1, f: r => eur(r.value_eur) }])}
+        <div class="note">Costo unitario: ultimo listino fornitore; per il prodotto finito, costo del latte equivalente alla resa media.</div>
+      </div>
+      <h2>4 · Lavoro, energia, conformità</h2><div class="card">
+        <b>Ore badge</b>: ${num(lb.hours, 1)} h · ${lb.people} persone
+        ${tbl(lb.by_person, [{ h: 'Persona', f: r => esc(r.name) }, { h: 'Turni', n: 1, f: r => r.shifts }, { h: 'Ore', n: 1, f: r => num(r.hours, 1) }])}
+        <div style="margin-top:10px"><b>Energia</b>: ${num(en.kwh, 0)} kWh · ${num(en.kwh_per_kg, 2)} kWh/kg</div>
+        <div style="margin-top:6px"><b>HACCP</b>: ${co.haccp_checks} controlli registrati · ${co.non_conformities} non conformità · prove di richiamo: ${(co.recall_drills || []).map(d => esc(d.lot) + ' (' + esc(d.result) + ')').join(', ') || 'nessuna'}</div>
+        <div style="margin-top:6px"><b>Documenti</b>: ${dc.ddt_in_photos} foto DDT in entrata${dc.missing_ddt_photos ? ` · <span style="color:var(--warn)">${dc.missing_ddt_photos} arrivi latte senza foto</span>` : ''}</div>
+      </div>
+      <div class="note noprint">Generato il ${new Date().toLocaleDateString('it-IT')} da fabula.monthly_package(). Stampa / PDF per inviarlo.</div>`;
+  }
+  $('go').onclick = load; $('print').onclick = () => window.print();
+  load();
+})();
+</script>
+</body>
+</html>

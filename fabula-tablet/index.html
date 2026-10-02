@@ -57,6 +57,10 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .dose-instr{font-size:1.15rem}.dose-src{color:var(--warn);font-size:.85rem;margin-top:8px;text-transform:uppercase;letter-spacing:.05em}
 .btn.huge{font-size:1.7rem;padding:26px}
 .alt-row{display:flex;align-items:center;gap:10px}.alt-row input{flex:1}.alt-row span{font:600 1.4rem var(--body);color:var(--muted)}
+.notice{background:var(--paper);border:2px solid var(--warn);border-radius:10px;padding:12px 14px;margin-top:14px}
+.notice .nt{font-family:var(--display);font-size:1.25rem;font-weight:700;color:var(--warn);margin-bottom:6px}
+.notice.info{border-color:var(--rule)}.notice.info .nt{color:var(--muted)}
+.nitem{display:block;width:100%;text-align:left;border:0;background:var(--tile);border-radius:8px;padding:12px;margin-top:6px;font:600 1.1rem var(--body);color:var(--fg);cursor:pointer}
 </style>
 </head>
 <body>
@@ -72,7 +76,9 @@ input[type=number]{font-variant-numeric:tabular-nums}
 
 <section class="view" id="v-home">
   <button class="btn big" id="btn-scan">▣ Scansiona</button>
-  <button class="btn secondary" id="btn-receive">📦 Arrivo merce</button>
+  <div class="row"><button class="btn secondary" id="btn-receive">📦 Arrivo merce</button><button class="btn secondary" id="btn-count">📋 Conta magazzino</button></div>
+  <div id="notice-wrap" style="display:none"></div>
+  <div class="pending" id="onshift" style="text-align:left;margin-top:10px"></div>
   <div id="selldown-wrap" style="display:none"><h2 style="margin-top:22px">Da vendere prima</h2><div class="tasks" id="selldown"></div></div>
   <h2 style="margin-top:22px">Da fare oggi</h2>
   <div class="tasks" id="tasks"></div>

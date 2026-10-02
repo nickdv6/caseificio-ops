@@ -81,8 +81,25 @@
       box.append(d);
     });
   }
+  async function loadNotices() {           // red banner: what is still missing tonight — tap an item to go straight to its scan
+    const wrap = $('notice-wrap'); if (!wrap) return;
+    const { data, error } = await sb.from('v_active_notices').select('*');
+    if (error || !data || !data.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = ''; wrap.innerHTML = '';
+    data.forEach(n => {
+      const d = document.createElement('div'); d.className = 'notice ' + n.severity;
+      d.innerHTML = `<div class="nt">${n.title_it}</div>`;
+      (n.items || []).forEach(it => { const b = document.createElement('button'); b.className = 'nitem'; b.textContent = it.label_it + ' ›'; b.onclick = () => handleCode(it.scan); d.append(b); });
+      wrap.append(d);
+    });
+  }
+  async function loadShifts() {            // who is clocked in right now
+    const el = $('onshift'); if (!el) return;
+    const { data } = await sb.from('v_open_shifts').select('full_name, hours_so_far');
+    el.textContent = data && data.length ? 'In turno: ' + data.map(r => `${r.full_name} (${Number(r.hours_so_far).toLocaleString('it-IT')} h)`).join(', ') : 'Nessuno in turno · passa il badge per iniziare';
+  }
   async function loadTasks() {
-    loadSellDown();
+    loadSellDown(); loadNotices(); loadShifts();
     const { data, error } = await sb.from('v_tasks_open').select('*');
     const box = $('tasks'); box.innerHTML = '';
     if (error) { box.textContent = 'Lista non disponibile offline'; return; }
@@ -90,7 +107,7 @@
     data.forEach(t => {
       const d = document.createElement('div'); d.className = 'task ' + t.status;
       d.innerHTML = `<div><div>${t.title_it}</div><div class="code">${t.equipment_code || t.code}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
-      d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : startScan();
+      d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : t.code === 'T-COUNT' ? stepStockCount() : t.code === 'T-CLEAN' ? handleCode('CLEAN:') : startScan();
       box.append(d);
     });
   }
@@ -152,9 +169,16 @@
       if (kind === 'DDT') return await stepMilk(ref);
       if (kind === 'LOT') return await stepLot(ref);
       if (kind === 'PO') return await stepReceive(ref);
+      if (kind === 'COUNT') return await stepStockCount();
       if (kind === 'METER') return stepMeter(ref || 'elec_main');
       if (kind === 'CLEAN') return stepClean();
-      if (kind === 'STAFF') { toast('Badge letto: ' + ref); return show('home'); }
+      if (kind === 'STAFF') {                       // one scan = clock in, next scan = clock out
+        const { data: r, error } = await sb.rpc('toggle_shift', { p_badge: code });
+        if (error) throw error;
+        await save([scanEvent(code, 'task_done', { payload: { shift: r.action, hours: r.hours } })]);
+        toast(r.action === 'in' ? `${r.staff}: inizio turno ✓` : `${r.staff}: fine turno ✓ · ${Number(r.hours).toLocaleString('it-IT')} h`);
+        loadShifts(); return show('home');
+      }
       toast('Codice non riconosciuto: ' + code, 'err'); show('home');
     } catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
   }
@@ -350,6 +374,33 @@
       toast(`Ricevuto ${po.po_number} · ${tot.toLocaleString('it-IT')} pezzi/kg in magazzino ✓`);
     });
   }
+
+  // 12 — weekly stock count: sheet prefilled with the system quantity; change only what differs
+  async function stepStockCount() {
+    $('form').innerHTML = ''; current = { code: 'COUNT:' };
+    const { data: sheet, error } = await sb.rpc('start_stock_count', { p_staff_id: staff.id });
+    if (error) { toast('Conta non disponibile offline', 'err'); return; }
+    const lines = sheet.lines || [];
+    let lastKind = '';
+    lines.forEach((l, i) => {
+      if (l.kind !== lastKind) { lastKind = l.kind; const h = document.createElement('h2'); h.style.marginTop = '18px'; h.textContent = l.kind === 'finished_good' ? 'Prodotto finito (per lotto)' : 'Consumabili e imballi'; $('form').append(h); }
+      const q = field('c' + i, `${l.name}${l.lot ? ' · ' + l.lot : ''}  —  sistema ${Number(l.system_qty).toLocaleString('it-IT')} ${l.unit}`, 'number', { step: l.unit === 'pz' ? '1' : '0.1', required: false });
+      q.value = l.system_qty; q.dataset.sys = l.system_qty; q.dataset.line = l.line_id;
+      q.oninput = () => { q.style.borderColor = Number(q.value) !== Number(q.dataset.sys) ? 'var(--warn)' : ''; };
+    });
+    field('note', 'Note (facoltative)', 'text', { required: false });
+    openForm('Conta magazzino', `${lines.length} righe · cambia solo ciò che è diverso, poi Salva`, async () => {
+      const changed = [...$('form').querySelectorAll('input[data-line]')].filter(i => i.value !== '' && Number(i.value) !== Number(i.dataset.sys)).map(i => ({ line_id: i.dataset.line, counted_qty: Number(i.value) }));
+      const big = changed.filter(c => { const i = $('form').querySelector(`input[data-line="${c.line_id}"]`); const sys = Number(i.dataset.sys); return sys > 0 && Math.abs(c.counted_qty - sys) / sys > 0.5; });
+      if (big.length && !current.bigOk) { current.bigOk = true; toast(`${big.length} righe con differenza oltre il 50%: ricontrolla e premi Salva di nuovo`, 'err'); throw new Error('check'); }
+      const { data, error: pe } = await sb.rpc('post_stock_count', { p_count_id: sheet.count_id, p_lines: changed, p_staff_id: staff.id, p_note: val('note') || null });
+      if (pe) { toast(pe.message, 'err'); throw pe; }
+      await save([scanEvent('COUNT:', 'task_done', { payload: { count_id: sheet.count_id, changed: data.lines_changed } })]);
+      await closeTask({ code: 'T-COUNT' });
+      toast(data.lines_changed ? `Conta registrata · ${data.lines_changed} rettifiche ✓` : 'Conta registrata · tutto coincide ✓');
+    });
+  }
+  $('btn-count').onclick = () => stepStockCount().catch(e => { toast(e.message, 'err'); show('home'); });
 
   // ---------- Guided dosing: recipe × milk → one confirm per ingredient ----------
   const MILK_DENSITY = 1.035;                       // kg per litre, buffalo milk (to confirm with the casaro)
