@@ -48,8 +48,8 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
 <body>
 <div class="ctl"><label for="po">Ordine</label><input type="text" id="po" placeholder="PO-20261001-01" style="width:190px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
 <div class="sheet" id="sheet"><div class="empty">Accedi dalla console, poi indica il numero d'ordine.</div></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script src="config.js"></script>
 <script>
 (() => {

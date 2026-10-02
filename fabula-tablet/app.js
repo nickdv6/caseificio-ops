@@ -26,16 +26,27 @@
   const checklist = items => items.forEach((t, k) => { const d = document.createElement('div'); d.className = 'check'; d.innerHTML = `<input type="checkbox" id="c${k}" name="c${k}"><label for="c${k}" style="margin:0;text-transform:none;color:inherit;font-weight:400">${t}</label>`; $('form').append(d); });
   const val = id => { const e = $(id); return e ? (e.type === 'number' ? (e.value === '' ? null : Number(e.value)) : e.value) : null; };
 
-  // ---------- Offline queue ----------
-  const Q = 'fabula_queue';
-  const queue = () => { try { return JSON.parse(localStorage.getItem(Q) || '[]'); } catch { return []; } };
-  const setQueue = q => { try { localStorage.setItem(Q, JSON.stringify(q)); } catch {} $('pending').textContent = q.length ? `${q.length} registrazioni in attesa di rete` : ''; };
+  // ---------- Offline queue (v0.39: idempotent, refused items set aside, auth errors retried) ----------
+  const Q = 'fabula_queue', QF = 'fabula_failed';
+  const UUID_TABLES = new Set(['scan_events', 'milk_intake', 'labels', 'production_batches', 'stock_moves', 'haccp_log', 'meter_readings', 'effluent_log', 'shipments', 'waste_log', 'sales_orders', 'batch_step_logs']);
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; return (c === 'x' ? r : (r & 3) | 8).toString(16); }));
+  const readList = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch { return []; } };
+  const queue = () => readList(Q), failedList = () => readList(QF);
+  const showPending = () => { const q = queue().length, f = failedList().length;
+    $('pending').textContent = [q ? `${q} registrazioni in attesa di rete` : '', f ? `${f} rifiutate dal database (tocca qui)` : ''].filter(Boolean).join(' · '); };
+  const setQueue = q => { try { localStorage.setItem(Q, JSON.stringify(q)); } catch {} showPending(); };
+  const setFailed = f => { try { localStorage.setItem(QF, JSON.stringify(f)); } catch {} showPending(); };
+  // retryable = network down, timeout, or an expired login; anything else is the database refusing the data
+  const retryable = e => !e || !e.code || /fetch|network|timeout|jwt|token/i.test(e.message || '') || e.code === 'PGRST301' || e.status === 401;
+  // every insert carries its own id, generated once on the tablet: a re-send after a lost reply hits the same row instead of duplicating it
+  const stamp = ops => ops.forEach(op => { if (op.table && !op.update && op.row && !op.row.id && UUID_TABLES.has(op.table)) op.row.id = uuid(); });
   async function save(ops) {                 // ops: [{table, row}] executed in order; later rows may reference earlier via $0.id
+    stamp(ops);
     if (!navigator.onLine) { setQueue([...queue(), { at: Date.now(), ops }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
     try { await run(ops); return true; }
     catch (e) {
       console.error(e);
-      if (e && e.code && !/fetch|network/i.test(e.message || '')) { toast(e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
+      if (!retryable(e)) { toast(e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
       setQueue([...queue(), { at: Date.now(), ops }]); toast('Rete assente: messo in coda', 'err'); return true;
     }
   }
@@ -46,17 +57,43 @@
       const row = JSON.parse(JSON.stringify(op.row), (k, v) => typeof v === 'string' && v.startsWith('$') ? out[Number(v.slice(1, v.indexOf('.')))][v.slice(v.indexOf('.') + 1)] : v);
       let q = op.update ? sb.from(op.table).update(row).match(op.update).select().single()
                         : sb.from(op.table).insert(row).select().single();
-      const { data, error } = await q; if (error) throw error; out.push(data);
+      let { data, error } = await q;
+      if (error && error.code === '23505' && row.id && !op.update) {   // already saved on an earlier attempt: reuse it
+        ({ data, error } = await sb.from(op.table).select().eq('id', row.id).single());
+      }
+      if (error) throw error; out.push(data);
     }
     return out;
   }
+  let flushing = false;
   async function flush() {
+    if (flushing) return;
     const q = queue(); if (!q.length || !navigator.onLine) return;
-    const left = [];
-    for (const item of q) { try { await run(item.ops); } catch (e) { console.error(e); left.push(item); } }
-    setQueue(left); if (q.length !== left.length) { toast(`Inviate ${q.length - left.length} registrazioni`); loadTasks(); }
+    flushing = true;
+    try {
+      try { await sb.auth.getSession(); } catch {}           // refreshes an expired login before re-sending
+      const left = [], failed = [];
+      for (const item of q) {
+        stamp(item.ops);                                      // items queued by older versions get their ids now
+        try { await run(item.ops); }
+        catch (e) { console.error(e); (retryable(e) ? left : failed).push(retryable(e) ? item : { ...item, error: e.message, code: e.code, failed_at: Date.now() }); }
+      }
+      setQueue(left);
+      if (failed.length) { setFailed([...failedList(), ...failed]); toast(`${failed.length} registrazioni rifiutate dal database: tocca la riga in basso`, 'err'); }
+      const sent = q.length - left.length - failed.length;
+      if (sent > 0) { toast(`Inviate ${sent} registrazioni`); loadTasks(); }
+    } finally { flushing = false; }
   }
   window.addEventListener('online', flush);
+  setInterval(() => { if (queue().length) flush(); }, 60000);   // online event is unreliable on some tablets
+  let failedTap = 0;
+  $('pending').addEventListener('click', () => {
+    const f = failedList(); if (!f.length) return;
+    if (Date.now() - failedTap < 5000) { setFailed([]); toast('Registrazioni rifiutate eliminate: rifalle a mano se servono'); failedTap = 0; return; }
+    failedTap = Date.now();
+    const first = f[0]; const what = (first.ops.find(o => o.table) || first.ops[0] || {}).table || (first.ops[0] || {}).rpc || '?';
+    toast(`${f.length} rifiutate · prima: ${what} — ${first.error}. Tocca di nuovo entro 5 s per eliminarle.`, 'err');
+  });
 
   // ---------- Auth ----------
   async function init() {

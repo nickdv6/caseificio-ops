@@ -1,6 +1,10 @@
 # Fabula tablet — app di scansione per il caseificio
 
-Static PWA (no build step). Vanilla JS + supabase-js + html5-qrcode. Works offline: writes queue in the browser and flush when the network is back.
+Static PWA (no build step). Vanilla JS + supabase-js + html5-qrcode, both vendored in `vendor/` and cached by the service worker, so the app also starts with no internet.
+
+Offline queue (v0.39): writes queue in the browser and flush when the network is back (and every minute). Every insert carries an id generated on the tablet, so a re-send after a lost reply never duplicates a record. Records the database refuses are set aside ("N rifiutate dal database" — tap the line to see the first error, tap again within 5 s to discard them) instead of retrying forever. Expired logins are refreshed before re-sending.
+
+Several tablets: open the app once with `?device=tablet-2` (remembered on that device) so scans show which tablet recorded them.
 
 ## Files
 - `index.html`, `app.js` — the app (Italian UI, one screen per scan point from SOP-01)
@@ -20,7 +24,7 @@ Static PWA (no build step). Vanilla JS + supabase-js + html5-qrcode. Works offli
    ```
 6. **Milk supplier**: insert Masseria Cilentana into `fabula.parties` with `is_milk_supplier = true` (the milk form lists only those).
 7. **Daily tasks cron**: Database → Cron (pg_cron) →
-   `select cron.schedule('fabula_tasks', '0 5 * * *', $$select fabula.generate_daily_tasks()$$);`
+   `select cron.schedule('fabula_daily_tasks', '0 4 * * *', $$select fabula.generate_daily_tasks()$$);` (UTC — already scheduled on the live project)
    and, once sensors exist, `select cron.schedule('fabula_sensors', '0 */12 * * *', $$select fabula.rollup_sensor_haccp()$$);`
 8. **Edit `config.js`** with the project URL and publishable key.
 9. **Host** the folder anywhere static over HTTPS (camera needs HTTPS): Netlify drop, Cloudflare Pages, GitHub Pages, or Supabase Storage public bucket. 
@@ -40,5 +44,5 @@ Static PWA (no build step). Vanilla JS + supabase-js + html5-qrcode. Works offli
 
 If a code is not printed yet, type it in the field under the camera.
 
-## Security note
-RLS policies in v0.1/v0.2 allow any authenticated user to read/write everything. Fine for a 3-person team; tighten per role before adding seasonal staff.
+## Security
+Since v0.37 every table has row-level security per access profile (Configurazione → Utenti e ruoli). Anonymous users can read or call nothing.
