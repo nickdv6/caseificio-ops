@@ -17,9 +17,15 @@
   async function init() {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return show('login');
-    const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
-    staff = data || { id: null, full_name: session.user.email, role: 'owner' };
-    $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false; $('btn-pkg').hidden = false; $('btn-admin').hidden = !['owner', 'partner'].includes(staff.role);
+    const P = await PERM.load(sb);
+    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
+    if (!PERM.page('console')) return PERM.deny(sb, PERM.notForProfile());
+    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
+    staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
+    $('who').textContent = `${staff.full_name} · ${staff.role_name}`; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
+    PERM.navLinks(); $('btn-pkg').hidden = !PERM.page('pacchetto'); $('btn-admin').hidden = !PERM.page('admin');
+    const TAB_AREAS = { ops: ['produzione', 'acquisti', 'vendite'], trend: ['produzione', 'vendite'], anag: ['vendite', 'acquisti', 'personale'], ricette: ['produzione'], turni: ['personale'] };
+    document.querySelectorAll('.tab').forEach(t => { const a = TAB_AREAS[t.dataset.tab]; if (a) t.hidden = !a.some(x => PERM.can(x)); });
     show('main'); load(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
@@ -138,13 +144,13 @@
       <div class="appr" data-id="${a.id}">
         <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><div class="t">${v.title}</div><div class="by">proposto da ${esc(String(a.requested_by || '').replace('agent:', 'bot ').replace('_', ' '))} · ${age(a) === 0 ? 'oggi' : age(a) + ' g fa'}</div></div><div class="amt">${v.amount}</div></div>
         ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
-        <div class="row"><input type="text" placeholder="Nota (facoltativa)" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>
+        ${PERM.can(PERM.approvalArea(a), 3) ? `<div class="row"><input type="text" placeholder="Nota (facoltativa)" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>` : `<div class="status" style="margin-top:8px">Solo lettura: decide chi ha "gestisce" in quest'area.</div>`}
       </div>`; }).join('');
     box.querySelectorAll('button[data-act]').forEach(btn => btn.onclick = async () => {
       const card = btn.closest('.appr'), id = card.dataset.id, act = btn.dataset.act;
       card.querySelectorAll('button').forEach(b => b.disabled = true);
       const { data: row, error } = await sb.from('approvals').update({ status: act, decided_by: staff.full_name, decided_at: new Date().toISOString(), decision_note: $('note-' + id).value || null }).eq('id', id).eq('status', 'pending').select().single();
-      if (error) { toast(error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
+      if (error) { toast(error.code === 'PGRST116' ? 'Non hai il permesso di decidere questa richiesta (o è già stata decisa)' : error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
       if (row.related_table === 'purchase_orders' && row.related_id) await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id);
       toast(act === 'approved' ? 'Approvato' : 'Rifiutato'); load();
     });
@@ -333,7 +339,7 @@
       sb.from('v_certificates_expiring').select('*')]);
     renderStaff(data || [], exp || []);
   }
-  const canEdit = () => ['owner', 'partner'].includes(staff.role);
+  const canEdit = () => PERM.can('vendite', 3) || PERM.can('acquisti', 3) || PERM.can('personale', 3);
   const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
   const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
   const dOrNull = v => v || null, nOrNull = v => v === '' || v == null ? null : Number(v);

@@ -120,7 +120,7 @@ table.par input[type=text],table.par input[type=email],table.par input[type=tel]
 <div class="wrap">
 <header>
   <div><h1>La Perla del Cilento <span id="simbadge" class="badge" hidden>simulazione</span></h1><div class="sub" id="sub">Console di gestione</div></div>
-  <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="pacchetto.html" id="btn-pkg" hidden style="text-decoration:none">Pacchetto mensile</a><a class="btn sec" href="haccp.html" style="text-decoration:none">🛡 HACCP</a><a class="btn sec" href="marketing.html" style="text-decoration:none">Marketing</a><a class="btn sec" href="admin.html" id="btn-admin" hidden style="text-decoration:none">⚙ Configurazione</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
+  <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="pacchetto.html" id="btn-pkg" hidden style="text-decoration:none">Pacchetto mensile</a><a class="btn sec" href="haccp.html" data-page="haccp" style="text-decoration:none">🛡 HACCP</a><a class="btn sec" href="marketing.html" data-page="marketing" style="text-decoration:none">Marketing</a><a class="btn sec" href="admin.html" id="btn-admin" hidden style="text-decoration:none">⚙ Configurazione</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
 </header>
 
 <section class="view login" id="v-login">
@@ -213,6 +213,7 @@ table.par input[type=text],table.par input[type=email],table.par input[type=tel]
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
+<script src="perm.js"></script>
 <script src="console.js"></script>
 </body>
 </html>

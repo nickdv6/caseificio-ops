@@ -140,9 +140,18 @@ details.card>.body{padding:0 14px 12px}
     <button class="tab" role="tab" data-tab="lavoro">Lavoro e benchmark</button>
     <button class="tab" role="tab" data-tab="maint">Macchine e scadenze</button>
     <button class="tab" role="tab" data-tab="bots">Bot</button>
+    <button class="tab" role="tab" data-tab="utenti">Utenti e ruoli</button>
     <button class="tab" role="tab" data-tab="registro">Registro modifiche</button>
     <button class="tab" role="tab" data-tab="account">Account</button>
   </nav>
+
+  <div class="pane" id="p-utenti">
+    <div class="card" id="usr-invite"><h3>Invita una persona</h3><div class="hint">Arriva un'email con il link per scegliere la password; poi entra con email e password su tablet, console o marketing secondo il profilo. Il badge si stampa da Etichette.</div>
+      <div class="row"><input id="inv-name" type="text" placeholder="Nome e cognome" style="flex:1;min-width:180px"><input id="inv-email" type="email" placeholder="email" style="flex:1;min-width:200px"><select id="inv-role"></select><button class="btn" id="inv-go">Invita</button></div></div>
+    <div class="card" style="margin-top:16px"><h3>Persone e accessi</h3><div class="hint" id="usr-ro">Sola lettura: utenti e profili li gestisce il titolare.</div><div id="users"></div></div>
+    <div class="card" style="margin-top:16px"><h3>Profili e permessi</h3><div class="hint"><b>vede</b> = legge · <b>registra</b> = inserisce i dati di tutti i giorni · <b>gestisce</b> = cambia la configurazione e approva. Il database applica le stesse regole: quello che un profilo non vede, non lo riceve proprio. Il titolare ha sempre tutto.</div>
+      <div id="roles-matrix" style="overflow-x:auto"></div><div class="row"><button class="btn" id="roles-save">Salva permessi</button></div></div>
+  </div>
 
   <div class="pane" id="p-registro">
     <div class="card"><h3>Registro modifiche</h3><div class="hint">Chi ha cambiato cosa e quando: parametri, approvazioni, ricette, ordini fissi, personale, prodotti, macchine, scadenze, punti HACCP, fornitori, turni. "service_role" = bot programmati o SQL.</div>
@@ -206,6 +215,7 @@ details.card>.body{padding:0 14px 12px}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
+<script src="perm.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>

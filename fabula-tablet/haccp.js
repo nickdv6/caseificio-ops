@@ -41,9 +41,12 @@
   async function init() {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return show('login');
-    const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
-    staff = data || { id: null, full_name: session.user.email, role: 'operaio' };
-    isManager = ['owner', 'partner'].includes(staff.role);
+    const P = await PERM.load(sb);
+    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
+    if (!PERM.page('haccp')) return PERM.deny(sb, PERM.notForProfile());
+    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
+    staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
+    isManager = PERM.can('haccp', 3);
     $('who').textContent = staff.full_name;
     show('main'); showTab((location.hash || '#registro').slice(1) || 'registro'); load();
   }

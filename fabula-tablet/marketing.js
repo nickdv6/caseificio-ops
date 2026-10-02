@@ -29,8 +29,11 @@
   async function init() {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return show('login');
-    const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
-    staff = data || { id: null, full_name: session.user.email, role: 'owner' };
+    const P = await PERM.load(sb);
+    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
+    if (!PERM.page('marketing')) return PERM.deny(sb, PERM.notForProfile());
+    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
+    staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
     show('main'); await loadAll(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
   }

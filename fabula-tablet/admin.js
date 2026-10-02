@@ -18,10 +18,13 @@
   async function init() {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return show('login');
-    const { data } = await sb.from('staff').select('*').eq('auth_user_id', session.user.id).maybeSingle();
-    staff = data || { id: null, full_name: session.user.email, role: 'owner' };
+    const P = await PERM.load(sb);
+    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
+    if (!PERM.page('admin')) return PERM.deny(sb, PERM.notForProfile());
+    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
+    staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
-    if (!canEdit()) { show('denied'); return; }
+    $('who').textContent = `${staff.full_name} · ${staff.role_name}`;
     show('main'); load(); showTab((location.hash || '#azienda').slice(1).replace(/[^a-z]/g, '') || 'azienda', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
@@ -34,7 +37,76 @@
     if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
   }
   $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
-  async function load() { loadSettings(); loadBots(); loadVariantMap(); loadAudit(); }
+  async function load() { loadSettings(); loadBots(); loadVariantMap(); loadAudit(); loadUsers(); }
+  // ---------- Utenti e ruoli ----------
+  const LVL = ['—', 'vede', 'registra', 'gestisce'];
+  const JOBS = [['owner', 'titolare'], ['partner', 'socio'], ['casaro', 'casaro'], ['operaio', 'operaio'], ['commesso', 'commesso'], ['consulente', 'consulente']];
+  async function callUsers(body) {
+    const { data, error } = await sb.functions.invoke('invite-user', { body });
+    if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch {} throw new Error(m); }
+    if (data && data.error) throw new Error(data.error); return data;
+  }
+  async function loadUsers() {
+    const admin = PERM.isAdmin();
+    $('usr-invite').hidden = !admin; $('usr-ro').hidden = admin;
+    const [{ data: people, error }, { data: roles }, { data: areas }, { data: perms }] = await Promise.all([
+      sb.from('staff').select('id, full_name, email, role, app_role, auth_user_id, active, badge_code').order('active', { ascending: false }).order('full_name'),
+      sb.from('app_roles').select('*').order('sort'), sb.from('app_areas').select('*').neq('code', 'comune').order('sort'), sb.from('role_permissions').select('*')]);
+    const box = $('users'); if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const roleOpts = sel => (roles || []).map(r => `<option value="${r.code}"${r.code === sel ? ' selected' : ''}>${esc(r.name_it)}</option>`).join('');
+    $('inv-role').innerHTML = roleOpts('produzione');
+    const tbl = document.createElement('table');
+    tbl.innerHTML = '<tr><th>Persona</th><th>Email</th><th>Profilo</th><th>Mansione</th><th>Accesso</th><th></th></tr>';
+    (people || []).forEach(p => {
+      const tr = document.createElement('tr'); if (!p.active) tr.style.opacity = '.55';
+      const login = !p.active ? 'disattivato' : p.auth_user_id ? 'collegato' : p.email ? 'invito da inviare' : 'senza email';
+      tr.innerHTML = `<td><b>${esc(p.full_name)}</b><br><small>${esc(p.badge_code || '')}</small></td>`;
+      const em = document.createElement('input'); em.type = 'email'; em.value = p.email || ''; em.disabled = !admin; em.style.width = '200px';
+      const rs = document.createElement('select'); rs.innerHTML = roleOpts(p.app_role); rs.disabled = !admin;
+      const js = document.createElement('select'); js.innerHTML = JOBS.map(([v, l]) => `<option value="${v}"${v === p.role ? ' selected' : ''}>${l}</option>`).join(''); js.disabled = !admin;
+      [em, rs, js].forEach(x => { const td = document.createElement('td'); td.append(x); tr.append(td); });
+      const tdl = document.createElement('td'); tdl.innerHTML = `<small>${login}</small>`; tr.append(tdl);
+      const tda = document.createElement('td'); tda.style.whiteSpace = 'nowrap';
+      if (admin) {
+        const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'btn sm ' + cls; x.textContent = label; x.style.marginRight = '4px';
+          x.onclick = async () => { x.disabled = true; try { await fn(); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
+        b('Salva', '', async () => { const { error } = await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id); if (error) throw error; toast('Salvato'); loadUsers(); });
+        if (p.active && p.email && p.id !== staff.id) b(p.auth_user_id ? 'Reinvia link' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role }); toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : 'Invito inviato'); loadUsers(); });
+        if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
+      }
+      tr.append(tda); tbl.append(tr);
+    });
+    box.innerHTML = ''; box.append(tbl);
+    // matrix
+    const mbox = $('roles-matrix'); const lv = {}; (perms || []).forEach(x => { lv[x.role_code + '|' + x.area] = x.level; });
+    const mt = document.createElement('table');
+    mt.innerHTML = '<tr><th>Profilo</th>' + (areas || []).map(a => `<th title="${esc(a.description_it || '')}">${esc(a.name_it)}</th>`).join('') + '</tr>';
+    const edits = [];
+    (roles || []).forEach(r => {
+      const tr = document.createElement('tr'); tr.innerHTML = `<td><b>${esc(r.name_it)}</b>${r.can_manage_users ? ' <small class="status">utenti</small>' : ''}<br><small>${esc(r.description_it || '')}</small></td>`;
+      (areas || []).forEach(a => {
+        const td = document.createElement('td'); const v = lv[r.code + '|' + a.code] ?? 0;
+        if (admin && r.code !== 'titolare') { const s = document.createElement('select'); s.innerHTML = LVL.map((l, i) => `<option value="${i}"${i === v ? ' selected' : ''}>${l}</option>`).join(''); s.dataset.orig = v; edits.push({ role: r.code, area: a.code, s }); td.append(s); }
+        else td.innerHTML = `<small>${LVL[v]}</small>`;
+        tr.append(td);
+      });
+      mt.append(tr);
+    });
+    mbox.innerHTML = ''; mbox.append(mt);
+    $('roles-save').hidden = !admin;
+    $('roles-save').onclick = async () => {
+      const ch = edits.filter(e => String(e.s.value) !== String(e.s.dataset.orig)).map(e => ({ role_code: e.role, area: e.area, level: Number(e.s.value) }));
+      if (!ch.length) return toast('Nessuna modifica');
+      const { error } = await sb.from('role_permissions').upsert(ch, { onConflict: 'role_code,area' }); if (error) return toast(error.message, 'err');
+      toast(`Permessi aggiornati (${ch.length})`); loadUsers();
+    };
+  }
+  $('inv-go').onclick = async () => {
+    const b = $('inv-go'); b.disabled = true;
+    try { const r = await callUsers({ action: 'invite', full_name: $('inv-name').value, email: $('inv-email').value, app_role: $('inv-role').value });
+      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; loadUsers();
+    } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
+  };
   const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',
     compliance_deadlines: 'Scadenze', haccp_control_points: 'Punti HACCP', process_steps: 'Processo', supplier_products: 'Condizioni fornitori', supplier_prices: 'Listini',
     farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni' };
@@ -60,7 +132,7 @@
 
   // ---------- helpers ----------
   const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', shopify: 'Shopify', farm: 'Masseria (latte)', energy: 'Energia', labor: 'Lavoro' };
-  const canEdit = () => ['owner', 'partner'].includes(staff.role);
+  const canEdit = () => PERM.can('sistema', 3);
   const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
   const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
   const dOrNull = v => v || null, nOrNull = v => v === '' || v == null ? null : Number(v);
@@ -126,7 +198,7 @@
       const groups = box.dataset.groups.split(',');
       const mine = rows.filter(r => groups.includes(r.key.split('.')[0])).sort((a, b) => (a.sort ?? 100) - (b.sort ?? 100) || a.key.localeCompare(b.key));
       if (!mine.length) { box.innerHTML = '<div class="empty">Nessun parametro.</div>'; return; }
-      if (!canEdit()) { const n = document.createElement('div'); n.className = 'hint'; n.textContent = 'Solo titolare e partner possono modificare.'; box.append(n); }
+      if (!canEdit()) { const n = document.createElement('div'); n.className = 'hint'; n.textContent = 'Sola lettura: modifica chi ha il livello "gestisce" in Sistema (titolare, socio).'; box.append(n); }
       mine.forEach(r => {
         const isText = r.data_type === 'text';
         const row = document.createElement('div'); row.className = 'set-row' + (isText ? ' text' : '');

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>La Perla · Benvenuto</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Landing page for invite and password-reset e-mails: choose a password, then go to the profile's home page. Light theme only, like the rest of the app. */
+:root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--warn:#b3261e;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 var(--body)}
+.box{max-width:420px;margin:12vh auto;padding:0 16px}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:22px}
+h1{font-family:var(--display);font-weight:600;font-size:1.6rem;margin:0 0 4px}
+.sub{color:var(--muted);margin-bottom:16px}
+label{display:block;font-size:.85rem;color:var(--muted);margin:12px 0 4px}
+input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6px;font:inherit}
+.btn{margin-top:16px;width:100%;border:0;border-radius:6px;padding:11px 14px;font:600 1rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer}
+.btn:disabled{opacity:.5}.err{color:var(--warn);margin-top:10px;min-height:1.2em}
+.rule{height:3px;width:48px;background:var(--gold);border-radius:2px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="box"><div class="card">
+  <div class="rule"></div>
+  <h1>La Perla del Cilento</h1>
+  <div class="sub" id="sub">Un momento…</div>
+  <div id="form" hidden>
+    <label for="pw1">Nuova password (almeno 8 caratteri)</label><input id="pw1" type="password" autocomplete="new-password">
+    <label for="pw2">Ripeti la password</label><input id="pw2" type="password" autocomplete="new-password">
+    <button class="btn" id="go">Salva e entra</button>
+  </div>
+  <div class="err" id="err"></div>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="perm.js"></script>
+<script>
+(async () => {
+  const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
+  const $ = id => document.getElementById(id);
+  const err = new URLSearchParams(location.hash.slice(1)).get('error_description');
+  await new Promise(r => setTimeout(r, 300));   // let supabase-js read the token from the link
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { $('sub').textContent = err ? `Il link non è valido: ${err}.` : 'Il link è scaduto o è già stato usato. Chiedi al titolare di inviartene uno nuovo.'; return; }
+  const P = await PERM.load(sb);
+  $('sub').textContent = P && P.staff_id ? `Ciao ${P.full_name}: scegli la password per entrare come ${P.role_name}.` : `Ciao ${session.user.email}: scegli la password.`;
+  $('form').hidden = false; $('pw1').focus();
+  $('go').onclick = async () => {
+    const a = $('pw1').value, b = $('pw2').value; $('err').textContent = '';
+    if (a.length < 8) return $('err').textContent = 'La password deve avere almeno 8 caratteri.';
+    if (a !== b) return $('err').textContent = 'Le due password non coincidono.';
+    $('go').disabled = true;
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (error) { $('go').disabled = false; return $('err').textContent = error.message; }
+    const home = P && P.home && PERM.page(P.home) ? PERM.HOME[P.home] : 'console.html';
+    location.replace(home);
+  };
+  $('pw2').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+})();
+</script>
+</body>
+</html>

@@ -48,6 +48,8 @@ table{width:100%;border-collapse:collapse;font-size:.95rem} td,th{text-align:lef
   const prev = new Date(); prev.setMonth(prev.getMonth() - 1); $('m').value = prev.toISOString().slice(0, 7);
   async function load() {
     const { data: { session } } = await sb.auth.getSession(); if (!session) { $('out').innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
+    const { data: P } = await sb.rpc('my_permissions');
+    if (!P || !P.pages || !P.pages.pacchetto) { $('out').innerHTML = '<div class="empty">Il tuo profilo non ha accesso al pacchetto mensile (serve Amministrazione).</div>'; return; }
     const month = $('m').value + '-01';
     const { data: p, error } = await sb.rpc('monthly_package', { p_month: month });
     if (error) { $('out').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
