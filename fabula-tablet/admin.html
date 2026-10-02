@@ -83,6 +83,7 @@ input[type=text],input[type=email],input[type=password]{font:1rem var(--body);pa
 .set-row .lbl{font-size:.95rem}.set-row .lbl small{display:block;color:var(--muted);font-size:.8rem}
 .set-row input,.set-row select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);width:120px}
 .set-row input[type=date]{width:150px}.set-row input.wide{width:200px}
+table.rec td{vertical-align:middle}table.rec td.num{white-space:nowrap}table.rec input[type=number]{width:96px;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec input[type=text]{width:100%;min-width:180px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec select{font:.9rem var(--body);padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec .ph{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
 .set-row.text{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.set-row.text input.wide{width:100%}
 .set-row.dirty input{border-color:var(--accent)}
 .eq{border:1px solid var(--rule);border-radius:6px;padding:8px 10px;margin-bottom:8px}
@@ -161,6 +162,7 @@ details.card>.body{padding:0 14px 12px}
     <div class="set-grid">
       <div class="card"><h3>Prezzi</h3><div class="params" data-groups="price"></div></div>
       <div class="card"><h3>Vendere prima (scorte in scadenza)</h3><div class="hint">Soglie del bot che propone promo e offerte ingrosso.</div><div class="params" data-groups="sell"></div></div>
+      <div class="card" style="grid-column:1/-1"><h3>Prodotti Shopify → magazzino</h3><div class="hint">Ogni variante venduta online va collegata a un prodotto del magazzino con i kg per pezzo, così l'ordine scarica le giacenze. Le mozzarelle sono collegate automaticamente dal peso nel titolo; abbonamenti, forniture B2B e olio restano da decidere (lascia vuoto per "non scarica il magazzino").</div><div id="variant-map"></div></div>
     </div>
   </div>
   <div class="pane" id="p-utenze">

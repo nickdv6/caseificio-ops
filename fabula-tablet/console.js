@@ -43,7 +43,7 @@
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
     renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals);
     badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
-    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); }
+    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); loadShopifyOrders(); }
     yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
   }
   const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
@@ -160,7 +160,7 @@
   // ---------- settings & dates editor ----------
   // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
   const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => loadRecipes() };
+  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadStanding(); loadStaffCard(); }, ricette: () => loadRecipes() };
   function showTab(name, push = true) {
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
@@ -424,6 +424,18 @@
     const note = document.createElement('div'); note.className = 'hint'; note.textContent = 'Le dosi attuali sono segnaposto finché i partner non confermano caglio, sale, acido citrico e imballi reali. La revisione mensile propone correzioni quando i casari dosano sistematicamente in modo diverso.'; box.append(note);
   }
 
+
+  const OSTATUS = { draft: ['non pagato', 'status'], confirmed: ['pagato · da spedire', 'ko'], fulfilled: ['spedito', 'ok'], cancelled: ['annullato', 'status'], refunded: ['rimborsato', 'status'] };
+  async function loadShopifyOrders() {
+    const box = $('shopify-orders');
+    const { data, error } = await sb.from('v_shopify_orders_recent').select('*').limit(25);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessun ordine online negli ultimi 14 giorni.</div>'; return; }
+    const toShip = data.filter(o => o.status === 'confirmed').length, unm = data.reduce((a, o) => a + Number(o.unmapped || 0), 0);
+    let html = `<div class="status" style="margin-bottom:6px">${data.length} ordini · <b class="${toShip ? 'ko' : ''}">${toShip} da spedire</b> · ${eur(data.reduce((a, o) => a + Number(o.total_eur || 0), 0))}${unm ? ` · <span class="ko">${unm} righe da collegare al magazzino</span>` : ''}</div>`;
+    html += '<table class="nw2"><tr><th>Ordine</th><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th>Stato</th></tr>' + data.map(o => { const [lbl, cls] = OSTATUS[o.status] || [o.status, '']; return `<tr><td>${esc(o.order_number)}</td><td>${fmtD(o.order_date).slice(0, 5)}</td><td>${esc(o.customer || '—')}${o.ship_city ? ` <small class="status">${esc(o.ship_city)}</small>` : ''}</td><td>${esc(o.lines_txt || '')}${o.unmapped ? ` <small class="ko">+${o.unmapped} non collegate</small>` : ''}</td><td class="num">${eur(o.total_eur)}</td><td class="${cls}">${lbl}${o.stock_booked ? ' ✓' : ''}</td></tr>`; }).join('') + '</table>';
+    box.innerHTML = html;
+  }
 
   // ---------- charts (inline SVG, single scale, hover layer) ----------
   const tip = $('tip');
