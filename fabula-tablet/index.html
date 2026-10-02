@@ -60,6 +60,7 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .notice .nt{font-family:var(--display);font-size:1.25rem;font-weight:700;color:var(--warn);margin-bottom:6px}
 .notice.info{border-color:var(--rule)}.notice.info .nt{color:var(--muted)}
 .nitem{display:block;width:100%;text-align:left;border:0;background:var(--tile);border-radius:8px;padding:12px;margin-top:6px;font:600 1.1rem var(--body);color:var(--fg);cursor:pointer}
+.btn.attention{border:2px solid var(--warn);color:var(--warn);font-weight:700}
 </style>
 </head>
 <body>
@@ -76,6 +77,7 @@ input[type=number]{font-variant-numeric:tabular-nums}
 <section class="view" id="v-home">
   <button class="btn big" id="btn-scan">▣ Scansiona</button>
   <div class="row"><button class="btn secondary" id="btn-receive">📦 Arrivo merce</button><button class="btn secondary" id="btn-count">📋 Conta magazzino</button><button class="btn secondary" id="btn-effl">💧 Reflui</button></div>
+  <button class="btn secondary" id="btn-ship" style="width:100%;margin-top:8px">🚚 Da spedire <span id="ship-n"></span></button>
   <div id="notice-wrap" style="display:none"></div>
   <div class="pending" id="onshift" style="text-align:left;margin-top:10px"></div>
   <div id="selldown-wrap" style="display:none"><h2 style="margin-top:22px">Da vendere prima</h2><div class="tasks" id="selldown"></div></div>

@@ -101,7 +101,7 @@
     el.textContent = data && data.length ? 'In turno: ' + data.map(r => `${r.full_name} (${Number(r.hours_so_far).toLocaleString('it-IT')} h)`).join(', ') : 'Nessuno in turno · passa il badge per iniziare';
   }
   async function loadTasks() {
-    loadSellDown(); loadNotices(); loadShifts();
+    loadSellDown(); loadNotices(); loadShifts(); loadShipCount();
     const { data, error } = await sb.from('v_tasks_open').select('*');
     const box = $('tasks'); box.innerHTML = '';
     if (error) { box.textContent = 'Lista non disponibile offline'; return; }
@@ -124,13 +124,13 @@
   const scanEvent = (code, action, extra = {}) => ({ table: 'scan_events', row: { code, action, staff_id: staff.id, device: CFG.device, ...extra } });
 
   // ---------- Scanner ----------
-  let scanStarting = null;
+  let scanStarting = null, scanTarget = null;   // scanTarget: one-shot consumer of the next code (lot scan inside a form)
   function startScan() {
     show('scan'); $('manual').value = ''; $('manual').focus();
     if (!window.Html5Qrcode) return;                 // library blocked → manual entry only
     scanner = new Html5Qrcode('reader', { verbose: false });
     scanStarting = scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 240 },
-        txt => { const code = txt.trim(); stopScan().then(() => handleCode(code)); }, () => {})
+        txt => { const code = txt.trim(); stopScan().then(() => { if (scanTarget) { const f = scanTarget; scanTarget = null; f(code); } else handleCode(code); }); }, () => {})
       .catch(() => { toast('Fotocamera non disponibile: scrivi il codice', 'err'); })
       .finally(() => { scanStarting = null; });
   }
@@ -160,6 +160,7 @@
   $('btn-scan-cancel').onclick = () => { show('home'); stopScan(); };
   $('btn-manual').onclick = () => { const code = $('manual').value.trim().toUpperCase(); if (!code) return; stopScan().then(() => handleCode(code)); };
   $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('btn-manual').click(); } });
+  const _manual = $('btn-manual').onclick; $('btn-manual').onclick = () => { const code = $('manual').value.trim(); if (scanTarget && code) { const f = scanTarget; scanTarget = null; stopScan().then(() => f(code)); return; } return _manual && _manual(); };
   $('btn-form-cancel').onclick = () => show('home');
 
   // ---------- Route a code to its step ----------
@@ -173,6 +174,7 @@
       if (kind === 'PO') return await stepReceive(ref);
       if (kind === 'COUNT') return await stepStockCount();
       if (kind === 'EFFL') return stepEffluent();
+      if (kind === 'SHIP') return await stepShipList();
       if (kind === 'METER') return stepMeter(ref || 'elec_main');
       if (kind === 'CLEAN') return stepClean();
       if (kind === 'STAFF') {                       // one scan = clock in, next scan = clock out
@@ -427,6 +429,112 @@
     });
   }
   $('btn-effl').onclick = () => { try { stepEffluent(); } catch (e) { toast(e.message, 'err'); show('home'); } };
+
+  // 14 — fulfilment: paid Shopify orders + confirmed wholesale orders → scan lot, weigh, confirm. pack_order() does the rest.
+  async function loadShipCount() {
+    const { data } = await sb.from('v_ship_backlog').select('*').maybeSingle();
+    const n = data ? Number(data.shopify_waiting) + Number(data.wholesale_waiting) : 0;
+    $('ship-n').textContent = n ? `(${n})` : ''; $('btn-ship').classList.toggle('attention', n > 0);
+  }
+  const fmtKg = n => Number(n).toLocaleString('it-IT', { maximumFractionDigits: 2 });
+  const fmtDay = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) : '';
+  async function stepShipList() {
+    $('form').innerHTML = ''; current = { code: 'SHIP:' };
+    const { data, error } = await sb.from('v_orders_to_ship').select('*');
+    if (error) { toast('Lista spedizioni non disponibile offline', 'err'); return; }
+    if (!data || !data.length) { toast('Niente da spedire'); return; }
+    data.forEach(o => {
+      const d = document.createElement('div'); d.className = 'task';
+      const items = (o.lines || []).map(l => `${fmtKg(l.qty)} ${l.unit} ${l.name}`).join(' · ');
+      const addr = o.ship_address ? [o.ship_address.city, o.ship_address.zip].filter(Boolean).join(' ') : (o.ship_city || '');
+      d.innerHTML = `<div><div>${o.channel === 'shopify' ? '🛒 ' : '🏬 '}${o.order_number} · ${o.customer || (o.ship_address && o.ship_address.name) || 'cliente online'}${addr ? ' · ' + addr : ''}</div><div class="code">${items || 'nessuna riga collegata al magazzino'}${o.unmapped ? ' · ⚠ ' + o.unmapped + ' righe non collegate' : ''}</div></div><time>${fmtDay(o.due_date)}</time>`;
+      d.onclick = () => stepPack(o).catch(e => { toast(e.message, 'err'); show('home'); });
+      $('form').append(d);
+    });
+    openForm('Da spedire', 'Tocca l\'ordine da preparare · online prima, poi ingrosso', async () => {});
+    $('btn-form-save').style.display = 'none';
+  }
+  async function stepPack(o) {
+    $('form').innerHTML = ''; current = { code: 'SHIP:' + o.order_number, force: false };
+    const { data: cfg } = await sb.from('settings').select('key, value').in('key', ['ship.default_carrier', 'ship.wholesale_carrier', 'ship.tolerance_pct']);
+    const S = Object.fromEntries((cfg || []).map(r => [r.key, r.value]));
+    if (!(o.lines || []).length) throw new Error('Ordine senza righe collegate al magazzino: collega i prodotti Shopify in Configurazione → Vendite');
+    const rows = [];
+    o.lines.forEach((l, i) => {
+      const card = document.createElement('div'); card.className = 'card'; card.style.marginTop = '14px';
+      const sug = (l.suggested || [])[0];
+      card.innerHTML = `<div class="scan">${l.name}</div><div>ordinati <b>${fmtKg(l.qty)} ${l.unit}</b>${sug ? ` · lotto consigliato <b>${sug.lot}</b> (scade ${fmtDay(sug.expiry)}, ${fmtKg(sug.on_hand)} ${l.unit} in giacenza)` : ' · <span style="color:var(--warn)">nessun lotto in giacenza</span>'}</div>`;
+      $('form').append(card);
+      const lot = field('lot' + i, 'Lotto (scansiona l\'etichetta o conferma quello consigliato)', 'select', { options: (l.suggested || []).map(x => [x.lot, `${x.lot} · scade ${fmtDay(x.expiry)} · ${fmtKg(x.on_hand)} ${l.unit}`]) });
+      const scanBtn = document.createElement('button'); scanBtn.type = 'button'; scanBtn.className = 'btn secondary'; scanBtn.textContent = '📷 Scansiona lotto'; scanBtn.style.marginTop = '6px';
+      scanBtn.onclick = () => { scanTarget = code => { const v = code.replace(/^LOT:/i, '').trim(); const ok = [...lot.options].some(op => op.value === v); if (!ok) { const op = document.createElement('option'); op.value = v; op.textContent = v + ' · non tra i consigliati'; lot.append(op); } lot.value = v; lot.style.borderColor = ok ? 'var(--ok)' : 'var(--warn)'; show('form'); toast(ok ? 'Lotto confermato ✓' : 'Lotto diverso da quelli consigliati: controlla la scadenza', ok ? '' : 'err'); }; startScan(); };
+      $('form').append(scanBtn);
+      const q = field('q' + i, `Peso effettivo (${l.unit})`, 'number', { step: '0.01' }); q.value = Number(l.qty); q.dataset.weighed = '0';
+      q.oninput = () => { q.dataset.weighed = '0'; };
+      const w = scaleButton(q, 'net');
+      $('form').append(w);
+      rows.push({ l, lot, q });
+    });
+    const g = field('gross', 'Peso lordo collo (kg, facoltativo)', 'number', { step: '0.01', required: false }); $('form').append(scaleButton(g, 'gross'));
+    const carrier = field('carrier', 'Vettore', 'text', { required: false }); carrier.value = o.channel === 'wholesale' ? (S['ship.wholesale_carrier'] || 'Consegna diretta') : (S['ship.default_carrier'] || 'BRT');
+    field('tracking', 'Tracking / n. lettera di vettura (se già stampata)', 'text', { required: false });
+    field('note', 'Note', 'text', { required: false });
+    openForm(`Prepara ${o.order_number}`, `${o.customer || 'cliente online'} · ${o.lines.length} righe · tolleranza ±${S['ship.tolerance_pct'] || 5}%`, async () => {
+      const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: Number(r.q.value), weighed: r.q.dataset.weighed === '1' }));
+      if (lines.some(x => !x.lot_number)) { toast('Manca il lotto su una riga', 'err'); throw new Error('lot'); }
+      const { data, error } = await sb.rpc('pack_order', { p_order_id: o.order_id, p_lines: lines, p_staff_id: staff.id, p_gross_kg: val('gross'), p_carrier: val('carrier') || null, p_tracking: val('tracking') || null, p_notes: val('note') || null, p_force: current.force });
+      if (error) { toast(error.message, 'err'); throw error; }
+      if (data && data.needs_confirm) { current.force = true; toast(`Pesati ${fmtKg(data.packed_kg)} kg contro ${fmtKg(data.ordered_kg)} ordinati (${data.variance_pct > 0 ? '+' : ''}${data.variance_pct}%): ricontrolla e premi Salva di nuovo per confermare`, 'err'); throw new Error('confirm'); }
+      await save([scanEvent(current.code, 'pick', { payload: { order: o.order_number, ddt: data.ddt_number, kg: data.packed_kg, lines: lines.length } })]);
+      // done: show the print buttons instead of going home
+      $('form').innerHTML = ''; $('btn-form-save').style.display = 'none';
+      const c = document.createElement('div'); c.className = 'card';
+      c.innerHTML = `<div class="scan">✓ ${data.ddt_number}</div><div>${o.order_number} · ${fmtKg(data.packed_kg)} kg in ${data.lines} righe · ${data.carrier}${data.needs_shopify_fulfilment ? '<br>Shopify verrà aggiornato dal bot (cliente avvisato con il tracking).' : '<br>Ordine ingrosso chiuso.'}</div>`;
+      const pr = document.createElement('a'); pr.className = 'btn'; pr.style.cssText = 'display:block;text-align:center;text-decoration:none;margin-top:12px'; pr.target = '_blank'; pr.href = 'spedizione.html?id=' + data.shipment_id; pr.textContent = o.channel === 'wholesale' ? '🖨 Stampa DDT' : '🖨 Stampa packing list';
+      const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn secondary'; ok.style.cssText = 'display:block;width:100%;margin-top:8px'; ok.textContent = 'Fatto'; ok.onclick = () => { show('home'); loadTasks(); };
+      $('form').append(c, pr, ok); toast('Spedizione registrata ✓');
+      return 'stay';
+    });
+  }
+  // ⚖ connected scale: Bluetooth (GATT Weight Scale 0x181D) on the tablet, HID scale (Dymo/Fairbanks class) on a PC. Manual entry always works.
+  let bleChar = null;
+  function scaleButton(input, kind) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'btn secondary'; b.style.marginTop = '6px'; b.textContent = '⚖ Leggi dalla bilancia';
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = '⚖ lettura…';
+      try { const kg = await readScale(); input.value = Math.round(kg * 100) / 100; input.dataset.weighed = '1'; input.dispatchEvent(new Event('change')); toast(`Bilancia: ${fmtKg(kg)} kg`); }
+      catch (e) { toast(e.message || 'Bilancia non collegata: inserisci il peso a mano', 'err'); }
+      finally { b.disabled = false; b.textContent = '⚖ Leggi dalla bilancia'; }
+    };
+    return b;
+  }
+  async function readScale() {
+    if (navigator.bluetooth) {
+      if (!bleChar) {
+        const dev = await navigator.bluetooth.requestDevice({ filters: [{ services: ['weight_scale'] }], optionalServices: ['weight_scale'] });
+        const srv = await (await dev.gatt.connect()).getPrimaryService('weight_scale');
+        bleChar = await srv.getCharacteristic('weight_measurement');
+        dev.addEventListener('gattserverdisconnected', () => { bleChar = null; });
+      }
+      return await new Promise((res, rej) => {
+        const t = setTimeout(() => { bleChar.removeEventListener('characteristicvaluechanged', h); rej(new Error('Nessun peso ricevuto: appoggia il collo e riprova')); }, 6000);
+        const h = e => { const v = e.target.value; const flags = v.getUint8(0); const raw = v.getUint16(1, true); const kg = (flags & 1) ? raw * 0.01 * 0.45359237 : raw * 0.005; clearTimeout(t); bleChar.removeEventListener('characteristicvaluechanged', h); res(kg); };
+        bleChar.addEventListener('characteristicvaluechanged', h); bleChar.startNotifications().catch(rej);
+      });
+    }
+    if (navigator.hid) {
+      const [dev] = await navigator.hid.requestDevice({ filters: [{ usagePage: 0x8D }] });
+      if (!dev) throw new Error('Nessuna bilancia scelta');
+      if (!dev.opened) await dev.open();
+      return await new Promise((res, rej) => {
+        const t = setTimeout(() => { dev.removeEventListener('inputreport', h); rej(new Error('Nessun peso ricevuto dalla bilancia USB')); }, 6000);
+        const h = e => { const d = e.data; if (d.byteLength < 5) return; const unit = d.getUint8(1), exp = d.getInt8(2), raw = d.getUint16(3, true); const val = raw * Math.pow(10, exp); const kg = unit === 3 ? val : unit === 2 ? val / 1000 : unit === 11 ? val * 0.0283495 : unit === 12 ? val * 0.45359237 : val; clearTimeout(t); dev.removeEventListener('inputreport', h); res(kg); };
+        dev.addEventListener('inputreport', h);
+      });
+    }
+    throw new Error('Questo browser non supporta bilance Bluetooth/USB: inserisci il peso a mano');
+  }
+  $('btn-ship').onclick = () => stepShipList().catch(e => { toast(e.message, 'err'); show('home'); });
 
   // ---------- Guided dosing: recipe × milk → one confirm per ingredient ----------
   const MILK_DENSITY = 1.035;                       // kg per litre, buffalo milk (to confirm with the casaro)
