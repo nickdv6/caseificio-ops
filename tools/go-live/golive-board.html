@@ -243,9 +243,12 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     let s = p;
     if (s && typeof s === "object" && !Array.isArray(s)) s = s.result ?? s.text ?? s;
     if (Array.isArray(s)) return s;
-    if (typeof s !== "string") throw new Error("Unexpected answer from the database");
-    const m = s.match(/<untrusted-data-[^>]*>\s*([\s\S]*?)\s*<\/untrusted-data/);
-    return JSON.parse(m ? m[1] : s);
+    if (typeof s !== "string") throw { code: "parse_error", message: "unexpected answer shape" };
+    // The connector wraps rows in a notice that mentions the same tag before the data block,
+    // so match only the tag that is directly followed by the JSON array.
+    const m = s.match(/<untrusted-data-[^>]*>\s*(\[[\s\S]*\])\s*<\/untrusted-data/);
+    try { return JSON.parse(m ? m[1] : s); }
+    catch { throw { code: "parse_error", message: "couldn't read the rows in the answer" }; }
   }
 
   function setConn(state, text) {
@@ -270,6 +273,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
       case "blocked_by_policy": return "Your organization's policy blocks this Supabase tool for your account.";
       case "approval_required": return "Your organization requires approval for each Supabase call, which this board can't ask for.";
       case "tool_error": return "The database refused the query: " + (e.message || "no reason given") + ".";
+      case "parse_error": return "The database answered, but the board couldn't read the reply (" + e.message + "). This is a bug in the board, not your connection.";
       case "not_granted": case "capability_disabled": case "capability_removed": return "Live data isn't available in this view. Open the board in claude.ai while signed in with the Supabase connector.";
       default: return "The database didn't answer (" + (e && e.code || "unknown") + "). The board will try again at the next refresh.";
     }
@@ -299,7 +303,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
       }
       const authz = ["needs_reauth", "server_not_connected", "not_in_manifest", "blocked_by_policy", "approval_required", "selection_required"].includes(e && e.code);
       if (authz) { data = null; }
-      setConn("err", lastOkAt && !authz ? "Stale · last update " + romeFmt.format(lastOkAt) : "Not connected");
+      setConn("err", lastOkAt && !authz ? "Stale · last update " + romeFmt.format(lastOkAt) : (e && e.code === "parse_error" ? "Reply not readable" : authz ? "Not connected" : "No answer yet"));
       showBanner(errorCopy(e), authz);
     } finally {
       busy = false; $("refresh").disabled = false;
