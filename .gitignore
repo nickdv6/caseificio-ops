@@ -12,3 +12,9 @@ node_modules/
 # Supabase CLI local state
 supabase/.temp/
 supabase/.branches/
+
+# bot avatars are part of the app (served by Netlify)
+!fabula-tablet/avatars/*.png
+# source portraits for bot avatars (kept locally, not in git)
+nonni-avatars/
+nonni-avatars.zip
