@@ -41,20 +41,23 @@
   // ---------- Bot dashboard: every bot notification (bot_messages) ----------
   const SEV = { alert: 'Allarme', warn: 'Attenzione', info: 'Info' };
   const fmtR = s => new Date(s).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
-  let bdFilter = 'unread', bdAgent = null, bdLimit = 50, bdNames = {};
+  let bdFilter = 'unread', bdAgent = null, bdLimit = 50, bdNames = {}, bdNick = {};
+  // v0.46 display-only nicknames (Zio/Zia) from bot_nicknames; agent keys never change
+  async function loadNicknames() { const { data } = await sb.from('bot_nicknames').select('agent, nickname, title_it'); (data || []).forEach(n => { bdNick[n.agent] = n; }); }
+  const botLabel = (agent, base) => { const n = bdNick[agent]; return n ? `${n.nickname} · ${base || n.title_it}` : (base || agent); };
   async function loadBotFeed() {
     const [{ data: bots }, cnt] = await Promise.all([
       sb.from('v_bot_dashboard').select('*').order('name_it'),
-      sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000)]);
+      sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000), loadNicknames()]);
     const unread = cnt.data || [], nU = unread.length, nA = unread.filter(x => x.severity === 'alert').length;
     const tb = $('n-bots'); tb.textContent = nA || nU; tb.classList.toggle('on', nU > 0); tb.classList.toggle('al', nA > 0);
-    (bots || []).forEach(b => { bdNames[b.agent] = b.name_it; });
+    (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); });
     const bb = $('bd-bots');
     bb.innerHTML = (bots || []).map(b => {
       const when = (b.due_times || []).map(t => t.slice(0, 5)).join(' · ') + (b.month_day ? ` · giorno ${b.month_day}` : b.weekdays && b.weekdays.length < 6 ? ' · ' + b.weekdays.map(d => ['', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'][d]).join(', ') : '');
       const st = !b.active ? 'disattivato' : b.last_run_at ? `${b.last_status === 'error' ? '<span class="ko">errore</span>' : 'ok'} · ${fmtR(b.last_run_at)}` : 'mai eseguito';
-      return `<div class="botc${bdAgent === b.agent ? ' sel' : ''}" data-a="${esc(b.agent)}"><div><div class="nm">${esc(b.name_it)}</div><small>${esc(when)} · ${st}</small></div>${b.unread ? `<span class="u${b.unread_alerts ? ' al' : ''}">${b.unread}</span>` : ''}</div>`;
-    }).join('') + `<div class="botc${bdAgent === '_other' ? ' sel' : ''}" data-a="_other"><div><div class="nm">Allarmi e avvisi di sistema</div><small>Allarme bot, battito bot, avvisi della console</small></div></div>`;
+      return `<div class="botc${bdAgent === b.agent ? ' sel' : ''}" data-a="${esc(b.agent)}"><div><div class="nm">${esc(b.display_name || botLabel(b.agent, b.name_it))}</div><small>${esc(when)} · ${st}</small></div>${b.unread ? `<span class="u${b.unread_alerts ? ' al' : ''}">${b.unread}</span>` : ''}</div>`;
+    }).join('') + `<div class="botc${bdAgent === '_other' ? ' sel' : ''}" data-a="_other"><div><div class="nm">Allarmi e avvisi di sistema</div><small>${esc(botLabel('bot_watchdog'))}, ${esc(botLabel('bot_heartbeat'))}, avvisi della console</small></div></div>`;
     bb.querySelectorAll('.botc').forEach(el => el.onclick = () => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); });
     $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdAgent === '_other' ? 'allarmi e avvisi' : bdNames[bdAgent] || bdAgent) : '';
     let q = sb.from('bot_messages').select('*').order('created_at', { ascending: false }).limit(bdLimit + 1);
@@ -68,7 +71,7 @@
     const rows = (msgs || []).slice(0, bdLimit);
     if (!rows.length) { feed.innerHTML = `<div class="empty">${bdFilter === 'unread' ? 'Nessuna notifica da leggere.' : 'Nessuna notifica.'}</div>`; return; }
     feed.innerHTML = rows.map(m => {
-      const name = bdNames[m.agent] || ({ bot_watchdog: 'Allarme bot', bot_heartbeat: 'Battito bot', avvisi: 'Avvisi console' }[m.agent]) || m.agent;
+      const name = bdNames[m.agent] || botLabel(m.agent, ({ bot_watchdog: 'Allarme bot', bot_heartbeat: 'Battito bot', avvisi: 'Avvisi console' }[m.agent]));
       const long = (m.body || '').split('\n').length > 6 || (m.body || '').length > 500;
       return `<div class="msg ${esc(m.severity)}${m.read_at ? ' read' : ''}" data-id="${m.id}"><div class="hd"><span class="who"><span class="lvl">${SEV[m.severity] || ''}</span>${esc(name)}</span><span class="status">${fmtR(m.created_at)}</span></div>
         <div class="t">${esc(m.title)}</div>${m.body ? `<div class="b">${esc(m.body)}</div>${long ? '<button class="more" data-x="more">Mostra tutto</button>' : ''}` : ''}
@@ -200,13 +203,14 @@
     ['compliance_calendar', 'Manutenzioni e scadenze', 'martedì 13:17', 'compliance_calendar()'],
     ['monthly_review', 'Revisione mensile', '1° del mese 13:41', 'monthly_review()']];
   async function loadBots() {
+    await loadNicknames();
     const { data: runs } = await sb.from('agent_runs').select('agent, started_at, status, summary, error').order('started_at', { ascending: false }).limit(60);
     const last = {}; (runs || []).forEach(r => { if (!last[r.agent]) last[r.agent] = r; });
     const fmtT = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
     $('bots').innerHTML = '<table class="nw2"><tr><th>Bot</th><th>Quando (ora italiana)</th><th>Legge</th><th>Ultima esecuzione</th><th>Esito</th></tr>' + BOTS.map(([a, n, w, f]) => {
       const r = last[a];
-      return `<tr><td><b>${n}</b><br><small class="status">${a}</small></td><td>${w}</td><td><code>${f}</code></td><td>${r ? fmtT(r.started_at) : '<span class="status">mai</span>'}</td><td class="${r ? (r.status === 'ok' ? 'ok' : 'ko') : ''}">${r ? esc(r.status) + (r.summary ? ' · <span class="status">' + esc(r.summary) + '</span>' : '') + (r.error ? ' · ' + esc(r.error) : '') : ''}</td></tr>`; }).join('') + '</table>';
-    $('runs').innerHTML = (runs && runs.length) ? '<table>' + runs.slice(0, 40).map(r => `<tr><td>${esc(r.agent)}</td><td class="status">${fmtT(r.started_at)}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td><td class="status">${esc(r.summary || r.error || '')}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
+      return `<tr><td><b>${esc(botLabel(a, n))}</b><br><small class="status">${a}</small></td><td>${w}</td><td><code>${f}</code></td><td>${r ? fmtT(r.started_at) : '<span class="status">mai</span>'}</td><td class="${r ? (r.status === 'ok' ? 'ok' : 'ko') : ''}">${r ? esc(r.status) + (r.summary ? ' · <span class="status">' + esc(r.summary) + '</span>' : '') + (r.error ? ' · ' + esc(r.error) : '') : ''}</td></tr>`; }).join('') + '</table>';
+    $('runs').innerHTML = (runs && runs.length) ? '<table>' + runs.slice(0, 40).map(r => `<tr><td>${esc(botLabel(r.agent))}<br><small class="status">${esc(r.agent)}</small></td><td class="status">${fmtT(r.started_at)}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td><td class="status">${esc(r.summary || r.error || '')}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
   }
 
   // ---------- Shopify variant → stock product map ----------

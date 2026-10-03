@@ -22,3 +22,6 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   scanned sales keep the scanned lot and raise a notice to check the batch output weight.
 - Bots run on Agropoli time (Europe/Rome); `bot_schedule.due_times` are Rome times.
 - `fabula.bot_heartbeat()` runs hourly from pg_cron and puts a console notice up if any bot missed its slot.
+- Bot nicknames (v0.46) are display only: `bot_nicknames` (agent → Zio/Zia) and `bot_display_name(agent)` →
+  "Zio Gennaro · Piano latte". Never rename an `agent` key — watchdog, heartbeat, `expected_bots()` and the
+  bot prompts all match on it. To rename a nickname, upsert `bot_nicknames` in a new migration.
