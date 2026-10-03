@@ -1,0 +1,426 @@
+<title>La Perla Go-Live Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: control-room board. Header strip, headline gauges, then checklist + floor side by side, areas table, bot timeline. Brand: La Perla navy / gold / ivory. */
+:root{
+  --bg:#f6f4ef; --panel:#fffdf8; --ink:#161514; --muted:#5d6470; --line:#e4e0d6;
+  --navy:#1e3a5f; --gold:#b8882c; --gold-soft:#f3e7cc;
+  --ok:#2e7d4f; --ok-bg:#e3f1e8; --warn:#a36a00; --warn-bg:#fbefd6; --bad:#b3362c; --bad-bg:#f8e1de;
+  --human:#c9c3b6; --track:#ebe7dd;
+  --display:"Fraunces",Georgia,"Times New Roman",serif;
+  --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1824; --panel:#152234; --ink:#ece7dc; --muted:#9aa6b6; --line:#24344a;
+  --navy:#9cc0ea; --gold:#e0b45e; --gold-soft:#3a2f1a;
+  --ok:#6cc495; --ok-bg:#163326; --warn:#f0b54a; --warn-bg:#3a2c10; --bad:#f08a7e; --bad-bg:#3d1c19;
+  --human:#4a5466; --track:#22324a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1824; --panel:#152234; --ink:#ece7dc; --muted:#9aa6b6; --line:#24344a;
+  --navy:#9cc0ea; --gold:#e0b45e; --gold-soft:#3a2f1a;
+  --ok:#6cc495; --ok-bg:#163326; --warn:#f0b54a; --warn-bg:#3a2c10; --bad:#f08a7e; --bad-bg:#3d1c19;
+  --human:#4a5466; --track:#22324a; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--body);padding-inline:16px;padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:20px}
+h1,h2{font-family:var(--display);font-weight:600;margin:0;text-wrap:balance;color:var(--ink)}
+h1{font-size:clamp(1.6rem,3.2vw,2.2rem);letter-spacing:-.01em}
+h2{font-size:1.15rem}
+.eyebrow{font:600 .72rem/1 var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--gold)}
+.muted{color:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--navy);padding-bottom:14px}
+header .title{display:grid;gap:6px}
+.status{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:.9rem}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.live{background:var(--ok);box-shadow:0 0 0 0 var(--ok);animation:pulse 2.4s infinite}
+.dot.err{background:var(--bad)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 60%,transparent)}70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
+button{font:600 .88rem var(--body);color:var(--navy);background:transparent;border:1.5px solid var(--navy);border-radius:6px;padding:6px 12px;cursor:pointer}
+button:hover{background:var(--gold-soft)}
+button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+.banner{border:1.5px solid var(--warn);background:var(--warn-bg);color:var(--ink);border-radius:8px;padding:12px 14px;font-size:.95rem}
+.banner.bad{border-color:var(--bad);background:var(--bad-bg)}
+.gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.gauge{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:8px;min-width:0}
+.gauge.lead{border:2px solid var(--navy)}
+.gauge .label{font-size:.85rem;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.gauge .big{font:600 2.6rem/1 var(--display);font-variant-numeric:tabular-nums lining-nums;color:var(--ink)}
+.gauge .big small{font:400 1rem var(--body);color:var(--muted);margin-left:4px}
+.bar{height:8px;border-radius:4px;background:var(--track);overflow:hidden;display:flex;gap:2px}
+.bar i{display:block;height:100%}
+.tag{font:600 .68rem/1 var(--body);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border-radius:4px;white-space:nowrap}
+.tag.live{background:var(--ok-bg);color:var(--ok)}
+.tag.est{background:var(--track);color:var(--muted)}
+.grid2{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:20px}
+@media (max-width:860px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:12px;min-width:0;align-content:start}
+.panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+ul.checks{list-style:none;margin:0;padding:0;display:grid}
+ul.checks li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 0;border-top:1px solid var(--line)}
+ul.checks li:first-child{border-top:0}
+.box{width:20px;height:20px;border-radius:5px;border:1.5px solid var(--muted);display:grid;place-items:center;font-size:.8rem;margin-top:2px}
+.box.on{background:var(--ok);border-color:var(--ok);color:var(--panel)}
+.check-label{font-weight:600}
+.check-detail{font-size:.85rem;color:var(--muted)}
+.check-side{display:flex;gap:6px;align-items:center}
+.check-side button{padding:3px 8px;font-size:.78rem}
+.floor{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.cell{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:2px}
+.cell .v{font:600 1.5rem/1.1 var(--display);font-variant-numeric:tabular-nums}
+.cell .k{font-size:.8rem;color:var(--muted)}
+.alerts{display:grid;gap:6px}
+.alert{font-size:.88rem;padding:7px 10px;border-radius:6px;border-left:4px solid var(--warn);background:var(--warn-bg);border-top-left-radius:0;border-bottom-left-radius:0}
+.alert.alert-alert{border-left-color:var(--bad);background:var(--bad-bg)}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.92rem;min-width:640px}
+th{font:600 .72rem var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1.5px solid var(--line)}
+td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+td.area{font-weight:600}
+.meter{display:flex;align-items:center;gap:8px;min-width:120px}
+.meter .bar{flex:1}
+.meter span{width:34px;text-align:right;font-variant-numeric:tabular-nums;font-size:.85rem}
+.next{font-size:.85rem;color:var(--muted);max-width:32ch}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.8rem;color:var(--muted)}
+.legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.bots{display:grid;gap:0}
+.bot{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px 0;border-top:1px solid var(--line)}
+.bot:first-child{border-top:0}
+.bot .t{font:500 .9rem var(--mono);color:var(--navy);padding-top:2px}
+.bot .n{font-weight:600}
+.bot .s{font-size:.84rem;color:var(--muted);overflow-wrap:anywhere}
+.pill{font:600 .72rem/1 var(--body);padding:4px 8px;border-radius:999px;white-space:nowrap}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.err{background:var(--bad-bg);color:var(--bad)}
+.pill.wait{background:var(--track);color:var(--muted)}
+.pill.late{background:var(--warn-bg);color:var(--warn)}
+.skeleton{color:var(--muted);font-size:.92rem;padding:8px 0}
+footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="title">
+      <span class="eyebrow">La Perla del Cilento · Ops system</span>
+      <h1>Go-live board</h1>
+    </div>
+    <div class="status">
+      <span><span id="dot" class="dot"></span> <span id="conn">Connecting to the ops database…</span></span>
+      <span class="muted num" id="clock"></span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <section class="gauges" aria-label="Headline scores">
+    <div class="gauge lead">
+      <div class="label"><span>Go-live readiness</span><span class="tag live">Live</span></div>
+      <div class="big num" id="g-ready">–</div>
+      <div class="bar" id="g-ready-bar"></div>
+      <div class="muted" style="font-size:.85rem" id="g-ready-sub">Checks computed from the database</div>
+    </div>
+    <div class="gauge">
+      <div class="label"><span>Bot health</span><span class="tag live">Live</span></div>
+      <div class="big num" id="g-bots">–</div>
+      <div class="bar" id="g-bots-bar"></div>
+      <div class="muted" style="font-size:.85rem" id="g-bots-sub">Scheduled runs that succeeded</div>
+    </div>
+    <div class="gauge">
+      <div class="label"><span>Built</span><span class="tag est">Estimate</span></div>
+      <div class="big num" id="g-built">–</div>
+      <div class="bar" id="g-built-bar"></div>
+      <div class="muted" style="font-size:.85rem">Planned features live</div>
+    </div>
+    <div class="gauge">
+      <div class="label"><span>Reliable</span><span class="tag est">Estimate</span></div>
+      <div class="big num" id="g-rel">–</div>
+      <div class="bar" id="g-rel-bar"></div>
+      <div class="muted" style="font-size:.85rem">Safe to run unattended</div>
+    </div>
+    <div class="gauge">
+      <div class="label"><span>Automated · human</span><span class="tag est">Estimate</span></div>
+      <div class="big num" id="g-auto">–</div>
+      <div class="bar" id="g-auto-bar"></div>
+      <div class="muted" style="font-size:.85rem" id="g-auto-sub">Share of the work the system does</div>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel" aria-labelledby="h-checks">
+      <div class="panel-head">
+        <h2 id="h-checks">Go-live checklist</h2>
+        <span class="muted num" id="checks-count"></span>
+      </div>
+      <ul class="checks" id="checks"><li class="skeleton" style="display:block">The 14 go-live checks appear here once the database answers. Automatic checks tick themselves; manual ones have a button.</li></ul>
+    </section>
+
+    <section class="panel" aria-labelledby="h-floor">
+      <div class="panel-head">
+        <h2 id="h-floor">Today in Agropoli</h2>
+        <span class="muted num" id="today"></span>
+      </div>
+      <div class="floor" id="floor">
+        <div class="cell"><span class="v num">–</span><span class="k">Milk received, kg</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">Batches</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">Cheese made, kg</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">Mozzarella in date, kg</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">Orders to ship</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">Waiting for approval</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">HACCP checks logged</span></div>
+        <div class="cell"><span class="v num">–</span><span class="k">Unread bot reports</span></div>
+      </div>
+      <div class="alerts" id="alerts"></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="h-areas">
+    <div class="panel-head">
+      <h2 id="h-areas">By area</h2>
+      <div class="legend">
+        <span><b style="background:var(--navy)"></b>Built</span>
+        <span><b style="background:var(--ok)"></b>Reliable</span>
+        <span><b style="background:var(--gold)"></b>Automated</span>
+        <span><b style="background:var(--human)"></b>Human</span>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Area</th><th>Built</th><th>Reliable</th><th>Automated · human</th><th>Next step</th></tr></thead>
+        <tbody id="areas"><tr><td colspan="5" class="skeleton">Twelve areas of the ops system, each scored for build, reliability and automation.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-bots">
+    <div class="panel-head">
+      <h2 id="h-bots">Bots · Agropoli time</h2>
+      <span class="muted" id="bots-sub"></span>
+    </div>
+    <div class="bots" id="bots"><div class="skeleton">The scheduled bots, their next slot and their last report appear here.</div></div>
+  </section>
+
+  <footer>
+    Live tags are computed from the Supabase "Caseificio" database each time the board refreshes (every minute while open). Estimates are per-area scores kept in the <span style="font-family:var(--mono)">dash_areas</span> table and updated as work lands; <span id="areas-updated"></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const PROJECT = "ojkquhzaeypsphncjqwy";
+  const SERVER = "Supabase";
+  const TOOL = "execute_sql";
+  const REFRESH_MS = 60000;
+  const $ = (id) => document.getElementById(id);
+  let mcp = null, data = null, timer = null, busy = false, lastOkAt = null;
+
+  const romeFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const romeDay = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", weekday: "short", day: "numeric", month: "short" });
+  const romeParts = (d) => Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" }).formatToParts(d).map(p => [p.type, p.value]));
+  const ISO_DOW = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+
+  function tickClock() { $("clock").textContent = "Agropoli " + romeFmt.format(new Date()).slice(0, 5); }
+  tickClock(); setInterval(tickClock, 15000);
+
+  function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function bar(parts) { return parts.map(([w, c]) => `<i style="width:${Math.max(0, Math.min(100, w))}%;background:${c}"></i>`).join(""); }
+  function ago(iso) {
+    if (!iso) return "never";
+    const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return m + " min ago";
+    const h = Math.round(m / 60);
+    if (h < 36) return h + " h ago";
+    return Math.round(h / 24) + " days ago";
+  }
+
+  function parsePayload(p) {
+    let s = p;
+    if (s && typeof s === "object" && !Array.isArray(s)) s = s.result ?? s.text ?? s;
+    if (Array.isArray(s)) return s;
+    if (typeof s !== "string") throw new Error("Unexpected answer from the database");
+    const m = s.match(/<untrusted-data-[^>]*>\s*([\s\S]*?)\s*<\/untrusted-data/);
+    return JSON.parse(m ? m[1] : s);
+  }
+
+  function setConn(state, text) {
+    $("dot").className = "dot" + (state === "live" ? " live" : state === "err" ? " err" : "");
+    $("conn").textContent = text;
+  }
+
+  function showBanner(text, bad) {
+    const b = $("banner");
+    if (!text) { b.hidden = true; return; }
+    b.className = "banner" + (bad ? " bad" : "");
+    b.textContent = text;
+    b.hidden = false;
+  }
+
+  function errorCopy(e) {
+    switch (e && e.code) {
+      case "server_not_connected": return "The Supabase connector isn't connected for you. Add it in claude.ai Settings → Connectors, then press Refresh.";
+      case "needs_reauth": return "Your Supabase connection has expired. Reconnect Supabase in claude.ai Settings → Connectors, then press Refresh.";
+      case "selection_required": return "You have more than one Supabase connector. Choose which one this board should use when claude.ai asks, then press Refresh.";
+      case "not_in_manifest": return "Supabase access is turned off for this board. Turn it on from the artifact's Permissions menu.";
+      case "blocked_by_policy": return "Your organization's policy blocks this Supabase tool for your account.";
+      case "approval_required": return "Your organization requires approval for each Supabase call, which this board can't ask for.";
+      case "tool_error": return "The database refused the query: " + (e.message || "no reason given") + ".";
+      case "not_granted": case "capability_disabled": case "capability_removed": return "Live data isn't available in this view. Open the board in claude.ai while signed in with the Supabase connector.";
+      default: return "The database didn't answer (" + (e && e.code || "unknown") + "). The board will try again at the next refresh.";
+    }
+  }
+
+  async function runSql(query) {
+    const res = await mcp.callTool(SERVER, TOOL, { project_id: PROJECT, query }, { cache: false });
+    return parsePayload(res.payload ?? (res.content && res.content[0] && res.content[0].text));
+  }
+
+  async function refresh(retried) {
+    if (!mcp || busy) return;
+    busy = true; $("refresh").disabled = true;
+    try {
+      const rows = await runSql("select fabula.ops_dashboard() as d");
+      data = rows[0] && rows[0].d;
+      if (!data) throw { code: "tool_error", message: "empty dashboard" };
+      lastOkAt = new Date();
+      render();
+      showBanner(null);
+      setConn("live", "Live · updated " + romeFmt.format(lastOkAt));
+    } catch (e) {
+      if (e && e.retryable && !retried) {
+        busy = false; $("refresh").disabled = false;
+        setTimeout(() => refresh(true), Math.min(e.retryAfterMs || 0, 60000) + 1500 + Math.random() * 2500);
+        return;
+      }
+      const authz = ["needs_reauth", "server_not_connected", "not_in_manifest", "blocked_by_policy", "approval_required", "selection_required"].includes(e && e.code);
+      if (authz) { data = null; }
+      setConn("err", lastOkAt && !authz ? "Stale · last update " + romeFmt.format(lastOkAt) : "Not connected");
+      showBanner(errorCopy(e), authz);
+    } finally {
+      busy = false; $("refresh").disabled = false;
+    }
+  }
+
+  async function toggleCheck(key, done, btn) {
+    if (!mcp || !/^[a-z_]+$/.test(key)) return;
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      await runSql(`select fabula.dash_set_check('${key}', ${done ? "true" : "false"})`);
+      await refresh();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = done ? "Mark done" : "Undo";
+      showBanner("Couldn't save that check. " + errorCopy(e), false);
+    }
+  }
+
+  function render() {
+    if (!data) return;
+    const s = data.scores || {}, checks = data.checks || [], h = data.bot_health || {}, o = data.ops || {};
+    const done = checks.filter(c => c.done).length;
+    const pct = checks.length ? Math.round(done / checks.length * 100) : 0;
+    $("g-ready").innerHTML = `${pct}%<small>${done} of ${checks.length}</small>`;
+    $("g-ready-bar").innerHTML = bar([[pct, "var(--navy)"]]);
+    const hp = h.expected ? Math.round(h.ok / h.expected * 100) : null;
+    $("g-bots").innerHTML = hp === null ? "–" : `${hp}%<small>${h.ok} of ${h.expected}</small>`;
+    $("g-bots-bar").innerHTML = bar([[hp || 0, hp >= 95 ? "var(--ok)" : hp >= 80 ? "var(--warn)" : "var(--bad)"]]);
+    $("g-bots-sub").textContent = h.from ? `Scheduled runs that succeeded, ${fmtDay(h.from)} – ${fmtDay(h.to)}` : "Scheduled runs that succeeded";
+    $("g-built").innerHTML = `${s.built}%`;
+    $("g-built-bar").innerHTML = bar([[s.built, "var(--navy)"]]);
+    $("g-rel").innerHTML = `${s.reliable}%`;
+    $("g-rel-bar").innerHTML = bar([[s.reliable, "var(--ok)"]]);
+    $("g-auto").innerHTML = `${s.automated}<small>/ ${100 - s.automated}</small>`;
+    $("g-auto-bar").innerHTML = bar([[s.automated, "var(--gold)"], [100 - s.automated, "var(--human)"]]);
+    $("g-auto-sub").textContent = `${s.automated}% done by the system, ${100 - s.automated}% by people`;
+    $("areas-updated").textContent = s.areas_updated_at ? "estimates last updated " + new Date(s.areas_updated_at).toLocaleString("en-GB", { timeZone: "Europe/Rome", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " Agropoli time." : "";
+
+    $("checks-count").textContent = `${done} of ${checks.length} done`;
+    $("checks").innerHTML = checks.map(c => `
+      <li>
+        <span class="box ${c.done ? "on" : ""}" aria-hidden="true">${c.done ? "✓" : ""}</span>
+        <div><div class="check-label">${esc(c.label)}</div>${c.detail ? `<div class="check-detail">${esc(c.detail)}</div>` : ""}</div>
+        <div class="check-side">
+          <span class="tag ${c.kind === "auto" ? "live" : "est"}">${c.kind === "auto" ? "Live" : "Manual"}</span>
+          ${c.kind === "manual" ? `<button type="button" data-key="${esc(c.key)}" data-done="${c.done ? "0" : "1"}">${c.done ? "Undo" : "Mark done"}</button>` : ""}
+        </div>
+      </li>`).join("");
+
+    $("today").textContent = data.today ? fmtDay(data.today) : "";
+    const cells = [
+      [fmtKg(o.milk_kg_today), "Milk received, kg"], [o.batches_today, "Batches"],
+      [fmtKg(o.output_kg_today), "Cheese made, kg"], [fmtKg(o.moz_on_hand_kg), "Mozzarella in date, kg"],
+      [o.orders_to_ship, "Orders to ship"], [o.approvals_pending, "Waiting for approval"],
+      [o.haccp_checks_today, "HACCP checks logged"], [o.bot_messages_unread, "Unread bot reports"]];
+    $("floor").innerHTML = cells.map(([v, k]) => `<div class="cell"><span class="v num">${esc(v ?? "–")}</span><span class="k">${k}</span></div>`).join("");
+    $("alerts").innerHTML = (o.alerts || []).map(a => `<div class="alert alert-${esc(a.severity)}"><strong>Console notice:</strong> ${esc(a.title)}</div>`).join("");
+
+    $("areas").innerHTML = (data.areas || []).map(a => `
+      <tr>
+        <td class="area">${esc(a.area)}</td>
+        <td><div class="meter"><div class="bar">${bar([[a.built, "var(--navy)"]])}</div><span>${a.built}</span></div></td>
+        <td><div class="meter"><div class="bar">${bar([[a.reliable, "var(--ok)"]])}</div><span>${a.reliable}</span></div></td>
+        <td><div class="meter"><div class="bar">${bar([[a.automated, "var(--gold)"], [100 - a.automated, "var(--human)"]])}</div><span>${a.automated}/${100 - a.automated}</span></div></td>
+        <td class="next">${esc(a.next_step)}</td>
+      </tr>`).join("");
+
+    const now = romeParts(new Date());
+    const dow = ISO_DOW[now.weekday], dayNum = +now.day, nowMin = (+now.hour) * 60 + (+now.minute);
+    const todayStr = `${now.year}-${now.month}-${now.day}`;
+    const bots = data.bots || [];
+    let lateCount = 0;
+    $("bots").innerHTML = bots.map(b => {
+      const times = (b.due_times || []).map(t => t.slice(0, 5));
+      const runsToday = b.month_day ? dayNum === b.month_day : (b.weekdays || []).includes(dow);
+      const lastDay = b.last_at ? (() => { const p = romeParts(new Date(b.last_at)); return `${p.year}-${p.month}-${p.day}`; })() : null;
+      const firstMin = times.length ? (+times[0].slice(0, 2)) * 60 + (+times[0].slice(3)) : 0;
+      let pill;
+      if (!b.active) pill = `<span class="pill wait">Paused</span>`;
+      else if (b.last_status === "error") pill = `<span class="pill err">Error</span>`;
+      else if (runsToday && nowMin > firstMin + 45 && lastDay !== todayStr) { pill = `<span class="pill late">Missed today</span>`; lateCount++; }
+      else if (!b.last_at) pill = `<span class="pill wait">Not run yet</span>`;
+      else pill = `<span class="pill ok">OK</span>`;
+      const when = b.month_day ? `day ${b.month_day} of the month` : weekdaysText(b.weekdays);
+      return `<div class="bot">
+        <span class="t">${times.join("<br>")}</span>
+        <div><div class="n">${esc(b.name)} <span class="muted" style="font-weight:400;font-size:.82rem">· ${when} · last ${ago(b.last_at)}${b.errors_7d ? ` · ${b.errors_7d} error${b.errors_7d > 1 ? "s" : ""} this week` : ""}</span></div>
+        ${b.last_summary ? `<div class="s">${esc(b.last_summary)}</div>` : ""}</div>
+        ${pill}
+      </div>`;
+    }).join("");
+    $("bots-sub").textContent = `${bots.filter(b => b.active).length} active` + (lateCount ? ` · ${lateCount} missed today` : "");
+  }
+
+  function fmtKg(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString("en-GB", { maximumFractionDigits: 1 }) : "–"; }
+  function fmtDay(iso) { return romeDay.format(new Date(iso + "T12:00:00Z")); }
+  function weekdaysText(w) {
+    if (!w || !w.length) return "";
+    const names = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    if (w.length === 6 && !w.includes(7)) return "Mon–Sat";
+    if (w.length === 7) return "daily";
+    return w.map(d => names[d]).join(" + ");
+  }
+
+  $("checks").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-key]");
+    if (btn) toggleCheck(btn.dataset.key, btn.dataset.done === "1", btn);
+  });
+  $("refresh").addEventListener("click", () => refresh());
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && mcp) refresh(); });
+
+  (async () => {
+    mcp = window.claude && window.claude.use ? await window.claude.use("mcp") : null;
+    if (!mcp) {
+      setConn("err", "Live data unavailable");
+      showBanner("This board reads the ops database through your Supabase connector. Open it in claude.ai while signed in to see live data.", false);
+      $("refresh").disabled = true;
+      return;
+    }
+    await refresh();
+    timer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+  })();
+})();
+</script>
