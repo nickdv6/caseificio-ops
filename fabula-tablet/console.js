@@ -403,7 +403,7 @@
     const { data, error } = await sb.from('v_wholesale_tomorrow').select('*').limit(12);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessuna consegna ingrosso prenotata. Il bot "Ordini ingrosso" prenota ogni giorno alle 18:20 per il giorno dopo.</div>'; return; }
-    box.innerHTML = '<table class="nw2"><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${dShort(o.order_date).replace(/^(\w{3})\w*/, '$1').slice(0, -5)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, La Perla del Cilento conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
+    box.innerHTML = '<table class="nw2"><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${dShort(o.order_date).replace(/^(\w{3})\w*/, '$1').slice(0, -5)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, ${BRAND.name} conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
   }
 
   // ---------- Tier 2 settings: parties, standing orders, farm supply ----------

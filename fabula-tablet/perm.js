@@ -7,7 +7,7 @@ window.PERM = {
   async load(sb) {
     let { data } = await sb.rpc('my_permissions');
     if (data && !data.staff_id) { await sb.rpc('claim_staff_profile'); ({ data } = await sb.rpc('my_permissions')); }
-    this.data = data || null; return this.data;
+    this.data = data || null; if (window.BRAND) BRAND.load(sb); return this.data;
   },
   level(a) { return Number((this.data && this.data.areas && this.data.areas[a]) || 0); },
   can(a, l = 1) { return this.level(a) >= l; },

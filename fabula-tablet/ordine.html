@@ -51,6 +51,7 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
 <script src="vendor/supabase.js"></script>
 <script src="vendor/qrcode.min.js"></script>
 <script src="config.js"></script>
+<script src="brand.js"></script>
 <script>
 (() => {
   const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
@@ -61,7 +62,7 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
   const STATUS = { pending_approval: ['in attesa di approvazione', ''], approved: ['approvato', 'ok'], sent: ['inviato', 'ok'], partially_received: ['ricevuto in parte', 'ok'], received: ['ricevuto', 'ok'], cancelled: ['annullato', ''] };
   // Company block comes from settings company.* (admin → Azienda); defaults until they are filled in.
-  const COMPANY = { name: 'La Perla del Cilento', line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)', legal: '', piva: '', email: '', hours: '' };
+  const COMPANY = { name: BRAND.name, line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)', legal: '', piva: '', email: '', hours: '' };
 
   async function show(poNumber) {
     const sheet = $('sheet');
@@ -70,6 +71,7 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
     if (!poNumber) { sheet.innerHTML = '<div class="empty">Indica il numero d\'ordine (es. PO-20261001-01).</div>'; return; }
     const { data: cs } = await sb.from('settings').select('key, value').like('key', 'company.%');
     (cs || []).forEach(r => { const v = (r.value || '').trim(); if (!v) return; ({ 'company.name': () => COMPANY.name = v, 'company.legal_name': () => COMPANY.legal = v, 'company.piva': () => COMPANY.piva = v, 'company.address': () => COMPANY.line1 = v, 'company.email': () => COMPANY.email = v, 'company.receiving_hours': () => COMPANY.hours = v }[r.key] || (() => {}))(); });
+    BRAND.set(Object.fromEntries((cs || []).map(r => [r.key, r.value])), true);
     const { data: po, error } = await sb.from('purchase_orders').select('*, supplier:parties(legal_name, address, city, province, postcode, email, phone, piva, payment_terms_days), lines:purchase_order_lines(qty_ordered, qty_received, unit_price_eur, iva_rate, product:products(sku, name, unit))').eq('po_number', poNumber).maybeSingle();
     if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!po) { sheet.innerHTML = `<div class="empty">Ordine ${esc(poNumber)} non trovato.</div>`; return; }
@@ -108,7 +110,7 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
       <div class="sig"><div>Per ${COMPANY.name}</div><div>Per accettazione (fornitore)</div></div>`;
     try { new QRCode($('qr'), { text: 'PO:' + po.po_number, width: 132, height: 132, correctLevel: QRCode.CorrectLevel.M }); }
     catch { $('qr').innerHTML = `<div style="font:700 1.1rem ui-monospace,monospace;padding:12px;border:1px dashed var(--rule)">PO:${esc(po.po_number)}</div>`; }
-    document.title = 'La Perla · ' + po.po_number;
+    BRAND.title(po.po_number);
   }
   const fromUrl = new URLSearchParams(location.search).get('po');
   if (fromUrl) { $('po').value = fromUrl; show(fromUrl); } else show(null);

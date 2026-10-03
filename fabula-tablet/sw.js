@@ -1,5 +1,5 @@
-const CACHE = 'perla-v23';
-const SHELL = ['./', './index.html', './app.js', './config.js', './perm.js', './manifest.json', './icon.svg',
+const CACHE = 'perla-v24';
+const SHELL = ['./', './index.html', './app.js', './config.js', './brand.js', './perm.js', './manifest.json', './icon.svg',
   './vendor/supabase.js', './vendor/html5-qrcode.min.js', './vendor/qrcode.min.js'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))));

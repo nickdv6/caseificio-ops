@@ -25,3 +25,10 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
 - Bot nicknames (v0.46) are display only: `bot_nicknames` (agent → Zio/Zia) and `bot_display_name(agent)` →
   "Zio Gennaro · Piano latte". Never rename an `agent` key — watchdog, heartbeat, `expected_bots()` and the
   bot prompts all match on it. To rename a nickname, upsert `bot_nicknames` in a new migration.
+- Company name (v0.48): `company.name` (Configurazione → Azienda) drives every page header and tab title (`fabula-tablet/brand.js`,
+  `data-brand="name"`), printed orders/DDT, and the operational messages built in the database (`fabula.company_name()`:
+  PO e-mail/WhatsApp, standing-order confirmations, lab sampling requests, monthly pack). Never hardcode the name in a page.
+  v0.49 extends it to marketing/sales copy (creator outreach, Predis brief, Vendite lead messages: "Nick di <nome>") and
+  to the 16 scheduled bots, whose prompts read `company.name` at run time. Not dynamic: `fabula-tablet/manifest.json`
+  (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
+  handle @laperladelcilento are accounts, not the name, and stay.

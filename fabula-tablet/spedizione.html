@@ -38,6 +38,7 @@ tr.tot td{border-bottom:0;font-weight:600}
 <div class="sheet" id="sheet"><div class="empty">Accedi dalla console o dal tablet, poi indica il numero DDT.</div></div>
 <script src="vendor/supabase.js"></script>
 <script src="config.js"></script>
+<script src="brand.js"></script>
 <script>
 (() => {
   const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
@@ -52,7 +53,7 @@ tr.tot td{border-bottom:0;font-weight:600}
     if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
     if (!ref) { sheet.innerHTML = '<div class="empty">Indica il numero DDT (es. DDT-20261002-01).</div>'; return; }
     const { data: cs } = await sb.from('settings').select('key, value').like('key', 'company.%');
-    const C = Object.fromEntries((cs || []).map(r => [r.key.slice(8), (r.value || '').trim()]));
+    const C = Object.fromEntries((cs || []).map(r => [r.key.slice(8), (r.value || '').trim()])); BRAND.set(C, true);
     const q = sb.from('v_shipment_doc').select('*'); const isUuid = /^[0-9a-f-]{36}$/i.test(ref);
     const { data: d, error } = await (isUuid ? q.eq('shipment_id', ref) : q.eq('ddt_number', ref.toUpperCase())).maybeSingle();
     if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
@@ -63,7 +64,7 @@ tr.tot td{border-bottom:0;font-weight:600}
     const destAddr = online && a.address1 ? [a.address1, a.address2, [a.zip, a.city].filter(Boolean).join(' ') + (a.provinceCode ? ' (' + a.provinceCode + ')' : '')].filter(Boolean) : [d.customer_address, [d.customer_postcode, d.customer_city].filter(Boolean).join(' ') + (d.customer_province ? ' (' + d.customer_province + ')' : '')].filter(x => x && x.trim());
     sheet.innerHTML = `
       <div class="top">
-        <div><h1>${esc(C.name || 'La Perla del Cilento')}</h1><div class="sub">${esc([C.legal_name, C.address || 'Agropoli (SA)', C.piva ? 'P.IVA ' + C.piva : '', C.email, C.phone].filter(Boolean).join(' · '))}</div></div>
+        <div><h1>${esc(BRAND.name)}</h1><div class="sub">${esc([C.legal_name, C.address || 'Agropoli (SA)', C.piva ? 'P.IVA ' + C.piva : '', C.email, C.phone].filter(Boolean).join(' · '))}</div></div>
         <div class="doc"><div class="l">${online ? 'Packing list · ordine online' : 'Documento di trasporto'}</div><div class="n">${esc(d.ddt_number)}</div><div class="l">${fmtD(d.ship_date)}${online ? ' · ordine ' + esc(d.order_number) : ''} <span class="badge">${esc({ picked: 'preparato', in_transit: 'spedito', delivered: 'consegnato', planned: 'pianificato', returned: 'reso' }[d.status] || d.status)}</span></div></div>
       </div>
       <div class="parties">
@@ -83,8 +84,8 @@ tr.tot td{border-bottom:0;font-weight:600}
       </div>
       ${online ? `<div class="note">Grazie per il tuo ordine! Mozzarella di Bufala Campana DOP prodotta ad Agropoli: tienila fuori dal frigo per 20 minuti prima di gustarla. Il lotto sopra indicato garantisce la tracciabilità fino al latte della Masseria.</div>`
                : `<div class="note">Il presente documento di trasporto è emesso ai sensi del DPR 472/1996. Fattura differita entro il 15 del mese successivo. Merce viaggia a rischio del destinatario, in regime refrigerato.</div>
-      <div class="sig"><div>Firma conducente</div><div>Firma destinatario</div><div>Per ${esc(C.name || 'La Perla del Cilento')}</div></div>`}`;
-    document.title = 'La Perla · ' + d.ddt_number;
+      <div class="sig"><div>Firma conducente</div><div>Firma destinatario</div><div>Per ${esc(BRAND.name)}</div></div>`}`;
+    BRAND.title(d.ddt_number);
   }
   const fromUrl = new URLSearchParams(location.search).get('id') || new URLSearchParams(location.search).get('ddt');
   if (fromUrl) { $('id').value = fromUrl; show(fromUrl); } else show(null);

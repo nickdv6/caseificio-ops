@@ -47,42 +47,82 @@
   // avatar slot: image when bot_nicknames.avatar_url is set, otherwise a dashed circle with the initial
   const botAvatar = agent => { const n = bdNick[agent]; if (n && n.avatar_url) return `<div class="bav img" aria-hidden="true"><img src="${esc(n.avatar_url)}" alt="" loading="lazy"></div>`;
     const w = String(n ? n.nickname : agent).replace(/^(zio|zia)\s+/i, '').trim(); return `<div class="bav" aria-hidden="true">${esc((w[0] || '?').toUpperCase())}</div>`; };
-  const SEVI = { alert: '⛔ ', warn: '⚠ ' };
-  // latest warning line: the bot's own message title, or the run summary when the title is just the bot's name
-  const botLine = (title, sev, summary, names) => { const t = (title || '').trim(); const generic = !t || names.some(x => x && (t === x || t.startsWith(x + ' · ')));
-    const txt = generic ? (summary || t) : t; return txt ? `<div class="bl ${esc(sev || 'info')}">${SEVI[sev] || ''}${esc(txt)}</div>` : ''; };
   const botLabel = (agent, base) => { const n = bdNick[agent]; return n ? `${n.nickname} · ${base || n.title_it}` : (base || agent); };
+  // Bot dashboard redesign (03/10): status summary on top, bots grouped by status (da sistemare → da controllare → in ordine → disattivati),
+  // one card per bot (Zio Vito and Zio Nino are now two cards), plain-language times ("3 ore fa", "domani 06:05").
+  const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'avvisi'], role: 'Allarme bot e avvisi console', sched: 'ogni ora · :50, 06:50–21:50 lun–sab', times: Array.from({ length: 16 }, (_, i) => String(6 + i).padStart(2, '0') + ':50'), wd: [1, 2, 3, 4, 5, 6] },
+                bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot (controllo orario)', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] } };
+  const DOW = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+  const romeNow = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
+    return { y: +p.year, mo: +p.month, d: +p.day, hm: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` }; };
+  const nextRun = (times, wd, md) => { if (!times || !times.length) return null; const n = romeNow(), ts = times.map(t => t.slice(0, 5)).sort();
+    for (let k = 0; k < 40; k++) { const dt = new Date(Date.UTC(n.y, n.mo - 1, n.d + k)), iso = dt.getUTCDay() || 7;
+      if (md ? dt.getUTCDate() !== md : wd && wd.length && !wd.includes(iso)) continue;
+      const t = ts.find(x => k > 0 || x > n.hm); if (!t) continue;
+      const day = k === 0 ? 'oggi' : k === 1 ? 'domani' : `${DOW[dt.getUTCDay()]} ${String(dt.getUTCDate()).padStart(2, '0')}/${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+      return { label: `${day} ${t}`, key: k * 1440 + (+t.slice(0, 2)) * 60 + (+t.slice(3)) }; }
+    return null; };
+  const schedTxt = (times, wd, md) => { const t = (times || []).map(x => x.slice(0, 5)).join(', ');
+    const days = md ? `il ${md} del mese` : !wd || wd.length >= 7 ? 'ogni giorno' : wd.join() === '1,2,3,4,5,6' ? 'lun–sab' : wd.map(d => DOW[d % 7]).join(', ');
+    return `${days} · ${t}`; };
+  const ago = s => { const m = Math.round((Date.now() - new Date(s)) / 60000); if (m < 1) return 'adesso'; if (m < 60) return `${m} min fa`;
+    const h = Math.round(m / 60); if (h < 24) return h === 1 ? '1 ora fa' : `${h} ore fa`; const d = Math.round(h / 24); return d === 1 ? 'ieri' : `${d} giorni fa`; };
+  // one readable line: no leading icons, no long English translations in brackets, nothing after an arrow (file paths)
+  const cleanTxt = s => String(s || '').replace(/^[\s⛔⚠✅ℹ️•·\-–—:]+/u, '').replace(/\s*\([^()]{30,}\)/g, '').split(/\s(?:→|->)\s?/)[0].replace(/\s+/g, ' ').trim();
+  const ST = { al: ['Allarme', 'Da sistemare'], wn: ['Da controllare', 'Da controllare'], ok: ['In ordine', 'In ordine'], new: ['Mai eseguito', 'In attesa della prima esecuzione'], off: ['Disattivato', 'Disattivati'] };
   async function loadBotFeed() {
-    const [{ data: bots }, cnt, { data: sysLast }] = await Promise.all([
+    const [{ data: bots }, cnt, { data: sysMsgs }] = await Promise.all([
       sb.from('v_bot_dashboard').select('*').order('name_it'),
       sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000),
-      sb.from('bot_messages').select('title, severity, body, created_at').in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']).order('created_at', { ascending: false }).limit(1),
+      sb.from('bot_messages').select('agent, title, severity, body, created_at, read_at').in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']).order('created_at', { ascending: false }).limit(300),
       loadNicknames()]);
     const unread = cnt.data || [], nU = unread.length, nA = unread.filter(x => x.severity === 'alert').length;
     const tb = $('n-bots'); tb.textContent = nA || nU; tb.classList.toggle('on', nU > 0); tb.classList.toggle('al', nA > 0);
     (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); });
+    Object.keys(SYS).forEach(a => { bdNames[a] = botLabel(a, bdNick[a] ? bdNick[a].title_it : a); });
+    // one item per card
+    const items = (bots || []).map(b => {
+      const st = !b.active ? 'off' : (b.last_status === 'error' || b.unread_alerts > 0 || b.last_severity === 'alert') ? 'al' : b.last_severity === 'warn' ? 'wn' : !b.last_run_at ? 'new' : 'ok';
+      const raw = (b.last_title || '').trim(), generic = !raw || [b.name_it, b.display_name].some(x => x && (raw === x || raw.startsWith(x + ' · ')));
+      return { agent: b.agent, nick: bdNick[b.agent] ? bdNick[b.agent].nickname : b.name_it, role: b.name_it, st, err: b.active && b.last_status === 'error',
+        sched: schedTxt(b.due_times, b.weekdays, b.month_day), next: b.active ? nextRun(b.due_times, b.weekdays, b.month_day) : null,
+        last: b.last_run_at, line: cleanTxt(b.last_status === 'error' ? (b.last_summary || 'Ultima esecuzione fallita') : generic ? (b.last_summary || raw) : raw),
+        unread: b.unread || 0, unreadAl: b.unread_alerts || 0, active: b.active };
+    });
+    Object.entries(SYS).forEach(([a, s]) => {
+      const ms = (sysMsgs || []).filter(m => s.agents.includes(m.agent)), m = ms[0], un = ms.filter(x => !x.read_at);
+      const st = un.some(x => x.severity === 'alert') ? 'al' : un.some(x => x.severity === 'warn') ? 'wn' : 'ok';
+      items.push({ agent: a, nick: bdNick[a] ? bdNick[a].nickname : a, role: s.role, st, sched: s.sched, next: nextRun(s.times, s.wd), last: m ? m.created_at : null, sys: true,
+        line: un.length ? cleanTxt(un[0].title) : 'Nessun allarme: tutti i bot sono regolari', unread: un.length, unreadAl: un.filter(x => x.severity === 'alert').length, active: true });
+    });
+    // summary strip
+    const c = k => items.filter(i => i.st === k).length;
+    const nx = items.filter(i => i.next && !i.sys).sort((x, y) => x.next.key - y.next.key)[0];
+    $('bd-sum').innerHTML = `
+      <div class="sm s-al${c('al') ? '' : ' zero'}"><b>${c('al')}</b><span>da sistemare</span></div>
+      <div class="sm s-wn${c('wn') ? '' : ' zero'}"><b>${c('wn')}</b><span>da controllare</span></div>
+      <div class="sm s-ok"><b>${c('ok')}</b><span>in ordine</span></div>
+      <div class="sm"><b>${nU}</b><span>notifiche da leggere</span></div>
+      ${nx ? `<div class="sm nx">${botAvatar(nx.agent)}<div><span>Prossimo bot</span><b>${esc(nx.nick)}</b><span>${esc(nx.role)} · ${esc(nx.next.label)}</span></div></div>` : ''}`;
+    // cards grouped by status, each group ordered by next run
+    // card: name, job, one-line latest news, then when it last ran and when it runs next. Group heading + coloured edge carry the status.
+    const when = i => i.active ? [i.last ? `Ultima: ${ago(i.last)}` : i.sys ? 'Nessun avviso finora' : 'Non ha ancora girato', i.next ? `Prossima: ${i.next.label}` : '']
+      : ['Disattivato' + (i.last ? ` · ha girato ${ago(i.last)}` : '')];
+    const card = i => `<div class="botc s-${i.st}${bdAgent === i.agent ? ' sel' : ''}" data-a="${esc(i.agent)}" role="button" tabindex="0" aria-pressed="${bdAgent === i.agent}" title="${esc(i.role)} · ${esc(i.sched)}">${botAvatar(i.agent)}
+        <div class="bi"><div class="hd"><span class="nm">${esc(i.nick)}</span>${i.err ? '<span class="pill s-al">Errore</span>' : ''}</div>
+        <div class="ti">${esc(i.role)}</div>
+        <div class="bl">${esc(i.line || (i.st === 'new' ? 'Nessuna notizia: parte alla prossima esecuzione' : '—'))}</div>
+        <div class="ft">${when(i).filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('')}${i.unread ? `<span class="u${i.unreadAl ? ' al' : ''}">${i.unread} ${i.unread === 1 ? 'nuova' : 'nuove'}</span>` : ''}</div></div></div>`;
     const bb = $('bd-bots');
-    bb.innerHTML = (bots || []).map(b => {
-      const n = bdNick[b.agent], nick = n ? n.nickname : b.name_it;
-      const when = (b.due_times || []).map(t => t.slice(0, 5)).join(' · ') + (b.month_day ? ` · giorno ${b.month_day}` : b.weekdays && b.weekdays.length < 6 ? ' · ' + b.weekdays.map(d => ['', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'][d]).join(', ') : '');
-      const st = !b.active ? 'disattivato' + (b.last_run_at ? ` · ultima ${fmtR(b.last_run_at)}` : '') : b.last_run_at ? `${b.last_status === 'error' ? '<span class="ko">errore</span>' : '<span class="ok">ok</span>'} · ${fmtR(b.last_run_at)}` : 'mai eseguito';
-      const edge = b.unread_alerts || b.last_status === 'error' || b.last_severity === 'alert' ? ' al' : b.last_severity === 'warn' ? ' wn' : '';
-      return `<div class="botc${edge}${b.active ? '' : ' off'}${bdAgent === b.agent ? ' sel' : ''}" data-a="${esc(b.agent)}" role="button" tabindex="0" aria-pressed="${bdAgent === b.agent}">${botAvatar(b.agent)}
-        <div class="bi"><div class="nm">${esc(nick)}</div><div class="ti">${n ? esc(b.name_it) + ' · ' : ''}${esc(when)}</div>
-        <div class="st">${st}</div>${botLine(b.last_title, b.last_severity, b.last_summary, [b.name_it, b.display_name])}</div>
-        ${b.unread ? `<span class="u${b.unread_alerts ? ' al' : ''}" title="da leggere">${b.unread}</span>` : ''}</div>`;
-    }).join('') + (() => {
-      const m = (sysLast || [])[0], sev = m && m.severity;
-      return `<div class="botc${sev === 'alert' ? ' al' : sev === 'warn' ? ' wn' : ''}${bdAgent === '_other' ? ' sel' : ''}" data-a="_other" role="button" tabindex="0" aria-pressed="${bdAgent === '_other'}">${botAvatar('bot_watchdog')}
-        <div class="bi"><div class="nm">${esc(bdNick.bot_watchdog ? bdNick.bot_watchdog.nickname : 'Allarme bot')} e ${esc(bdNick.bot_heartbeat ? bdNick.bot_heartbeat.nickname : 'Battito bot')}</div><div class="ti">Allarme bot · battito bot · avvisi della console</div>
-        <div class="st">${m ? 'ultimo avviso ' + fmtR(m.created_at) : 'nessun avviso'}</div>${m ? botLine(m.title, sev, (m.body || '').split('\n')[0], []) : ''}</div></div>`; })();
+    bb.innerHTML = ['al', 'wn', 'ok', 'new', 'off'].map(k => { const g = items.filter(i => i.st === k).sort((x, y) => (x.next ? x.next.key : 1e9) - (y.next ? y.next.key : 1e9));
+      return g.length ? `<div class="bd-grp s-${k}"><h4>${ST[k][1]} <span>${g.length}</span></h4><div class="bd-bots">${g.map(card).join('')}</div></div>` : ''; }).join('');
     const pick = el => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); if (bdAgent) $('bd-feed-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     bb.querySelectorAll('.botc').forEach(el => { el.onclick = () => pick(el); el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(el); } }; });
-    $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdAgent === '_other' ? 'allarmi e avvisi' : bdNames[bdAgent] || bdAgent) : '';
+    $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdNames[bdAgent] || bdAgent) : '';
     let q = sb.from('bot_messages').select('*').order('created_at', { ascending: false }).limit(bdLimit + 1);
     if (bdFilter === 'unread') q = q.is('read_at', null);
     if (bdFilter === 'alert') q = q.eq('severity', 'alert');
-    if (bdAgent === '_other') q = q.in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']); else if (bdAgent) q = q.eq('agent', bdAgent);
+    if (bdAgent) q = q.in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]);
     const { data: msgs, error } = await q;
     const feed = $('bd-feed');
     if (error) { feed.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
@@ -102,7 +142,7 @@
   document.querySelectorAll('.bd-bar .chip').forEach(c => c.onclick = () => { bdFilter = c.dataset.f; bdLimit = 50; document.querySelectorAll('.bd-bar .chip').forEach(x => x.setAttribute('aria-pressed', x === c)); loadBotFeed(); });
   $('bd-more').onclick = () => { bdLimit += 50; loadBotFeed(); };
   $('bd-readall').onclick = async () => {
-    const { data: ids } = await (bdAgent === '_other' ? sb.from('bot_messages').select('id').is('read_at', null).in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']) : bdAgent ? sb.from('bot_messages').select('id').is('read_at', null).eq('agent', bdAgent) : sb.from('bot_messages').select('id').is('read_at', null));
+    const { data: ids } = await (bdAgent ? sb.from('bot_messages').select('id').is('read_at', null).in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]) : sb.from('bot_messages').select('id').is('read_at', null));
     if (!ids || !ids.length) return toast('Niente da segnare');
     const { data, error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids.map(x => x.id) }); if (error) return toast(error.message, 'err');
     toast(`${data} notifiche segnate come lette`); loadBotFeed();
@@ -282,6 +322,7 @@
           let v = inp.value.trim();
           if (!isText) { if (v === '' || isNaN(Number(v.replace(',', '.')))) throw new Error('Inserisci un numero'); v = String(Number(v.replace(',', '.'))); }
           await upd('settings', { key: r.key }, { value: v }); row.classList.remove('dirty');
+          if (r.key.startsWith('company.')) BRAND.set({ [r.key]: v });   // header and tab title follow at once
         }));
         row.append(right); box.append(row);
       });

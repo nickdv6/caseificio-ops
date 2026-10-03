@@ -1,11 +1,17 @@
 {
-  "name": "La Perla del Cilento",
-  "short_name": "La Perla",
+  "name": "Selezionati da Masseria Cilentana",
+  "short_name": "Selezionati",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f7f5f0",
   "theme_color": "#0f6b4f",
   "lang": "it",
-  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
 }

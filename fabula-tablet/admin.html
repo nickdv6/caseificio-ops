@@ -128,21 +128,40 @@ details.card>.body{padding:0 14px 12px}
 .msg .b.open{max-height:none}
 .msg .more{appearance:none;border:0;background:none;color:var(--accent);font:600 .85rem var(--body);padding:4px 0;cursor:pointer}
 /* v0.46 bot cards: full-width grid, avatar slot (44 px), latest run + latest warning under the name */
-.bd-bots{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-.botc{position:relative;display:flex;gap:10px;align-items:flex-start;min-width:0;padding:10px 12px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);cursor:pointer;text-align:left}
+.bd-sum{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 4px}
+.bd-sum .sm{flex:1 1 130px;min-width:0;padding:10px 14px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);display:flex;flex-direction:column;gap:3px}
+.bd-sum .sm b{font:700 1.7rem/1 var(--display)}.bd-sum .sm span{font-size:.84rem;color:var(--muted)}
+.bd-sum .sm.s-al{border-left-color:var(--warn)}.bd-sum .sm.s-al b{color:var(--warn)}
+.bd-sum .sm.s-wn{border-left-color:var(--series-2)}.bd-sum .sm.s-wn b{color:#7a5c14}
+.bd-sum .sm.s-ok{border-left-color:var(--good)}.bd-sum .sm.s-ok b{color:var(--good)}
+.bd-sum .sm.zero{border-left-color:var(--rule)}.bd-sum .sm.zero b{color:var(--muted)}
+.bd-sum .sm.nx{flex:2 1 280px;flex-direction:row;align-items:center;gap:12px}.bd-sum .sm.nx>div{display:flex;flex-direction:column;min-width:0}
+.bd-sum .sm.nx b{font:700 1.05rem/1.2 var(--body);color:var(--fg)}
+.bd-grp{margin-top:18px}
+.bd-grp h4{margin:0 0 8px;font:700 .78rem var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.bd-grp h4 span{display:inline-block;min-width:20px;padding:0 7px;margin-left:4px;border-radius:10px;background:var(--rule);color:var(--fg);text-align:center;letter-spacing:0}
+.bd-grp.s-al h4{color:var(--warn)}.bd-grp.s-wn h4{color:#7a5c14}.bd-grp.s-ok h4{color:var(--good)}
+.bd-bots{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
+.botc{position:relative;display:flex;gap:12px;align-items:flex-start;min-width:0;padding:12px 14px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);cursor:pointer;text-align:left}
 .botc:hover{border-color:var(--muted)}.botc:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.botc.wn{border-left-color:var(--series-2)}.botc.al{border-left-color:var(--warn)}
-.botc.sel{background:var(--tile);border-color:var(--accent)}.botc.off{opacity:.62}
-.bav{flex:0 0 44px;width:44px;height:44px;border-radius:50%;border:1.5px dashed var(--rule);background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;font:700 1.15rem var(--display);color:var(--muted)}
+.botc.s-ok{border-left-color:var(--good)}.botc.s-wn{border-left-color:var(--series-2)}.botc.s-al{border-left-color:var(--warn)}
+.botc.sel{background:var(--tile);border-color:var(--accent)}.botc.s-off{opacity:.6}
+.bav{flex:0 0 48px;width:48px;height:48px;border-radius:50%;border:1.5px dashed var(--rule);background:var(--bg);display:flex;align-items:center;justify-content:center;overflow:hidden;font:700 1.15rem var(--display);color:var(--muted)}
 .bav.img{border-style:solid;border-color:var(--rule)}.bav img{width:100%;height:100%;object-fit:cover;display:block}
+.botc .bav{flex:0 0 68px;width:68px;height:68px;border-width:3px;font-size:1.5rem;box-shadow:0 1px 4px rgba(22,21,20,.12)}
+.botc.s-al .bav{border-color:var(--warn)}.botc.s-wn .bav{border-color:var(--series-2)}.botc.s-ok .bav{border-color:var(--good)}
+.botc.s-off .bav img{filter:grayscale(1)}
+.botc{gap:14px}
 .botc .bi{flex:1;min-width:0}
-.botc .nm{font-weight:700;line-height:1.2;padding-right:30px}
-.botc .ti{font-size:.8rem;color:var(--muted);margin-top:1px}
-.botc .st{font-size:.82rem;color:var(--muted);margin-top:4px}
-.botc .bl{font-size:.86rem;margin-top:2px;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
-.botc .bl.warn{color:#8a6a1f}.botc .bl.alert{color:var(--warn);font-weight:600}
-.botc .u{position:absolute;top:9px;right:10px;min-width:22px;height:22px;border-radius:11px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;line-height:22px;text-align:center;padding:0 6px}
-.botc .u.al{background:var(--warn)}
+.botc .hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.botc .nm{font-weight:700;font-size:1.02rem;line-height:1.2;min-width:0;overflow-wrap:anywhere}
+.pill{flex:0 0 auto;font-size:.72rem;font-weight:700;line-height:1.5;padding:1px 8px;border-radius:10px;white-space:nowrap}
+.pill.s-al{background:#f6e1db;color:#9a3a22}.pill.s-wn{background:#f6ecd6;color:#6e5212}.pill.s-ok{background:#e1efe6;color:#276841}
+.botc .ti{font-size:.82rem;color:var(--muted);margin-top:1px}
+.botc .bl{font-size:.9rem;line-height:1.35;margin-top:6px;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.botc .ft{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;margin-top:8px;font-size:.78rem;color:var(--muted)}.botc .ft>span{white-space:nowrap}
+.botc .ft .u{margin-left:auto;padding:1px 8px;border-radius:10px;background:var(--tile);color:var(--accent);font-weight:700}
+.botc .ft .u.al{background:#f6e1db;color:#9a3a22}
 #bd-feed-card{scroll-margin-top:64px}
 #bots{overflow-x:auto}
 </style>
@@ -150,7 +169,7 @@ details.card>.body{padding:0 14px 12px}
 <body>
 <div class="wrap">
 <header>
-  <div><h1>La Perla del Cilento <span class="badge" style="background:var(--muted)">configurazione</span></h1><div class="sub">Preferenze dell'app, dei bot e dell'azienda · non è la console operativa</div></div>
+  <div><h1><span data-brand="name">La Perla del Cilento</span> <span class="badge" style="background:var(--muted)">configurazione</span></h1><div class="sub">Preferenze dell'app, dei bot e dell'azienda · non è la console operativa</div></div>
   <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="console.html" style="text-decoration:none">← Console</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
 </header>
 
@@ -191,7 +210,7 @@ details.card>.body{padding:0 14px 12px}
   </div>
 
   <div class="pane" id="p-bots">
-    <div class="card" style="margin-bottom:16px"><h3>Bot</h3><div class="hint">Sotto ogni nome: l'ultima esecuzione e l'ultimo avviso. Tocca un bot per vedere solo le sue notifiche.</div><div id="bd-bots" class="bd-bots"></div></div>
+    <div class="card" style="margin-bottom:16px"><h3>Bot</h3><div class="hint">Prima quelli da sistemare, poi quelli da controllare. Tocca un bot per leggere solo le sue notifiche.</div><div id="bd-sum" class="bd-sum"></div><div id="bd-bots"></div></div>
     <div class="card" id="bd-feed-card" style="margin-bottom:16px"><h3>Notifiche dei bot</h3><div class="hint">Tutto quello che i bot comunicano finisce qui: il resoconto di ogni esecuzione, gli allarmi e gli avvisi della console. Le notifiche sul telefono restano come prima.</div>
         <div class="bd-bar"><button class="chip" data-f="unread" aria-pressed="true">Da leggere</button><button class="chip" data-f="alert" aria-pressed="false">Allarmi</button><button class="chip" data-f="all" aria-pressed="false">Tutte</button>
           <span id="bd-bot" class="status"></span><span style="flex:1"></span><button class="btn sm sec" id="bd-readall">Segna tutto come letto</button></div>
@@ -251,6 +270,7 @@ details.card>.body{padding:0 14px 12px}
 
 <script src="vendor/supabase.js"></script>
 <script src="config.js"></script>
+<script src="brand.js"></script>
 <script src="perm.js"></script>
 <script src="admin.js"></script>
 </body>
