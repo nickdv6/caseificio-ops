@@ -50,8 +50,8 @@
   const botLabel = (agent, base) => { const n = bdNick[agent]; return n ? `${n.nickname} · ${base || n.title_it}` : (base || agent); };
   // Bot dashboard redesign (03/10): status summary on top, bots grouped by status (da sistemare → da controllare → in ordine → disattivati),
   // one card per bot (Zio Vito and Zio Nino are now two cards), plain-language times ("3 ore fa", "domani 06:05").
-  const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'avvisi'], role: 'Allarme bot e avvisi console', sched: 'ogni ora · :50, 06:50–21:50 lun–sab', times: Array.from({ length: 16 }, (_, i) => String(6 + i).padStart(2, '0') + ':50'), wd: [1, 2, 3, 4, 5, 6] },
-                bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot (controllo orario)', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] } };
+  const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'avvisi'], role: 'Allarme bot', sched: 'ogni ora · :50, 06:50–21:50 lun–sab', times: Array.from({ length: 16 }, (_, i) => String(6 + i).padStart(2, '0') + ':50'), wd: [1, 2, 3, 4, 5, 6] },
+                bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] } };
   const DOW = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
   const romeNow = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
     return { y: +p.year, mo: +p.month, d: +p.day, hm: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` }; };
@@ -190,7 +190,7 @@
       const head = day !== lastDay ? `<div class="bd-day">${esc(dayLabel(day))}</div>` : ''; lastDay = day;
       const sv = m.severity === 'alert' ? '<span class="sv">Allarme</span>' : m.severity === 'warn' ? '<span class="sv">Da controllare</span>' : '';
       return `${head}<div class="msg ${esc(m.severity)}${unreadIds.length ? '' : ' read'}" data-ids="${unreadIds.join(',')}">${botAvatar(a)}<div class="mb">
-        <div class="hd"><span class="who"><b>${esc(nk ? nk.nickname : role)}</b> · ${esc(role)}</span><span class="tm">${hmRome(m.created_at)}${n > 1 ? ` · ${n} volte` : ''}</span></div>
+        <div class="hd"><span class="who"><b>${esc(nk ? nk.nickname : role)}</b><span class="role">${esc(role)}</span></span><span class="tm">${hmRome(m.created_at)}${n > 1 ? ` · ${n} volte` : ''}</span></div>
         <div class="t">${sv}${esc(title)}</div>${body ? `<div class="b">${body}</div>` : ''}
         <div class="ac"><button class="more" data-x="more" hidden>Mostra tutto</button>${unreadIds.length ? '<button class="rd" data-x="read">✓ Segna come letta</button>' : ''}</div></div></div>`;
     }).join('');

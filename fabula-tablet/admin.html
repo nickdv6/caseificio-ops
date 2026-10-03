@@ -123,8 +123,9 @@ details.card>.body{padding:0 14px 12px}
 .msg.warn{border-left-color:var(--series-2)}.msg.alert{border-left-color:var(--warn)}.msg.read{opacity:.6}
 .msg .bav{flex:0 0 40px;width:40px;height:40px;border-width:2px;border-style:solid}
 .msg .mb{flex:1;min-width:0}
-.msg .hd{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
-.msg .who{font-size:.85rem;color:var(--muted);min-width:0}.msg .who b{color:var(--fg);font-weight:700}
+.msg .hd{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.msg .who{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:.88rem;min-width:0}.msg .who b{color:var(--fg);font-weight:700}
+.msg .who .role{padding:0 8px;border-radius:9px;background:var(--tile);color:var(--accent);font-size:.76rem;font-weight:700;line-height:1.55}
 .msg .tm{font-size:.8rem;color:var(--muted);white-space:nowrap}
 .msg .t{font-weight:700;font-size:1.02rem;line-height:1.3;margin:3px 0 6px;color:var(--fg)}
 .msg.read .t{font-weight:600}
@@ -170,7 +171,7 @@ details.card>.body{padding:0 14px 12px}
 .botc .nm{font-weight:700;font-size:1.02rem;line-height:1.2;min-width:0;overflow-wrap:anywhere}
 .pill{flex:0 0 auto;font-size:.72rem;font-weight:700;line-height:1.5;padding:1px 8px;border-radius:10px;white-space:nowrap}
 .pill.s-al{background:#f6e1db;color:#9a3a22}.pill.s-wn{background:#f6ecd6;color:#6e5212}.pill.s-ok{background:#e1efe6;color:#276841}
-.botc .ti{font-size:.82rem;color:var(--muted);margin-top:1px}
+.botc .ti{display:inline-block;margin-top:4px;padding:1px 9px;border-radius:10px;background:var(--tile);color:var(--accent);font-size:.8rem;font-weight:700;letter-spacing:.01em;line-height:1.5}
 .botc .bl{font-size:.9rem;line-height:1.35;margin-top:6px;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .botc .ft{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;margin-top:8px;font-size:.78rem;color:var(--muted)}.botc .ft>span{white-space:nowrap}
 .botc .ft .u{margin-left:auto;padding:1px 8px;border-radius:10px;background:var(--tile);color:var(--accent);font-weight:700}
