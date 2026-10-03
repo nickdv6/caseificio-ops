@@ -3,7 +3,7 @@
    this file only hides what the person can't use. */
 window.PERM = {
   data: null,
-  HOME: { tablet: 'index.html', console: 'console.html', haccp: 'haccp.html', marketing: 'marketing.html', admin: 'admin.html' },
+  HOME: { tablet: 'index.html', console: 'console.html', haccp: 'haccp.html', marketing: 'marketing.html', vendite: 'vendite.html', admin: 'admin.html' },
   async load(sb) {
     let { data } = await sb.rpc('my_permissions');
     if (data && !data.staff_id) { await sb.rpc('claim_staff_profile'); ({ data } = await sb.rpc('my_permissions')); }

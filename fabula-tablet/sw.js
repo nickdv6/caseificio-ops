@@ -1,4 +1,4 @@
-const CACHE = 'perla-v21';
+const CACHE = 'perla-v22';
 const SHELL = ['./', './index.html', './app.js', './config.js', './perm.js', './manifest.json', './icon.svg',
   './vendor/supabase.js', './vendor/html5-qrcode.min.js', './vendor/qrcode.min.js'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))));
