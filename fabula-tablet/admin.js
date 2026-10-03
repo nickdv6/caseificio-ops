@@ -43,22 +43,41 @@
   const fmtR = s => new Date(s).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
   let bdFilter = 'unread', bdAgent = null, bdLimit = 50, bdNames = {}, bdNick = {};
   // v0.46 display-only nicknames (Zio/Zia) from bot_nicknames; agent keys never change
-  async function loadNicknames() { const { data } = await sb.from('bot_nicknames').select('agent, nickname, title_it'); (data || []).forEach(n => { bdNick[n.agent] = n; }); }
+  async function loadNicknames() { const { data } = await sb.from('bot_nicknames').select('agent, nickname, title_it, avatar_url'); (data || []).forEach(n => { bdNick[n.agent] = n; }); }
+  // avatar slot: image when bot_nicknames.avatar_url is set, otherwise a dashed circle with the initial
+  const botAvatar = agent => { const n = bdNick[agent]; if (n && n.avatar_url) return `<div class="bav img" aria-hidden="true"><img src="${esc(n.avatar_url)}" alt="" loading="lazy"></div>`;
+    const w = String(n ? n.nickname : agent).replace(/^(zio|zia)\s+/i, '').trim(); return `<div class="bav" aria-hidden="true">${esc((w[0] || '?').toUpperCase())}</div>`; };
+  const SEVI = { alert: '⛔ ', warn: '⚠ ' };
+  // latest warning line: the bot's own message title, or the run summary when the title is just the bot's name
+  const botLine = (title, sev, summary, names) => { const t = (title || '').trim(); const generic = !t || names.some(x => x && (t === x || t.startsWith(x + ' · ')));
+    const txt = generic ? (summary || t) : t; return txt ? `<div class="bl ${esc(sev || 'info')}">${SEVI[sev] || ''}${esc(txt)}</div>` : ''; };
   const botLabel = (agent, base) => { const n = bdNick[agent]; return n ? `${n.nickname} · ${base || n.title_it}` : (base || agent); };
   async function loadBotFeed() {
-    const [{ data: bots }, cnt] = await Promise.all([
+    const [{ data: bots }, cnt, { data: sysLast }] = await Promise.all([
       sb.from('v_bot_dashboard').select('*').order('name_it'),
-      sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000), loadNicknames()]);
+      sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000),
+      sb.from('bot_messages').select('title, severity, body, created_at').in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']).order('created_at', { ascending: false }).limit(1),
+      loadNicknames()]);
     const unread = cnt.data || [], nU = unread.length, nA = unread.filter(x => x.severity === 'alert').length;
     const tb = $('n-bots'); tb.textContent = nA || nU; tb.classList.toggle('on', nU > 0); tb.classList.toggle('al', nA > 0);
     (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); });
     const bb = $('bd-bots');
     bb.innerHTML = (bots || []).map(b => {
+      const n = bdNick[b.agent], nick = n ? n.nickname : b.name_it;
       const when = (b.due_times || []).map(t => t.slice(0, 5)).join(' · ') + (b.month_day ? ` · giorno ${b.month_day}` : b.weekdays && b.weekdays.length < 6 ? ' · ' + b.weekdays.map(d => ['', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'][d]).join(', ') : '');
-      const st = !b.active ? 'disattivato' : b.last_run_at ? `${b.last_status === 'error' ? '<span class="ko">errore</span>' : 'ok'} · ${fmtR(b.last_run_at)}` : 'mai eseguito';
-      return `<div class="botc${bdAgent === b.agent ? ' sel' : ''}" data-a="${esc(b.agent)}"><div><div class="nm">${esc(b.display_name || botLabel(b.agent, b.name_it))}</div><small>${esc(when)} · ${st}</small></div>${b.unread ? `<span class="u${b.unread_alerts ? ' al' : ''}">${b.unread}</span>` : ''}</div>`;
-    }).join('') + `<div class="botc${bdAgent === '_other' ? ' sel' : ''}" data-a="_other"><div><div class="nm">Allarmi e avvisi di sistema</div><small>${esc(botLabel('bot_watchdog'))}, ${esc(botLabel('bot_heartbeat'))}, avvisi della console</small></div></div>`;
-    bb.querySelectorAll('.botc').forEach(el => el.onclick = () => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); });
+      const st = !b.active ? 'disattivato' + (b.last_run_at ? ` · ultima ${fmtR(b.last_run_at)}` : '') : b.last_run_at ? `${b.last_status === 'error' ? '<span class="ko">errore</span>' : '<span class="ok">ok</span>'} · ${fmtR(b.last_run_at)}` : 'mai eseguito';
+      const edge = b.unread_alerts || b.last_status === 'error' || b.last_severity === 'alert' ? ' al' : b.last_severity === 'warn' ? ' wn' : '';
+      return `<div class="botc${edge}${b.active ? '' : ' off'}${bdAgent === b.agent ? ' sel' : ''}" data-a="${esc(b.agent)}" role="button" tabindex="0" aria-pressed="${bdAgent === b.agent}">${botAvatar(b.agent)}
+        <div class="bi"><div class="nm">${esc(nick)}</div><div class="ti">${n ? esc(b.name_it) + ' · ' : ''}${esc(when)}</div>
+        <div class="st">${st}</div>${botLine(b.last_title, b.last_severity, b.last_summary, [b.name_it, b.display_name])}</div>
+        ${b.unread ? `<span class="u${b.unread_alerts ? ' al' : ''}" title="da leggere">${b.unread}</span>` : ''}</div>`;
+    }).join('') + (() => {
+      const m = (sysLast || [])[0], sev = m && m.severity;
+      return `<div class="botc${sev === 'alert' ? ' al' : sev === 'warn' ? ' wn' : ''}${bdAgent === '_other' ? ' sel' : ''}" data-a="_other" role="button" tabindex="0" aria-pressed="${bdAgent === '_other'}">${botAvatar('bot_watchdog')}
+        <div class="bi"><div class="nm">${esc(bdNick.bot_watchdog ? bdNick.bot_watchdog.nickname : 'Allarme bot')} e ${esc(bdNick.bot_heartbeat ? bdNick.bot_heartbeat.nickname : 'Battito bot')}</div><div class="ti">Allarme bot · battito bot · avvisi della console</div>
+        <div class="st">${m ? 'ultimo avviso ' + fmtR(m.created_at) : 'nessun avviso'}</div>${m ? botLine(m.title, sev, (m.body || '').split('\n')[0], []) : ''}</div></div>`; })();
+    const pick = el => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); if (bdAgent) $('bd-feed-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    bb.querySelectorAll('.botc').forEach(el => { el.onclick = () => pick(el); el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(el); } }; });
     $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdAgent === '_other' ? 'allarmi e avvisi' : bdNames[bdAgent] || bdAgent) : '';
     let q = sb.from('bot_messages').select('*').order('created_at', { ascending: false }).limit(bdLimit + 1);
     if (bdFilter === 'unread') q = q.is('read_at', null);
