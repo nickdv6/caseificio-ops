@@ -382,8 +382,8 @@ begin
        'active_n', act_n,
        'by_stage', (select coalesce(jsonb_agg(jsonb_build_object('stage', stage, 'n', n, 'est_kg_week', kg) order by array_position(array['nuovo','contattato','degustazione','offerta','cliente','in_pausa','perso'], stage)), '[]')
                       from (select stage, count(*) n, round(sum(est_kg_week), 0) kg from fabula.sales_leads group by stage) s),
-       'by_channel', (select coalesce(jsonb_agg(jsonb_build_object('channel', ch, 'open_n', n, 'open_kg_week', kg)), '[]')
-                      from (select fabula.sales_segment_channel(segment) ch, count(*) n, round(sum(est_kg_week), 0) kg
+       'by_channel', (select coalesce(jsonb_agg(jsonb_build_object('channel', chn, 'open_n', n, 'open_kg_week', kg)), '[]')
+                      from (select fabula.sales_segment_channel(segment) chn, count(*) n, round(sum(est_kg_week), 0) kg
                               from fabula.sales_leads where stage in ('nuovo','contattato','degustazione','offerta') group by 1) s),
        'open_kg_day', (select round(coalesce(sum(est_kg_week), 0) / 7, 1) from fabula.sales_leads where stage in ('contattato','degustazione','offerta'))),
     'actions_due', (select coalesce(jsonb_agg(x order by x->>'due', (x->>'priority')::int), '[]') from (
