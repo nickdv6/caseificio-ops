@@ -70,6 +70,46 @@
   // one readable line: no leading icons, no long English translations in brackets, nothing after an arrow (file paths)
   const cleanTxt = s => String(s || '').replace(/^[\s⛔⚠✅ℹ️•·\-–—:]+/u, '').replace(/\s*\([^()]{30,}\)/g, '').split(/\s(?:→|->)\s?/)[0].replace(/\s+/g, ' ').trim();
   const ST = { al: ['Allarme', 'Da sistemare'], wn: ['Da controllare', 'Da controllare'], ok: ['In ordine', 'In ordine'], new: ['Mai eseguito', 'In attesa della prima esecuzione'], off: ['Disattivato', 'Disattivati'] };
+  // ---------- notification text helpers: Italian only by default, light markdown, no repeated "bot · date" header ----------
+  let bdEn = false, bdRole = {};
+  // English detection for the bots' "Italiano (English)" habit: brackets with an English word and no Italian word are the translation
+  const EN_W = new Set(('the is are was were and to of no nothing not with from for by on at this that today yet all check checks it its be been has have an as or so please will would should any only stay stays '
+    + 'evening temperature sanitation meter reading logged missing overdue tasks since thermometer production declaration proposed est cost confirmed orders order demand output mismatch approving approve reject '
+    + 'customer customers suppliers supplier rename placeholder names recorded scans working day off offline fix first connected booked include them phones tap item record shows list red yield available '
+    + 'averages sales yesterday week weeks average close history hand assumed measured last same waste system ran errors error new updated read deactivated wholesale adopted next sync what when where how').split(' '));
+  const IT_W = new Set('il lo la le gli di del della dei delle che è e per non nessun nessuna nessuno sono da con oggi ancora alla al nel nella una un più già prima resta restano dal sul o senza'.split(' '));
+  const wordsOf = s => String(s).toLowerCase().match(/[a-zà-ù']+/g) || [];
+  const isEn = s => { let en = 0, it = 0; wordsOf(s).forEach(x => { if (EN_W.has(x)) en++; if (IT_W.has(x)) it++; }); return en >= 2 && en > it * 1.5; };
+  const isEnBracket = s => { let en = 0, it = 0; wordsOf(s).forEach(x => { if (EN_W.has(x)) en++; if (IT_W.has(x)) it++; }); return it === 0 ? en >= 1 : en >= 2 && en > it * 1.5; };
+  const dropEn = t => {
+    let s = String(t || '').replace(/\r/g, '');
+    s = s.replace(/\s*\((?:[^()]|\([^()]*\))*\)/g, m => m.includes('\n') && isEn(m) ? '' : m);   // multi-line translation in brackets
+    return s.split('\n').filter(l => !/^\s*(EN|English)\s*[—:–-]/i.test(l))
+      .map(l => l.replace(/^\s*IT\s*[—:–-]\s*/, '').replace(/\s*\(((?:[^()]|\([^()]*\))*)\)/g, (m, inner) => { const sl = inner.split(' / '); if (sl.length === 2 && isEnBracket(sl[1]) && !isEnBracket(sl[0])) return ` (${sl[0]})`; return isEnBracket(inner) ? '' : m; }))
+      .filter(l => !(l.trim() && isEn(l))).join('\n');
+  };
+  const MONTHS = /(\d{1,2}[\/ ]\d{0,2}|gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)/i;
+  const mdLite = t => {
+    const lines = String(t || '').split('\n').map(l => l.trimEnd());
+    while (lines.length && !lines[0].trim()) lines.shift();
+    if (lines.length && lines[0].length < 90 && / · /.test(lines[0]) && MONTHS.test(lines[0]) && !/^\s*[-•*]\s/.test(lines[0])) lines.shift();
+    const inl = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    let html = '', list = false;
+    for (const l of lines) {
+      const li = l.match(/^\s*(?:[-•*]|\d+[.)])\s+(.*)$/);
+      if (li) { if (!list) { html += '<ul>'; list = true; } html += `<li>${inl(li[1])}</li>`; continue; }
+      if (list) { html += '</ul>'; list = false; }
+      if (!l.trim()) continue;
+      const q = l.match(/^\s*>\s?(.*)$/);
+      html += q ? `<blockquote>${inl(q[1])}</blockquote>` : `<p>${inl(l)}</p>`;
+    }
+    return list ? html + '</ul>' : html;
+  };
+  const plainTxt = h => String(h).replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+  const romeDay = s => new Date(s).toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
+  const hmRome = s => new Date(s).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const dayLabel = d => { if (d === romeDay(Date.now())) return 'Oggi'; if (d === romeDay(Date.now() - 864e5)) return 'Ieri';
+    return new Date(d + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }); };
   async function loadBotFeed() {
     const [{ data: bots }, cnt, { data: sysMsgs }] = await Promise.all([
       sb.from('v_bot_dashboard').select('*').order('name_it'),
@@ -78,7 +118,8 @@
       loadNicknames()]);
     const unread = cnt.data || [], nU = unread.length, nA = unread.filter(x => x.severity === 'alert').length;
     const tb = $('n-bots'); tb.textContent = nA || nU; tb.classList.toggle('on', nU > 0); tb.classList.toggle('al', nA > 0);
-    (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); });
+    (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); bdRole[b.agent] = b.name_it; });
+    Object.entries(SYS).forEach(([a, x]) => { bdRole[a] = bdNick[a] ? bdNick[a].title_it : x.role; });
     Object.keys(SYS).forEach(a => { bdNames[a] = botLabel(a, bdNick[a] ? bdNick[a].title_it : a); });
     // one item per card
     const items = (bots || []).map(b => {
@@ -129,17 +170,36 @@
     $('bd-more').hidden = (msgs || []).length <= bdLimit;
     const rows = (msgs || []).slice(0, bdLimit);
     if (!rows.length) { feed.innerHTML = `<div class="empty">${bdFilter === 'unread' ? 'Nessuna notifica da leggere.' : 'Nessuna notifica.'}</div>`; return; }
-    feed.innerHTML = rows.map(m => {
-      const name = bdNames[m.agent] || botLabel(m.agent, ({ bot_watchdog: 'Allarme bot', bot_heartbeat: 'Battito bot', avvisi: 'Avvisi console' }[m.agent]));
-      const long = (m.body || '').split('\n').length > 6 || (m.body || '').length > 500;
-      return `<div class="msg ${esc(m.severity)}${m.read_at ? ' read' : ''}" data-id="${m.id}"><div class="hd"><span class="who"><span class="lvl">${SEV[m.severity] || ''}</span>${esc(name)}</span><span class="status">${fmtR(m.created_at)}</span></div>
-        <div class="t">${esc(m.title)}</div>${m.body ? `<div class="b">${esc(m.body)}</div>${long ? '<button class="more" data-x="more">Mostra tutto</button>' : ''}` : ''}
-        ${m.read_at ? '' : '<div class="row" style="margin-top:4px"><button class="btn sm sec" data-x="read">Letto</button></div>'}</div>`;
+    // grouped by day; same bot + same title on the same day = one entry ("3 volte"); Italian only unless "Mostra inglese"
+    const items2 = [], byKey = {};
+    rows.forEach(m => {
+      const day = romeDay(m.created_at), key = `${day}|${m.agent}|${m.title}`;
+      if (byKey[key]) { const it = byKey[key]; it.n++; if (!m.read_at) it.unreadIds.push(m.id); return; }
+      const it = byKey[key] = { m, day, n: 1, unreadIds: m.read_at ? [] : [m.id] }; items2.push(it);
+    });
+    let lastDay = null;
+    feed.innerHTML = items2.map(({ m, day, n, unreadIds }) => {
+      const a = m.agent === 'avvisi' ? 'bot_watchdog' : m.agent, nk = bdNick[a];
+      const role = m.agent === 'avvisi' ? 'Avvisi console' : (bdRole[a] || (nk ? nk.title_it : a));
+      const generic = !m.title || [role, nk && nk.title_it, bdNames[a]].some(x => x && (m.title === x || m.title.startsWith(x + ' · ')));
+      let body = mdLite(bdEn ? (m.body || '') : dropEn(m.body || '')), title = m.title || '';
+      if (!bdEn) title = dropEn(title);
+      if (generic) { const f = body.match(/^<(p|li)>(.*?)<\/\1>/) || body.match(/<(p|li)>(.*?)<\/\1>/);
+        if (f) { title = plainTxt(f[2]); if (f[1] === 'p' && body.startsWith(f[0])) body = body.slice(f[0].length); } }
+      title = title.replace(/^Oggi\s*[—–-]\s*/, '');
+      const head = day !== lastDay ? `<div class="bd-day">${esc(dayLabel(day))}</div>` : ''; lastDay = day;
+      const sv = m.severity === 'alert' ? '<span class="sv">Allarme</span>' : m.severity === 'warn' ? '<span class="sv">Da controllare</span>' : '';
+      return `${head}<div class="msg ${esc(m.severity)}${unreadIds.length ? '' : ' read'}" data-ids="${unreadIds.join(',')}">${botAvatar(a)}<div class="mb">
+        <div class="hd"><span class="who"><b>${esc(nk ? nk.nickname : role)}</b> · ${esc(role)}</span><span class="tm">${hmRome(m.created_at)}${n > 1 ? ` · ${n} volte` : ''}</span></div>
+        <div class="t">${sv}${esc(title)}</div>${body ? `<div class="b">${body}</div>` : ''}
+        <div class="ac"><button class="more" data-x="more" hidden>Mostra tutto</button>${unreadIds.length ? '<button class="rd" data-x="read">✓ Segna come letta</button>' : ''}</div></div></div>`;
     }).join('');
-    feed.querySelectorAll('[data-x=more]').forEach(b => b.onclick = () => { const bd = b.previousElementSibling; bd.classList.toggle('open'); b.textContent = bd.classList.contains('open') ? 'Riduci' : 'Mostra tutto'; });
-    feed.querySelectorAll('[data-x=read]').forEach(b => b.onclick = async () => { const id = Number(b.closest('.msg').dataset.id); const { error } = await sb.rpc('mark_bot_messages_read', { p_ids: [id] }); if (error) return toast(error.message, 'err'); loadBotFeed(); });
+    feed.querySelectorAll('.msg .b').forEach(b => { if (b.scrollHeight > b.clientHeight + 4) { b.classList.add('cut'); b.closest('.mb').querySelector('[data-x=more]').hidden = false; } });
+    feed.querySelectorAll('[data-x=more]').forEach(btn => btn.onclick = () => { const bd = btn.closest('.mb').querySelector('.b'); bd.classList.toggle('open'); btn.textContent = bd.classList.contains('open') ? 'Riduci' : 'Mostra tutto'; });
+    feed.querySelectorAll('[data-x=read]').forEach(btn => btn.onclick = async () => { const ids = btn.closest('.msg').dataset.ids.split(',').filter(Boolean).map(Number); const { error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids }); if (error) return toast(error.message, 'err'); loadBotFeed(); });
   }
-  document.querySelectorAll('.bd-bar .chip').forEach(c => c.onclick = () => { bdFilter = c.dataset.f; bdLimit = 50; document.querySelectorAll('.bd-bar .chip').forEach(x => x.setAttribute('aria-pressed', x === c)); loadBotFeed(); });
+  document.querySelectorAll('.bd-bar .chip[data-f]').forEach(c => c.onclick = () => { bdFilter = c.dataset.f; bdLimit = 50; document.querySelectorAll('.bd-bar .chip[data-f]').forEach(x => x.setAttribute('aria-pressed', x === c)); loadBotFeed(); });
+  $('bd-en').onclick = () => { bdEn = !bdEn; $('bd-en').setAttribute('aria-pressed', bdEn); loadBotFeed(); };
   $('bd-more').onclick = () => { bdLimit += 50; loadBotFeed(); };
   $('bd-readall').onclick = async () => {
     const { data: ids } = await (bdAgent ? sb.from('bot_messages').select('id').is('read_at', null).in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]) : sb.from('bot_messages').select('id').is('read_at', null));
