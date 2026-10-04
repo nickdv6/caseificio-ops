@@ -156,7 +156,8 @@
       const d = document.createElement('div'); d.className = 'task ' + t.status;
       d.innerHTML = `<div><div>${t.title_it}</div><div class="code">${t.equipment_code || t.code}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
       d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : t.code === 'T-COUNT' ? stepStockCount() : t.code === 'T-CLEAN' ? handleCode('CLEAN:')
-        : t.code === 'T-CL' ? handleCode('CCP:PRP-WATER-CL') : t.code === 'T-PEST' ? handleCode('PEST:') : startScan();
+        : t.code === 'T-CL' ? handleCode('CCP:PRP-WATER-CL') : t.code === 'T-PEST' ? handleCode('PEST:')
+        : t.control_point_code ? handleCode('CCP:' + t.control_point_code) : startScan();   // v0.57: valvola deviatrice, salamoia…
       box.append(d);
     });
   }
@@ -463,20 +464,27 @@
       field('pr' + i, `Prezzo sul DDT €/${l.unit} (solo se diverso)`, 'number', { step: '0.0001', required: false });
     });
     field('ddt', 'Numero DDT', 'text', { required: false }); field('photo', 'Foto DDT', 'file', { required: false });
+    // v0.57 · Manuale §7.7: controllo all'arrivo registrato con il ricevimento
+    field('chk', 'Controllo all\'arrivo', 'select', { options: [['', '— scegli —'], ['1', 'Conforme: confezioni integre, etichette, scadenze, temperatura ok'], ['0', 'NON conforme']] });
+    field('chknote', 'Cosa non va (se non conforme)', 'text', { required: false });
     openForm(po.po_number, po.supplier + (po.status === 'partially_received' ? ' · consegna parziale in corso' : ''), async () => {
       const lines = po.lines.map((l, i) => ({ sku: l.sku, qty: val('q' + i), lot: val('lot' + i) || null, expiry: val('exp' + i) || null, unit_price: val('pr' + i) }))
         .filter(x => x.qty && x.qty > 0);
       if (!lines.length) { toast('Inserisci almeno una quantità ricevuta', 'err'); throw new Error('vuoto'); }
       const over = lines.filter(x => { const l = po.lines.find(p => p.sku === x.sku); return x.qty > Number(l.remaining) * 1.02; });
       if (over.length && !current.overOk) { current.overOk = true; toast('Quantità superiore all\'ordine: ricontrolla e premi Salva di nuovo', 'err'); throw new Error('over'); }
-      const ddt = val('ddt') || null;
-      await save([scanEvent(current.code, 'goods_receive', { payload: { po_number: po.po_number, ddt, lines } }),
-        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: staff.id, p_ddt: ddt } }]);
+      const ddt = val('ddt') || null, chk = val('chk'), chkNote = (val('chknote') || '').trim();
+      if (chk === '') { toast('Registra il controllo all\'arrivo', 'err'); throw new Error('chk'); }
+      if (chk === '0' && !chkNote) { toast('Scrivi cosa non va nella merce', 'err'); throw new Error('chknote'); }
+      await save([scanEvent(current.code, 'goods_receive', { payload: { po_number: po.po_number, ddt, lines, check_ok: chk === '1', check_note: chkNote || null } }),
+        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: staff.id, p_ddt: ddt } },
+        { rpc: 'record_receipt_check', args: { p_po_number: po.po_number, p_ok: chk === '1', p_note: chkNote || null, p_staff_id: staff.id, p_ddt: ddt } }]);
       const f = $('photo').files[0];
       if (f && navigator.onLine) { const path = `ddt/${today()}_${po.po_number}.jpg`; const { error: ue } = await sb.storage.from('documents').upload(path, f, { upsert: true });
         if (!ue) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), related_table: 'purchase_orders', related_id: po.id, uploaded_by_id: staff.id }); }
       const tot = lines.reduce((a, x) => a + x.qty, 0);
-      toast(`Ricevuto ${po.po_number} · ${tot.toLocaleString('it-IT')} pezzi/kg in magazzino ✓`);
+      if (chk === '0') toast(`Ricevuto ${po.po_number} · merce NON conforme: isolala con il cartello e avvisa il responsabile`, 'err');
+      else toast(`Ricevuto ${po.po_number} · ${tot.toLocaleString('it-IT')} pezzi/kg in magazzino ✓`);
     });
   }
 
@@ -731,7 +739,8 @@
   function stepHaccpMenu() {
     $('form').innerHTML = ''; current = { code: 'HACCP:' };
     const items = [['🥛 Test antibiotici latte (CCP 1b)', 'CCP:CCP-MILK-ABX'], ['🔥 Temperatura pasta filata (CCP 3)', 'CCP:CCP-STRETCH'], ['🍶 Ricotta: affioramento (CCP 4)', 'CCP:CCP-RIC'],
-      ['♨ Pastorizzazione (CCP 2)', 'CCP:CCP-PAST'], ['💧 Cloro acqua (settimanale)', 'CCP:PRP-WATER-CL'], ['🌡 Verifica termometro sonda', 'CAL:TERM-01'], ['🌡 Verifica termometro alta temperatura', 'CAL:TERM-02'],
+      ['♨ Pastorizzazione (CCP 2)', 'CCP:CCP-PAST'], ['🔧 Pastorizzatore: verifica di inizio giornata', 'CCP:PRP-PAST-VALVE'], ['🧫 Siero-innesto: acidità', 'CCP:PRP-INNESTO'],
+      ['🧂 Salamoia: concentrazione', 'CCP:PRP-BRINE'], ['💧 Cloro acqua (settimanale)', 'CCP:PRP-WATER-CL'], ['🌡 Verifica termometro sonda', 'CAL:TERM-01'], ['🌡 Verifica termometro alta temperatura', 'CAL:TERM-02'],
       ['⚗ Calibrazione pH-metro', 'CAL:PH-01'], ['🐭 Giro infestanti', 'PEST:'], ['🧪 Campione prelevato per il laboratorio', 'SAMPLE:']];
     items.forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode(c); $('form').append(b); });
     openForm('Sicurezza alimentare', 'Scegli cosa registrare', async () => {}); $('btn-form-save').style.display = 'none';
@@ -750,18 +759,22 @@
     if (cp.code === 'CCP-MILK-ABX') {
       field('v', 'Esito test rapido', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Positivo = latte non accettato' });
       field('action', 'Note / azione (se positivo)', 'text', { required: false });
+    } else if (cp.unit === 'esito') {     // v0.57: pass/fail checks (verifica pastorizzatore)
+      field('v', 'Esito della verifica', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']], limit: cp.monitoring_it || 'NON ok = non pastorizzare, chiama il responsabile' });
+      field('action', 'Note / cosa hai fatto (se NON ok)', 'text', { required: false });
     } else {
-      const v = field('v', `${cp.name} (${cp.unit || ''})`, 'number', { step: cp.unit === 'mg/l' ? '0.01' : '0.1', limit: `${cp.ccp_no || ''} limite ${lim} ${cp.unit || ''}`.trim() });
+      const v = field('v', `${cp.name} (${cp.unit || ''})`, 'number', { step: cp.unit === 'mg/l' ? '0.01' : '0.1', limit: lim ? `${cp.ccp_no || ''} limite ${lim} ${cp.unit || ''}`.trim() : 'Intervallo da fissare con il casaro: scrivi il valore letto' });
+      if (!cp.is_ccp && cp.min_value == null && cp.max_value == null) field('action', cp.code === 'PRP-BRINE' ? 'Note: rinnovata, filtrata, rabbocco, aspetto' : 'Note (es. pH, innesto nuovo)', 'text', { required: false });
       let note = null;
       v.oninput = () => { const x = Number(v.value); const bad = (cp.min_value != null && x < cp.min_value) || (cp.max_value != null && x > cp.max_value); if (bad && !note) note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); v.style.borderColor = bad ? 'var(--warn)' : ''; };
     }
     openForm(`${cp.ccp_no || ''} ${cp.name}`.trim(), lot ? 'lotto ' + lot : (cp.monitoring_it || ''), async () => {
-      const value = cp.code === 'CCP-MILK-ABX' ? (val('v') === '' ? null : Number(val('v'))) : val('v');
+      const value = (cp.code === 'CCP-MILK-ABX' || cp.unit === 'esito') ? (val('v') === '' ? null : Number(val('v'))) : val('v');
       if (value == null) { toast('Inserisci il valore', 'err'); throw new Error('valore'); }
       const theLot = lot || val('lot') || null;
       if (needsLot && !theLot) { toast('Scegli il lotto', 'err'); throw new Error('lotto'); }
       const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_staff_id: staff.id, p_batch_lot: theLot, p_action: val('action'), p_source: 'tablet', p_equipment_code: needsLot ? 'TERM-02' : null });
-      if (cp.code === 'PRP-WATER-CL') await closeTask({ code: 'T-CL' });
+      await closeTask({ control_point_id: cp.id });   // v0.57: any task tied to this control point (cloro, valvola, salamoia)
       if (!r) return toast('Salvato offline');
       if (r.result === 'non_conformity') toast(`NON CONFORMITÀ${r.lot_on_hold ? ' · lotto ' + theLot + ' BLOCCATO' : ''}. ${r.corrective_it || ''}`, 'err');
       else if (r.result === 'warning') toast('Registrato · ALLERTA vicino al limite', 'err');

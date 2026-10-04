@@ -146,7 +146,7 @@
         const dist = p.distribution || [];
         title = `Valutare ritiro/richiamo · lotto ${esc(p.lot || 'n/d')}`;
         facts = fact('Analisi', esc(p.test || '')) + fact('Campione', esc(p.sample_code || '')) + fact('Destinazioni', String(dist.length), dist.length ? 'ko' : '');
-        more = `<details open><summary>A chi è andato il lotto</summary>${dist.length ? dist.map(d => `<div>• ${fmtD(d.on_date)} · ${esc(d.channel || '')} · ${esc(d.customer || 'banco')} · ${num(d.qty)} kg</div>`).join('') : '<div>Nessuna uscita registrata: il lotto è tutto in giacenza (bloccato).</div>'}<div style="margin-top:6px">Approva = ritiro/richiamo deciso (avvisare ASL Salerno e clienti) · Rifiuta = non necessario, motivare nella nota. <a href="haccp.html#registro">Apri HACCP</a></div></details>`;
+        more = `<details open><summary>A chi è andato il lotto</summary>${dist.length ? dist.map(d => `<div>• ${fmtD(d.on_date)} · ${esc(d.channel || '')} · ${esc(d.customer || 'banco')} · ${num(d.qty)} kg</div>`).join('') : '<div>Nessuna uscita registrata: il lotto è tutto in giacenza (bloccato).</div>'}<div style="margin-top:6px">Approva = ritiro/richiamo deciso (avvisare ASL Salerno e clienti) · Rifiuta = non necessario, motivare nella nota. <a href="haccp.html#registro">Apri Lotti bloccati e NC</a></div></details>`;
         break;
       }
       case 'dop_declaration':

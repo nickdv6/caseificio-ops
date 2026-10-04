@@ -1,13 +1,18 @@
 /* La Perla food-safety console (v0.28). Reads v_haccp_plan, v_lots_on_hold, non_conformities, haccp_log, v_lab_plan_status, v_lab_samples_recent,
    v_pest_status, pest_inspections, v_training_matrix, v_instruments, calibration_checks. Writes through the DB functions
    (log_ccp, record_sample_taken, record_lab_result, record_pest_inspection, record_calibration_check, release_lot_hold) so the
-   rules (NC, lot holds, recall assessment, deadlines) live in one place. Files go to the private `documents` bucket. */
+   rules (NC, lot holds, recall assessment, deadlines) live in one place. Files go to the private `documents` bucket.
+   v0.57 Manuale di Autocontrollo: haccp_forms_status() feeds the Registri tab (23 MOD forms, print via registro.html, weekly
+   verification via mark_register_reviewed); every card shows its MOD-xx chip linking to the printable register. */
 (() => {
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
   document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
-  let staff = null, isManager = false;
+  let staff = null, isManager = false, FORMS = {};
+  const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  // MOD-xx chip → printable register of that form (Manuale di Autocontrollo §11). '§8.2' chips point to the manual itself.
+  const modChip = code => { const f = FORMS[code]; if (!f) return ''; return `<a class="modref" href="registro.html?mod=${esc(code)}" target="_blank" rel="noopener" title="${esc(f.title_it)} · registro stampabile">${esc(code)} · ${esc(f.manual_section)}</a>`; };
   const show = v => document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-' + v));
   const toast = (m, cls = '') => { const t = $('toast'); t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4200); };
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -49,13 +54,13 @@
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     isManager = PERM.can('haccp', 3);
     $('who').textContent = staff.full_name;
-    show('main'); showTab((location.hash || '#registro').slice(1) || 'registro'); load();
+    show('main'); showTab((location.hash || '#registri').slice(1) || 'registri'); load();   // v0.57b: the Manuale's home opens on Registri
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
   $('btn-refresh').onclick = () => load();
   function showTab(t) {
-    if (!$('p-' + t)) t = 'registro';
+    if (!$('p-' + t)) t = 'registri';
     document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + t));
     history.replaceState(null, '', '#' + t);
@@ -65,11 +70,11 @@
   // ---------- load everything ----------
   async function load() {
     const since7 = new Date(Date.now() - 7 * 864e5).toISOString();
-    const [plan, holds, ncs, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks] = await Promise.all([
+    const [plan, holds, ncs, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual] = await Promise.all([
       sb.from('v_haccp_plan').select('*'),
       sb.from('v_lots_on_hold').select('*'),
       sb.from('non_conformities').select('id, opened_at, severity, status, description, lot_number, corrective_action, root_cause, preventive_action').in('status', ['open', 'investigating']).order('opened_at', { ascending: false }),
-      sb.from('haccp_log').select('logged_at, measured_value, result, operator, corrective_action, source, haccp_control_points(code, ccp_no, name, unit), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
+      sb.from('haccp_log').select('logged_at, measured_value, result, operator, corrective_action, source, haccp_control_points(code, ccp_no, name, unit, form_code), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
       sb.from('v_lab_plan_status').select('*'),
       sb.from('v_lab_samples_recent').select('*').limit(80),
       sb.from('v_pest_status').select('*'),
@@ -78,9 +83,14 @@
       sb.from('training_courses').select('code, name_it, category, sort').order('sort'),
       sb.from('staff').select('id, full_name, role').eq('active', true).order('full_name'),
       sb.from('v_instruments').select('*'),
-      sb.from('calibration_checks').select('checked_at, kind, method, max_deviation, tolerance, result, provider, certificate_no, certificate_document_id, note, equipment(code, name)').order('checked_at', { ascending: false }).limit(25)
+      sb.from('calibration_checks').select('checked_at, kind, method, max_deviation, tolerance, result, provider, certificate_no, certificate_document_id, note, equipment(code, name)').order('checked_at', { ascending: false }).limit(25),
+      sb.rpc('haccp_forms_status'),
+      sb.from('settings').select('key, value').like('key', 'food.manuale_%')
     ]);
-    [plan, holds, ncs, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks].forEach((r, i) => { if (r.error) toast('Lettura dati: ' + r.error.message, 'err'); });
+    [plan, holds, ncs, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual].forEach((r, i) => { if (r.error) toast('Lettura dati: ' + r.error.message, 'err'); });
+    FORMS = Object.fromEntries((forms.data || []).map(f => [f.code, f]));
+    renderManual(Object.fromEntries((manual.data || []).map(r => [r.key, r.value])));
+    renderForms(forms.data || []);
     renderTiles(holds.data || [], ncs.data || [], samples.data || [], matrix.data || [], instr.data || [], lab.data || []);
     renderHolds(holds.data || []); renderNcs(ncs.data || []); renderLogs(logs.data || []);
     renderPlan(plan.data || []);
@@ -88,6 +98,45 @@
     renderStations(stations.data || []); renderInspections(insp.data || []);
     renderMatrix(matrix.data || [], courses.data || [], people.data || []);
     renderInstruments(instr.data || []); renderChecks(checks.data || []);
+    document.querySelectorAll('[data-mod]').forEach(e => { const c = e.dataset.mod; e.innerHTML = c.startsWith('MOD-') ? modChip(c) : (MANUAL_URL ? `<a class="modref" href="${esc(MANUAL_URL)}" target="_blank" rel="noopener">Manuale ${esc(c)}</a>` : ''); });
+  }
+
+  // ---------- Manuale di Autocontrollo + Registri (v0.57) ----------
+  let MANUAL_URL = '';
+  function renderManual(m) {
+    MANUAL_URL = m['food.manuale_url'] || '';
+    const draft = (m['food.manuale_stato'] || 'bozza') !== 'firmato';
+    $('manual').innerHTML = `Manuale di Autocontrollo rev. ${esc(m['food.manuale_rev'] || '?')}${m['food.manuale_data'] ? ' del ' + fmtD(m['food.manuale_data']) : ''}`
+      + (draft ? ' · <span class="draft">bozza, da firmare</span>' : ' · firmato') + (MANUAL_URL ? ` · <a href="${esc(MANUAL_URL)}" target="_blank" rel="noopener">apri il manuale</a>` : '');
+  }
+  const ST = { attivo: '', parziale: pill('parziale', 'warn'), cartaceo: pill('cartaceo'), da_attivare: pill('da attivare', 'ko') };
+  const KIND_REVIEW = new Set(['milk', 'ccp', 'batch', 'pest', 'calibration', 'lab', 'nc', 'hold', 'receipt', 'effluent']);   // registers the responsible checks every week
+  function needsReview(f) { return f.status !== 'da_attivare' && KIND_REVIEW.has(f.register_kind) && f.last_at && (!f.last_review_to || f.last_review_to < addDays(todayRome(), -7)); }
+  function renderForms(rows) {
+    if (!$('rg-to').value) { $('rg-to').value = todayRome(); $('rg-from').value = addDays(todayRome(), -6); }
+    const due = rows.filter(needsReview).length; badge('n-registri', due);
+    if (!rows.length) { $('forms').innerHTML = '<div class="empty">Moduli non disponibili.</div>'; return; }
+    $('forms').innerHTML = `<table><tr><th>Modulo</th><th>Registro</th><th>Frequenza · chi</th><th class="num">30 gg</th><th>Ultima registrazione</th><th>Ultima verifica</th><th></th></tr>${rows.map(f => `
+      <tr data-form="${esc(f.code)}"><td class="nw"><b>${esc(f.code)}</b><br><small>Manuale ${esc(f.manual_section)}</small></td>
+      <td>${esc(f.title_it)} ${ST[f.status] || ''}<br><small>${esc(f.where_it || '')}</small></td>
+      <td><small>${esc(f.frequency_it || '')}<br>${esc(f.responsible_it || '')}</small></td>
+      <td class="num">${f.records_30d == null ? '—' : f.records_30d}</td>
+      <td class="nw">${f.last_at ? fmtDT(f.last_at) : '<span class="empty">nessuna</span>'}</td>
+      <td class="nw">${f.last_review_at ? `${fmtD(String(f.last_review_to))} ${f.last_review_outcome === 'ok' ? pill('ok', 'ok') : pill('rilievi', 'warn')}<br><small>${esc(f.last_review_by || '')}</small>` : ''}${needsReview(f) ? ' ' + pill('da verificare', 'ko') : ''}</td>
+      <td class="nw"><a class="btn sm sec" data-print="${esc(f.code)}" href="#">Stampa</a> <a class="btn sm sec" data-blank="${esc(f.code)}" href="#">Modulo vuoto</a>${isManager && f.status !== 'da_attivare' ? ` <button class="btn sm" data-review="${esc(f.code)}">Verificato</button>` : ''}</td></tr>`).join('')}</table>`;
+    const period = () => ({ from: $('rg-from').value || addDays(todayRome(), -6), to: $('rg-to').value || todayRome() });
+    $('forms').querySelectorAll('[data-print]').forEach(a => a.onclick = e => { e.preventDefault(); const p = period(); window.open(`registro.html?mod=${a.dataset.print}&from=${p.from}&to=${p.to}`, '_blank', 'noopener'); });
+    $('forms').querySelectorAll('[data-blank]').forEach(a => a.onclick = e => { e.preventDefault(); window.open(`registro.html?mod=${a.dataset.blank}&blank=1`, '_blank', 'noopener'); });
+    $('forms').querySelectorAll('[data-review]').forEach(b => b.onclick = async () => {
+      const p = period(), code = b.dataset.review;
+      const note = prompt(`Verifica del registro ${code} dal ${fmtD(p.from)} al ${fmtD(p.to)}.\nHai letto le registrazioni del periodo? Scrivi i rilievi, oppure lascia vuoto se è tutto in ordine.`, '');
+      if (note === null) return;
+      b.disabled = true;
+      try {
+        fail(await sb.rpc('mark_register_reviewed', { p_form: code, p_from: p.from, p_to: p.to, p_staff_id: staff.id, p_outcome: note.trim() ? 'con_rilievi' : 'ok', p_note: note.trim() || null }), 'Verifica');
+        toast(`${code} verificato ${note.trim() ? 'con rilievi' : '· tutto in ordine'}`); load();
+      } finally { b.disabled = false; }
+    });
   }
 
   function renderTiles(holds, ncs, samples, matrix, instr, lab) {
@@ -131,17 +180,17 @@
   function renderLogs(rows) {
     if (!rows.length) { $('logs').innerHTML = '<div class="empty">Nessuna registrazione negli ultimi 7 giorni.</div>'; return; }
     const res = { ok: pill('ok', 'ok'), warning: pill('allerta', 'warn'), non_conformity: pill('NC', 'ko') };
-    $('logs').innerHTML = `<table><tr><th>Quando</th><th>Punto</th><th class="num">Valore</th><th>Esito</th><th>Lotto</th><th>Chi</th><th>Azione</th></tr>${rows.map(l => `
-      <tr><td class="nw">${fmtDT(l.logged_at)}</td><td>${esc(l.haccp_control_points?.ccp_no || '')} ${esc(l.haccp_control_points?.name || '')}</td>
-      <td class="num">${l.measured_value == null ? '—' : num(l.measured_value, 2) + ' ' + esc(l.haccp_control_points?.unit || '')}</td><td>${res[l.result] || esc(l.result)}</td>
+    $('logs').innerHTML = `<table><tr><th>Quando</th><th>Punto</th><th>Modulo</th><th class="num">Valore</th><th>Esito</th><th>Lotto</th><th>Chi</th><th>Azione</th></tr>${rows.map(l => `
+      <tr><td class="nw">${fmtDT(l.logged_at)}</td><td>${esc(l.haccp_control_points?.ccp_no || '')} ${esc(l.haccp_control_points?.name || '')}</td><td class="nw">${modChip(l.haccp_control_points?.form_code)}</td>
+      <td class="num">${l.measured_value == null ? '—' : l.haccp_control_points?.unit === 'esito' ? (Number(l.measured_value) === 0 ? 'ok' : 'NON OK') : num(l.measured_value, 2) + ' ' + esc(l.haccp_control_points?.unit || '')}</td><td>${res[l.result] || esc(l.result)}</td>
       <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}</td><td>${esc(l.corrective_action || '')}</td></tr>`).join('')}</table>`;
   }
 
   // ---------- Piano ----------
   function renderPlan(rows) {
     const inp = (r, k) => `<input type="number" step="0.01" data-k="${k}" value="${r[k] ?? ''}" ${isManager ? '' : 'disabled'}>`;
-    $('plan').innerHTML = `<table><tr><th>Punto</th><th>Fase</th><th>Limite critico (testo)</th><th class="num">Min</th><th class="num">Max</th><th class="num">Allerta min</th><th class="num">Allerta max</th><th class="num">30 gg</th><th></th></tr>${rows.map(r => `
-      <tr data-code="${esc(r.code)}"><td>${pill(r.ccp_no || 'PRP', r.is_ccp ? 'ccp' : '')}<br><b>${esc(r.name)}</b>${r.applies_when !== 'sempre' ? `<br><small>${esc(r.applies_when.replace('_', ' '))}</small>` : ''}</td><td>${esc(r.process_step || '')}</td>
+    $('plan').innerHTML = `<table><tr><th>Punto</th><th>Fase</th><th>Registro</th><th>Limite critico (testo)</th><th class="num">Min</th><th class="num">Max</th><th class="num">Allerta min</th><th class="num">Allerta max</th><th class="num">30 gg</th><th></th></tr>${rows.map(r => `
+      <tr data-code="${esc(r.code)}"><td>${pill(r.ccp_no || 'PRP', r.is_ccp ? 'ccp' : '')}<br><b>${esc(r.name)}</b>${r.applies_when !== 'sempre' ? `<br><small>${esc(r.applies_when.replace('_', ' '))}</small>` : ''}</td><td>${esc(r.process_step || '')}</td><td class="nw">${modChip(r.form_code)}</td>
       <td style="min-width:240px">${esc(r.critical_limit_it || '')}
         <details class="more"><summary>Pericolo, monitoraggio, azioni</summary><dl><dt>Pericolo</dt><dd>${esc(r.hazard_it || '—')}</dd><dt>Monitoraggio</dt><dd>${esc(r.monitoring_it || '—')}</dd><dt>Azione correttiva</dt><dd>${esc(r.corrective_it || '—')}</dd><dt>Verifica</dt><dd>${esc(r.verification_it || '—')}</dd><dt>Registrazioni</dt><dd>${esc(r.records_it || '—')}</dd></dl></details></td>
       <td class="num">${inp(r, 'min_value')}</td><td class="num">${inp(r, 'max_value')}</td><td class="num">${inp(r, 'warn_min')}</td><td class="num">${inp(r, 'warn_max')}</td>

@@ -16,7 +16,7 @@
     ['vendite', 'Vendite e prezzi', ['price', 'sell', 'sales'], 'Prezzi di riferimento, soglie del bot Vendere prima (lotti in scadenza) e obiettivi del bot Vendite.'],
     ['canali', 'Shopify, ritiri e spedizioni', ['shopify', 'pickup', 'ship'], 'Shopify è la cassa e il sito: le vendite arrivano ogni mattina (bot Ordini Shopify). Fasce di ritiro (anche in Marketing) e vettori/tolleranze usati dal tablet in spedizione.'],
     ['marketing', 'Marketing', ['mkt'], 'Usati dal bot Marketing e dalle bozze dei contenuti.'],
-    ['sicurezza', 'Sicurezza alimentare', ['food'], 'Latte crudo o pastorizzato (attiva il CCP 2), laboratorio e data di avvio del piano campionamenti: da quella data il bot del martedì prepara la richiesta al laboratorio. Piano completo in <a class="lnk" href="haccp.html">HACCP</a>.'],
+    ['sicurezza', 'Sicurezza alimentare', ['food'], 'Latte crudo o pastorizzato (attiva il CCP 2), laboratorio e data di avvio del piano campionamenti: da quella data il bot del martedì prepara la richiesta al laboratorio. Regole complete nel <a class="lnk" href="haccp.html">Manuale di Autocontrollo</a>.'],
     ['utenze', 'Utenze e reflui', ['energy', 'effluent'], 'Tariffe da bolletta (entrano nel costo pieno al kg e nel pacchetto mensile) e stime dei reflui per giorno di produzione, confrontate con il registro 💧 Reflui del tablet.'],
     ['lavoro', 'Lavoro', ['labor'], 'Costo orario e regole per ore e straordinari (<a class="lnk" href="console.html#personale">Console → Personale</a>).'],
     ['benchmark', 'Benchmark economici', ['opex', 'benchmark'], 'Usati dal brief settimanale finché non arriva la contabilità reale.'],

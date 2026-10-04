@@ -33,6 +33,22 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Manuale di Autocontrollo (v0.57)
+- The legally required HACCP self-control manual is the Claude Doc "Manuale di Autocontrollo — Caseificio di Agropoli"
+  (link in setting `food.manuale_url`; revision/date/status in `food.manuale_rev`, `food.manuale_data`, `food.manuale_stato`).
+  It replaces the old "Piano HACCP — La Perla del Cilento" doc (written for raw milk).
+- Every HACCP record belongs to one of the manual's 23 forms `fabula.haccp_forms` (MOD-01…MOD-23, with manual section).
+  `haccp_control_points.form_code` and `task_schedules.form_code` map controls and tasks to their form.
+- `fabula.haccp_register(form, from, to)` builds the register of a form for a period with the manual header; `fabula.manual_ref(form)`
+  gives the reference line ("MOD-05 · Manuale di Autocontrollo rev. 0 del 04/10/2026 (bozza) · §7.8 · §8.2").
+  `fabula-tablet/registro.html?mod=MOD-05&from=…&to=…[&blank=1]` prints it (blank = paper form when the tablet is down).
+- Console HACCP → Registri: all forms, records in 30 days, print, and the responsible's weekly "Verificato"
+  (`mark_register_reviewed` → `haccp_register_reviews`, shown on every printed register).
+- New controls required by the manual: PRP-PAST-VALVE (pasteuriser start-of-day check, MOD-02, task T-VALVE), PRP-INNESTO (MOD-03),
+  PRP-BRINE (MOD-17, task T-BRINE). Goods receipt now records the arrival check (`goods_receipts.inspection_ok`, `record_receipt_check`,
+  NC when not conforming, MOD-15).
+- A new HACCP record type must get a form: add/choose a `haccp_forms` row and a branch in `haccp_register()`; never leave a record without a MOD.
+
 ## Console and Configurazione (v0.51)
 - Both pages share `fabula-tablet/ui.js` + `ui.css` (login, header with page links / Bot bell / user menu, lazy tabs, helpers). Add new
   console or config features there instead of copying helpers into a page.
