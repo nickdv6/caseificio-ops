@@ -238,6 +238,21 @@
     } catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
   }
   function openForm(title, sub, onSave) { $('f-title').textContent = title; $('f-sub').textContent = sub; current.onSave = onSave; $('btn-form-save').style.display = ''; show('form'); const f = $('form').querySelector('input,select'); if (f) f.focus(); }
+  // v0.52: lot labels — labels.html prints the QR from the URL (code, name, sub, n copies)
+  const ddmm = d => d ? d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4) : '';
+  const labelUrl = (lot, name, sub, n) => 'labels.html?' + new URLSearchParams({ code: 'LOT:' + lot, name: name || '', sub: sub || '', n: String(Math.max(1, Math.min(60, Math.round(n || 1)))) });
+  function showDone(title, lines, links) {        // result card with print buttons; returns 'stay' so the caller does not jump home
+    $('form').innerHTML = ''; $('btn-form-save').style.display = 'none';
+    const c = document.createElement('div'); c.className = 'card';
+    const h = document.createElement('div'); h.className = 'scan'; h.textContent = title; c.append(h);
+    lines.forEach(t => { const d = document.createElement('div'); d.textContent = t; c.append(d); });
+    $('form').append(c);
+    links.forEach(([label, href]) => { const a = document.createElement('a'); a.className = 'btn'; a.style.cssText = 'display:block;text-align:center;text-decoration:none;margin-top:12px'; a.target = '_blank'; a.href = href; a.textContent = label; $('form').append(a); });
+    const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn secondary'; ok.style.cssText = 'display:block;width:100%;margin-top:8px'; ok.textContent = 'Fatto';
+    ok.onclick = () => { show('home'); loadTasks(); }; $('form').append(ok);
+    $('f-title').textContent = title; $('f-sub').textContent = ''; show('form');
+    return 'stay';
+  }
   $('btn-form-save').onclick = async () => { if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true; try { const r = await current.onSave(); if (r !== 'stay') { show('home'); loadTasks(); } } finally { $('btn-form-save').disabled = false; } };
 
   // 1/4/7/9 — equipment: cold room, pasteurizer, thermometer → temperature; POS → Z report
@@ -314,6 +329,10 @@
       await save(ops);
       const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${ddt}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
       toast(accepted ? (val('temp') > tWarn ? `Latte accettato · ${val('temp')} °C: iniziare la lavorazione entro 2 ore` : 'Latte registrato ✓') : 'Latte RIFIUTATO: ' + why, accepted && val('temp') <= tWarn ? 'ok' : 'err');
+      const lotv = val('lot'), kgv = val('kg'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
+      if (!accepted) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, why, 'Isola il latte e avvisa la Masseria e il responsabile.'], []);
+      return showDone('✓ Latte registrato', [`Lotto ${lotv} · ${kgv} kg · ${sup}`, 'Attacca l\'etichetta al tank: la scansioni per avviare la caldaia.'],
+        [['🖨 Stampa etichetta lotto latte', labelUrl(lotv, 'Latte di bufala · ' + sup, 'arrivo ' + ddmm(today()), 1)]]);
     });
   }
   // 3/5/6 — a lot label: milk lot → start/end batch; batch lot → sale or shipment
@@ -363,20 +382,22 @@
     });
   }
   async function stepBatchEnd(b) {
-    const { data: prod } = await sb.from('products').select('shelf_life_days, byproduct_product_id').eq('id', b.product_id).single();
+    const { data: prod } = await sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single();
     const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
     field('out', 'kg prodotto', 'number', { step: '0.1' }); field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
     if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
       const out = val('out'), ph = val('ph'), n = val('n'), whey = byp ? (val('whey') || 0) : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
       const exp = new Date(); exp.setDate(exp.getDate() + (prod?.shelf_life_days || 5));
-      const code = current.code;
+      const code = current.code, expS = exp.toISOString().slice(0, 10);
+      const lotLink = [`🖨 Stampa ${n || 1} etichett${(n || 1) === 1 ? 'a' : 'e'} lotto ${b.batch_lot}`, labelUrl(b.batch_lot, prod?.name, 'scad. ' + ddmm(expS), n || 1)];
       const startRicotta = async () => {
         const ricLot = 'R' + b.batch_lot.slice(1);
         await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: b.batch_lot, p_whey_kg: whey, p_staff_id: staff.id } }]);
-        const done = () => toast(`Ricotta ${ricLot} avviata ✓ · a fine lotto scansiona LOT:${ricLot}`);
+        const done = () => { toast(`Ricotta ${ricLot} avviata ✓ · a fine lotto scansiona LOT:${ricLot}`);
+          return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`, `Ricotta ${ricLot} avviata con ${whey} kg di siero: a fine lotto scansiona LOT:${ricLot} (le sue etichette si stampano alla chiusura).`], [lotLink]); };
         const steps = await doseSteps(byp, 'start', { milk: whey });
-        if (!steps.length) { done(); return; }
+        if (!steps.length) return done();
         runDosing(`Ricotta ${ricLot} · ${whey} kg siero`, ricLot, steps, async () => done());
         return 'stay';
       };
@@ -384,11 +405,12 @@
         const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
           { table: 'production_batches', update: { id: b.id }, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
           { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: exp.toISOString().slice(0, 10), qty: out, move_type: 'production_out', batch_id: b.id, source: 'tablet' } }];
-        if (b.input_kind !== 'whey')   // ricotta lot label is printed when the batch starts
+        if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)
           ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: b.id, qty_printed: n || 1, printed_by_id: staff.id } });
         await save(ops);
         toast(`Resa ${y}% · ${out} kg ✓`);
         if (whey > 0) return startRicotta();
+        return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`, 'Etichetta ogni cassa e confezione con il lotto.'], [lotLink]);
       };
       const presets = await loadPresets();
       const steps = mergeSteps(await doseSteps(b.product_id, 'close', { milk: b.milk_in_kg, out }), processSteps(presets, b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id, 'close'));

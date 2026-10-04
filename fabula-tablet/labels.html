@@ -1,19 +1,45 @@
-<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Etichette QR Fabula</title>
-<style>body{font-family:system-ui;padding:16px}h1{font-size:1.2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.l{border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}.l b{display:block;font-size:1.3rem;margin-top:8px}.l small{color:#555}textarea{width:100%;height:90px;font-family:monospace}@media print{textarea,button,p{display:none}}</style>
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Etichette QR</title>
+<style>body{font-family:system-ui,sans-serif;padding:16px;margin:0}h1{font-size:1.2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.l{border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}.l b{display:block;font-size:1.2rem;margin-top:8px}.l small{display:block;color:#333}.l .c{color:#555;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}textarea{width:100%;height:110px;font-family:monospace;box-sizing:border-box}.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 16px}button{font:600 1rem system-ui;padding:8px 14px}@media print{h1,textarea,.bar{display:none}body{padding:0}}</style>
 <script src="vendor/qrcode.min.js"></script></head><body>
-<h1>Etichette QR — una riga per etichetta: <code>CODICE | Nome</code></h1>
+<h1>Etichette QR — una riga per etichetta: <code>CODICE | Nome | Nota</code></h1>
 <textarea id="src">EQ:CF-01 | Cella frigo 1
 EQ:CF-02 | Cella frigo 2
 EQ:PAST-01 | Pastorizzatore
 EQ:FIL-01 | Filatrice
 EQ:BIL-01 | Bilancia ricezione
 EQ:TERM-01 | Termometro a sonda
+EQ:TERM-02 | Termometro alta temperatura
+EQ:PH-01 | pH-metro
 EQ:RT-01 | Registratore telematico
 CLEAN | Sanificazione fine turno
 METER:elec_main | Contatore luce</textarea>
-<p><button onclick="render()">Genera</button> poi stampa (Ctrl/Cmd+P) su carta adesiva.</p>
+<div class="bar"><button type="button" id="gen">Genera</button><button type="button" id="prt">Stampa</button><span>su carta adesiva · badge: <code>STAFF:CODICE | Nome</code> · lotto: <code>LOT:L20261005-A | Mozzarella | scad. 10/10/2026</code></span></div>
 <div class="grid" id="g"></div>
 <script>
-function render(){const g=document.getElementById('g');g.innerHTML='';document.getElementById('src').value.split('\n').filter(Boolean).forEach(line=>{const [code,name]=line.split('|').map(s=>s.trim());const d=document.createElement('div');d.className='l';const q=document.createElement('div');d.append(q);new QRCode(q,{text:code,width:140,height:140});d.insertAdjacentHTML('beforeend',`<b>${name||''}</b><small>${code}</small>`);g.append(d);});}
-render();
+// v0.52: ?code=LOT:…&name=…&sub=…&n=6 prints n copies of one label (the tablet opens this after milk intake and batch close).
+// Text is set with textContent only: values come from the URL.
+(function () {
+  const P = new URLSearchParams(location.search);
+  if (P.get('code')) {
+    const n = Math.max(1, Math.min(60, parseInt(P.get('n') || '1', 10) || 1));
+    const line = [P.get('code'), P.get('name') || '', P.get('sub') || ''].map(s => s.replace(/[|\n]/g, ' ')).join(' | ');
+    document.getElementById('src').value = Array(n).fill(line).join('\n');
+  }
+  function render() {
+    const g = document.getElementById('g'); g.textContent = '';
+    document.getElementById('src').value.split('\n').map(s => s.trim()).filter(Boolean).forEach(line => {
+      const [code, name, sub] = line.split('|').map(s => (s || '').trim());
+      const d = document.createElement('div'); d.className = 'l';
+      const q = document.createElement('div'); d.append(q);
+      new QRCode(q, { text: code, width: 140, height: 140 });
+      const b = document.createElement('b'); b.textContent = name || ''; d.append(b);
+      if (sub) { const s = document.createElement('small'); s.textContent = sub; d.append(s); }
+      const c = document.createElement('small'); c.className = 'c'; c.textContent = code; d.append(c);
+      g.append(d);
+    });
+  }
+  document.getElementById('gen').onclick = render;
+  document.getElementById('prt').onclick = () => { render(); setTimeout(() => window.print(), 300); };
+  render();
+})();
 </script></body></html>

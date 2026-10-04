@@ -32,6 +32,6 @@ window.PERM = {
     document.body.style.background = '#f6f4ef';
     document.getElementById('perm-out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   },
-  notLinked(email) { return `L'account ${email} non è collegato a nessuna persona attiva. Chiedi al titolare di invitarti da Configurazione → Utenti e ruoli.`; },
+  notLinked(email) { return `L'account ${email} non è collegato a nessuna persona attiva. Chiedi al titolare di invitarti da Configurazione → Utenti e accessi.`; },
   notForProfile() { return `Il profilo "${(this.data && this.data.role_name) || '?'}" non usa questa pagina.`; },
 };

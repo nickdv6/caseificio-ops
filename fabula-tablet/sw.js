@@ -1,5 +1,5 @@
-const CACHE = 'perla-v26';
-const SHELL = ['./', './index.html', './app.js', './config.js', './brand.js', './perm.js', './ui.js', './ui.css', './manifest.json', './icon.svg',
+const CACHE = 'perla-v27';
+const SHELL = ['./', './index.html', './app.js', './config.js', './brand.js', './perm.js', './ui.js', './ui.css', './manifest.json', './icon.svg', './labels.html',
   './vendor/supabase.js', './vendor/html5-qrcode.min.js', './vendor/qrcode.min.js'];
 // v0.48b: a new version takes over at once (skipWaiting + clients.claim) instead of waiting for every app tab to close,
 // and app files are network-first: online you always get the deployed code, offline (or > 3 s) the cached copy.

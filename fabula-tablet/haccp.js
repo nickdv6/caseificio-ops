@@ -122,7 +122,7 @@
       <div class="row" style="margin:0"><button class="btn sm sec" data-act="save">Salva</button>${isManager ? '<button class="btn sm" data-act="close">Chiudi NC</button>' : ''}</div></div></div>`).join('');
     $('ncs').querySelectorAll('[data-nc]').forEach(box => box.querySelectorAll('button').forEach(b => b.onclick = async () => {
       const v = {}; box.querySelectorAll('input[data-k]').forEach(i => v[i.dataset.k] = i.value.trim() || null);
-      if (b.dataset.act === 'close') { if (!v.corrective_action) return toast('Scrivi l\'azione correttiva prima di chiudere', 'err'); Object.assign(v, { status: 'closed', closed_at: new Date().toISOString(), closed_by_id: staff.id }); }
+      if (b.dataset.act === 'close') { if (!v.corrective_action) return toast('Scrivi l\'azione correttiva prima di chiudere', 'err'); if (!confirm('Chiudere questa non conformità? Esce dall\'elenco delle NC aperte.')) return; Object.assign(v, { status: 'closed', closed_at: new Date().toISOString(), closed_by_id: staff.id }); }
       else v.status = 'investigating';
       fail(await sb.from('non_conformities').update(v).eq('id', box.dataset.nc), 'NC'); toast(b.dataset.act === 'close' ? 'NC chiusa' : 'Salvato'); load();
     }));

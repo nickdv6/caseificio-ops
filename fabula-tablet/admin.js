@@ -72,7 +72,7 @@
     const sync = () => { r.value = val(); const dirty = String(r.value) !== String(r.orig) && !(k === 'number' && r.value !== '' && Number(r.value) === Number(r.orig));
       row.classList.toggle('dirty', dirty); const w = row.querySelector('.was'); w.hidden = !dirty; w.textContent = 'prima: ' + shown(r, r.orig); saveState(); };
     inp.oninput = sync; inp.onchange = sync;
-    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); saveParams(); } if (e.key === 'Escape') { inp.value = k === 'month' ? String(r.orig).slice(0, 7) : k === 'flag' ? (Number(r.orig) === 1 ? '1' : '0') : r.orig; sync(); } };
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); saveParams().catch(err => toast(err.message || String(err), 'err')); } if (e.key === 'Escape') { inp.value = k === 'month' ? String(r.orig).slice(0, 7) : k === 'flag' ? (Number(r.orig) === 1 ? '1' : '0') : r.orig; sync(); } };
     const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0'; right.append(inp); row.append(right);
     return row;
   }
@@ -289,6 +289,7 @@
   $('bd-readall').onclick = async () => {
     const { data: ids } = await (bdAgent ? sb.from('bot_messages').select('id').is('read_at', null).in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]) : sb.from('bot_messages').select('id').is('read_at', null));
     if (!ids || !ids.length) return toast('Niente da segnare');
+    if (!confirm(`Segnare come lette ${ids.length} notifiche?`)) return;
     const { data, error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids.map(x => x.id) }); if (error) return toast(error.message, 'err');
     toast(`${data} notifiche segnate come lette`); loadBotFeed();
   };
@@ -464,7 +465,7 @@
       const row = document.createElement('div'); row.className = 'row';
       row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); loadMaint(); }));
       const done = document.createElement('button'); done.className = 'btn sm sec'; done.textContent = 'Fatto oggi';
-      done.onclick = async () => { done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadMaint(); };
+      done.onclick = async () => { if (!confirm(`Segnare "${r.subject_it}" come fatta oggi?${r.interval_days ? ' Si apre la prossima scadenza.' : ''}`)) return; done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadMaint(); };
       row.append(done); c.append(row); box.append(c);
     });
   }

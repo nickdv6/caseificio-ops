@@ -202,7 +202,8 @@
     if (!$('pe-cap').value.trim()) throw new Error('Scrivi il testo (o genera una bozza) prima di inviarlo in approvazione');
     const s = await savePost({ status: 'review' }); $('dlg-post').close(); await Promise.all([loadCal(), loadOggi()]);
     if (s.claims_blocking) toast(`Inviato, ma ci sono ${s.claims_blocking} problemi da correggere: l'approvazione sarà bloccata finché non li sistemi`, 'err');
-  }, 'Inviato in approvazione: lo trovi nella console → Da approvare');
+    else toast('Inviato in approvazione: lo trovi nella console → Da approvare');
+  });
   $('pe-published').onclick = () => run(async () => { if (!$('pe-pub').value.trim()) throw new Error('Incolla il link del post pubblicato'); await savePost({ status: 'published' }); $('dlg-post').close(); await loadCal(); }, 'Segnato come pubblicato');
   $('pe-copy').onclick = async () => { const t = [$('pe-cap').value, $('pe-tags').value, $('pe-link').value].filter(Boolean).join('\n\n'); try { await navigator.clipboard.writeText(t); toast('Testo copiato'); } catch { toast('Copia non riuscita', 'err'); } };
   $('pe-ai').onclick = () => run(async () => {
@@ -317,6 +318,7 @@
   }, kind === 'dm' ? 'Messaggio copiato: incollalo nel DM. Contatto registrato.' : 'Email pronta e copiata. Contatto registrato.');
   $('ie-dm').onclick = () => draft('dm'); $('ie-mail').onclick = () => draft('email');
   $('ie-collab').onclick = () => run(async () => {
+    if ($('cb-save')) { $('cb-kind').focus(); return; }   // a form is already open
     await saveInf(); const box = $('ie-extra');
     const f = document.createElement('div'); f.className = 'fgrid'; f.style.marginTop = '10px';
     f.innerHTML = `<div><label>Tipo</label><select id="cb-kind"><option value="gift">regalo / visita</option><option value="paid">a pagamento</option><option value="affiliate">affiliazione</option><option value="event">evento</option></select></div>
