@@ -12,6 +12,9 @@ window.PERM = {
   level(a) { return Number((this.data && this.data.areas && this.data.areas[a]) || 0); },
   can(a, l = 1) { return this.level(a) >= l; },
   page(p) { return !!(this.data && this.data.pages && this.data.pages[p]); },
+  // v0.56: an update/delete blocked by row-level security "succeeds" with 0 rows. Add .select('<key>') and pass the result here.
+  NOT_SAVED: 'Non salvato: il tuo profilo non può modificare questi dati, oppure la riga non esiste più. Ricarica la pagina.',
+  changed(r) { if (r.error) throw r.error; if (!Array.isArray(r.data) || !r.data.length) throw new Error(this.NOT_SAVED); return r.data; },
   isAdmin() { return !!(this.data && this.data.can_manage_users); },
   approvalArea(a) {
     const k = a.kind, t = (a.payload && a.payload.type) || '';

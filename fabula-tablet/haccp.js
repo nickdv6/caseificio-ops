@@ -19,6 +19,7 @@
   const pill = (txt, cls = '') => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const badge = (id, n) => { const e = $(id); if (!e) return; e.textContent = n || ''; e.classList.toggle('on', !!n); };
   const fail = (r, what) => { if (r.error) { toast(`${what}: ${r.error.message}`, 'err'); throw r.error; } return r.data; };
+  const failNone = (r, what) => { fail(r, what); if (!(r.data || []).length) { toast(`${what}: ${PERM.NOT_SAVED}`, 'err'); throw new Error(PERM.NOT_SAVED); } return r.data; };   // v0.56
   const dueCell = d => { const k = daysTo(d); if (d == null) return '<span class="ko">data da impostare</span>'; return `${fmtD(d)} ${k < 0 ? `<span class="ko">scaduto da ${-k} g</span>` : k <= 30 ? `<span class="ko">tra ${k} g</span>` : ''}`; };
 
   async function upload(file, folder, kind, relatedTable) {     // → documents.id
@@ -124,7 +125,7 @@
       const v = {}; box.querySelectorAll('input[data-k]').forEach(i => v[i.dataset.k] = i.value.trim() || null);
       if (b.dataset.act === 'close') { if (!v.corrective_action) return toast('Scrivi l\'azione correttiva prima di chiudere', 'err'); if (!confirm('Chiudere questa non conformità? Esce dall\'elenco delle NC aperte.')) return; Object.assign(v, { status: 'closed', closed_at: new Date().toISOString(), closed_by_id: staff.id }); }
       else v.status = 'investigating';
-      fail(await sb.from('non_conformities').update(v).eq('id', box.dataset.nc), 'NC'); toast(b.dataset.act === 'close' ? 'NC chiusa' : 'Salvato'); load();
+      failNone(await sb.from('non_conformities').update(v).eq('id', box.dataset.nc).select('id'), 'NC'); toast(b.dataset.act === 'close' ? 'NC chiusa' : 'Salvato'); load();
     }));
   }
   function renderLogs(rows) {
@@ -149,7 +150,7 @@
       const tr = b.closest('tr'), v = {}; tr.querySelectorAll('input[data-k]').forEach(i => v[i.dataset.k] = i.value === '' ? null : Number(i.value));
       v.updated_at = new Date().toISOString();
       if (!confirm(`Cambiare i limiti di ${tr.dataset.code}? Fallo solo se deciso con il consulente HACCP: vale da subito per tablet e bot.`)) return;
-      fail(await sb.from('haccp_control_points').update(v).eq('code', tr.dataset.code), 'Limiti'); toast('Limiti aggiornati'); load();
+      failNone(await sb.from('haccp_control_points').update(v).eq('code', tr.dataset.code).select('code'), 'Limiti'); toast('Limiti aggiornati'); load();
     });
   }
 

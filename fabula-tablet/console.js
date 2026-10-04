@@ -90,7 +90,7 @@
       card.querySelectorAll('button').forEach(b => b.disabled = true);
       const { data: row, error } = await sb.from('approvals').update({ status: act, decided_by: staff.full_name, decided_at: new Date().toISOString(), decision_note: note || null }).eq('id', id).eq('status', 'pending').select().single();
       if (error) { toast(error.code === 'PGRST116' ? 'Non hai il permesso di decidere questa richiesta, o è già stata decisa' : error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
-      if (row.related_table === 'purchase_orders' && row.related_id) { const { error: e2 } = await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id); if (e2) toast('Approvazione salvata, ma l\'ordine non si è aggiornato: ' + e2.message, 'err'); }
+      if (row.related_table === 'purchase_orders' && row.related_id) { const r2 = await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id).select('id'); const e2 = r2.error || (!(r2.data || []).length && { message: PERM.NOT_SAVED }); if (e2) toast('Approvazione salvata, ma l\'ordine non si è aggiornato: ' + e2.message, 'err'); }
       APPR = APPR.filter(x => String(x.id) !== id); card.remove(); apprCount();
       if (!APPR.length) renderApprovals(today);
       toast(act === 'approved' ? 'Approvato' : 'Rifiutato');
@@ -393,7 +393,7 @@
           ups.push({ staff_id: x.p, work_date: x.date, ...c, created_by: staff.id, updated_at: new Date().toISOString() });
         }
         if (ups.length) { const { error } = await sb.from('rota_entries').upsert(ups, { onConflict: 'staff_id,work_date' }); if (error) throw error; }
-        if (dels.length) { const { error } = await sb.from('rota_entries').delete().in('id', dels); if (error) throw error; }
+        if (dels.length) { const { data: gone, error } = await sb.from('rota_entries').delete().in('id', dels).select('id'); if (error) throw error; if ((gone || []).length < dels.length) throw new Error(PERM.NOT_SAVED); }
         UI.clean(b); toast(ups.length + dels.length ? `Turni salvati (${ups.length + dels.length})` : 'Nessuna modifica'); loadRota();
       } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
     };

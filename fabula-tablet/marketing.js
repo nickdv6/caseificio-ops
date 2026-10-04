@@ -108,7 +108,7 @@
         const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
         const inp = document.createElement('input'); inp.type = 'text'; inp.className = 'wide'; inp.value = r.value;
         const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva';
-        b.onclick = () => run(async () => { let v = inp.value.trim(); if (r.data_type === 'number' && isNaN(Number(v.replace(',', '.')))) throw new Error('Inserisci un numero'); if (r.data_type === 'number') v = String(Number(v.replace(',', '.'))); must(await sb.from('settings').update({ value: v }).eq('key', r.key)); settings[r.key].value = v; }, 'Salvato');
+        b.onclick = () => run(async () => { let v = inp.value.trim(); if (r.data_type === 'number' && isNaN(Number(v.replace(',', '.')))) throw new Error('Inserisci un numero'); if (r.data_type === 'number') v = String(Number(v.replace(',', '.'))); PERM.changed(await sb.from('settings').update({ value: v }).eq('key', r.key).select('key')); settings[r.key].value = v; }, 'Salvato');
         right.append(inp, b); row.append(right); box.append(row);
       });
     });
@@ -194,7 +194,7 @@
   }
   async function savePost(extra = {}) {
     const row = { ...formPost(), ...extra };
-    const saved = cur.id ? must(await sb.from('mkt_content').update(row).eq('id', cur.id).select().single()) : must(await sb.from('mkt_content').insert(row).select().single());
+    const saved = cur.id ? PERM.changed(await sb.from('mkt_content').update(row).eq('id', cur.id).select())[0] : must(await sb.from('mkt_content').insert(row).select().single());
     cur = saved; return saved;
   }
   $('pe-save').onclick = () => run(async () => { const s = await savePost(); renderClaims(s.claims); $('pe-status').value = STATUS_IT[s.status]; await loadCal(); }, 'Salvato');
@@ -256,7 +256,7 @@
       };
       tr.querySelectorAll('input').forEach(i => i.oninput = calc); calc();
       const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva';
-      b.onclick = () => run(async () => { const v = { updated_at: new Date().toISOString() }; tr.querySelectorAll('[data-k]').forEach(i => v[i.dataset.k] = i.type === 'number' ? (i.value === '' ? null : Number(i.value)) : (i.value.trim() || null)); if (v.markup_pct == null && isMk) v.markup_pct = 0; must(await sb.from('mkt_channels').update(v).eq('code', r.code)); }, 'Canale salvato');
+      b.onclick = () => run(async () => { const v = { updated_at: new Date().toISOString() }; tr.querySelectorAll('[data-k]').forEach(i => v[i.dataset.k] = i.type === 'number' ? (i.value === '' ? null : Number(i.value)) : (i.value.trim() || null)); if (v.markup_pct == null && isMk) v.markup_pct = 0; PERM.changed(await sb.from('mkt_channels').update(v).eq('code', r.code).select('code')); }, 'Canale salvato');
       tr.lastElementChild.append(b); tbl.append(tr);
     });
     $('ch-table').innerHTML = ''; $('ch-table').append(tbl);
@@ -304,7 +304,7 @@
   }
   async function saveInf() {
     const v = formInf(); if (!v.name) throw new Error('Inserisci il nome');
-    curInf = curInf.id ? must(await sb.from('mkt_influencers').update(v).eq('id', curInf.id).select().single()) : must(await sb.from('mkt_influencers').insert(v).select().single());
+    curInf = curInf.id ? PERM.changed(await sb.from('mkt_influencers').update(v).eq('id', curInf.id).select())[0] : must(await sb.from('mkt_influencers').insert(v).select().single());
     return curInf;
   }
   $('ie-save').onclick = () => run(async () => { await saveInf(); $('dlg-inf').close(); await Promise.all([loadInf(), loadOggi()]); }, 'Creator salvato');
@@ -313,7 +313,7 @@
     try { await navigator.clipboard.writeText(t); } catch {}
     if (kind === 'email' && curInf.email) { const [subj, ...body] = t.split('\n'); window.open(`mailto:${encodeURIComponent(curInf.email)}?subject=${encodeURIComponent(subj.replace(/^Oggetto:\s*/, ''))}&body=${encodeURIComponent(body.join('\n').trim())}`); }
     const upd = { last_contact_on: romeDate(new Date()) }; if (curInf.status === 'prospect') upd.status = 'contacted';
-    must(await sb.from('mkt_influencers').update(upd).eq('id', curInf.id)); $('ie-last').value = upd.last_contact_on; if (upd.status) $('ie-status').value = upd.status;
+    PERM.changed(await sb.from('mkt_influencers').update(upd).eq('id', curInf.id).select('id')); $('ie-last').value = upd.last_contact_on; if (upd.status) $('ie-status').value = upd.status;
     loadInf();
   }, kind === 'dm' ? 'Messaggio copiato: incollalo nel DM. Contatto registrato.' : 'Email pronta e copiata. Contatto registrato.');
   $('ie-dm').onclick = () => draft('dm'); $('ie-mail').onclick = () => draft('email');
@@ -332,7 +332,7 @@
     $('cb-save').onclick = () => run(async () => {
       must(await sb.from('mkt_collabs').insert({ influencer_id: curInf.id, kind: $('cb-kind').value, fee_eur: Number($('cb-fee').value || 0), product_value_eur: Number($('cb-val').value || 0), campaign_id: $('cb-camp').value || null,
         deliverables: $('cb-del').value.trim() || null, post_url: $('cb-url').value.trim() || null, posted_on: $('cb-url').value.trim() ? romeDate(new Date()) : null, disclosure_ok: $('cb-disc').checked, agreed_on: romeDate(new Date()) }));
-      if ($('cb-url').value.trim()) must(await sb.from('mkt_influencers').update({ status: curInf.discount_code ? 'affiliate' : 'posted' }).eq('id', curInf.id));
+      if ($('cb-url').value.trim()) PERM.changed(await sb.from('mkt_influencers').update({ status: curInf.discount_code ? 'affiliate' : 'posted' }).eq('id', curInf.id).select('id'));
       await openInf(curInf.id); loadInf();
     }, 'Collaborazione registrata');
   });
@@ -343,7 +343,7 @@
       <div class="m"><div>${a.ai_generated ? '<span class="pill generating">IA</span> ' : ''}<span class="status">${esc(a.source)}</span> ${esc((a.tags || []).join(', '))}</div>
       <label><input type="checkbox" data-k="consent_ok" ${a.consent_ok ? 'checked' : ''}> consenso</label><label><input type="checkbox" data-k="hygiene_ok" ${a.hygiene_ok ? 'checked' : ''}> igiene ok</label></div></div>`).join('')
       : '<div class="empty">Nessun file. Le clip migliori della prova del 29/09 (pasta filata nella tramoggia, taglio della cagliata, bocconcini nell\'acqua, ricotta nelle fuscelle) sono un ottimo inizio, dopo il controllo di volti e igiene.</div>';
-    $('lib').querySelectorAll('input[data-k]').forEach(i => i.onchange = () => run(async () => { const id = i.closest('.it').dataset.id; must(await sb.from('mkt_assets').update({ [i.dataset.k]: i.checked }).eq('id', id)); const a = assets.find(x => x.id === id); a[i.dataset.k] = i.checked; }, 'Aggiornato'));
+    $('lib').querySelectorAll('input[data-k]').forEach(i => i.onchange = () => run(async () => { const id = i.closest('.it').dataset.id; PERM.changed(await sb.from('mkt_assets').update({ [i.dataset.k]: i.checked }).eq('id', id).select('id')); const a = assets.find(x => x.id === id); a[i.dataset.k] = i.checked; }, 'Aggiornato'));
   }
   $('up-go').onclick = () => run(async () => {
     const files = [...$('up-file').files]; if (!files.length) throw new Error('Scegli uno o più file');
@@ -373,7 +373,7 @@
         <td class="num"><input type="number" data-k="budget_eur" value="${c.budget_eur}"></td><td class="num"><input type="number" data-k="spent_eur" value="${c.spent_eur}"></td>
         <td><select data-k="status">${['planned', 'active', 'done', 'cancelled'].map(s => `<option value="${s}" ${s === c.status ? 'selected' : ''}>${STATUS_IT[s] || s}</option>`).join('')}</select></td><td></td>`;
       const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva';
-      b.onclick = () => run(async () => { const v = {}; tr.querySelectorAll('[data-k]').forEach(i => v[i.dataset.k] = i.type === 'number' ? Number(i.value || 0) : i.type === 'date' ? (i.value || null) : (i.value.trim() ? (i.dataset.k === 'discount_code' ? i.value.trim().toUpperCase() : i.value.trim()) : null)); must(await sb.from('mkt_campaigns').update(v).eq('id', c.id)); Object.assign(c, v); renderCampaigns(); }, 'Campagna salvata');
+      b.onclick = () => run(async () => { const v = {}; tr.querySelectorAll('[data-k]').forEach(i => v[i.dataset.k] = i.type === 'number' ? Number(i.value || 0) : i.type === 'date' ? (i.value || null) : (i.value.trim() ? (i.dataset.k === 'discount_code' ? i.value.trim().toUpperCase() : i.value.trim()) : null)); PERM.changed(await sb.from('mkt_campaigns').update(v).eq('id', c.id).select('id')); Object.assign(c, v); renderCampaigns(); }, 'Campagna salvata');
       tr.lastElementChild.append(b); tbl.append(tr);
     });
     $('camp-table').innerHTML = ''; $('camp-table').append(tbl);

@@ -118,7 +118,7 @@
     const v = {}; for (const [k, el] of Object.entries(F)) { const x = $(el).value.trim(); v[k] = x === '' ? null : x; }
     if (!v.name) throw new Error('Nome obbligatorio');
     v.priority = Number(v.priority || 2); v.est_kg_week = v.est_kg_week == null ? null : Number(v.est_kg_week);
-    if (cur) { if (v.stage === 'perso' && !v.notes && !cur.lost_reason) v.lost_reason = 'non indicato'; must(await sb.from('sales_leads').update(v).eq('id', cur.id)); }
+    if (cur) { if (v.stage === 'perso' && !v.notes && !cur.lost_reason) v.lost_reason = 'non indicato'; PERM.changed(await sb.from('sales_leads').update(v).eq('id', cur.id).select('id')); }
     else { const r = must(await sb.rpc('sales_add_lead', { p: { ...v, source: 'manuale' } })); if (!r.created) throw new Error(r.reason === 'già cliente' ? 'È già un cliente in Shopify' : 'Locale già presente'); }
     $('dlg-lead').close(); await loadAll();
   }, 'Salvato');
@@ -150,7 +150,7 @@
       <td class="num">${canManage ? `<input type="number" step="0.01" data-c="${c.code}" data-k="price_net_eur_kg" value="${c.price_net_eur_kg}">` : num(c.price_net_eur_kg, 2)}</td>
       <td class="num">${canManage ? `<input type="number" step="1" data-c="${c.code}" data-k="full_kg_day" value="${c.full_kg_day}">` : num(c.full_kg_day)}</td><td class="status">${esc(c.notes || '')}</td></tr>`).join('') + '</table>' +
       (canManage ? '<div class="hint" style="margin-top:6px">La rampa mese per mese e la stagionalità si modificano nelle tabelle sales_ramp e sales_seasonality.</div>' : '');
-    $('chan-edit').querySelectorAll('input[data-c]').forEach(i => i.onchange = () => run(async () => { must(await sb.from('sales_plan_channels').update({ [i.dataset.k]: Number(i.value) }).eq('code', i.dataset.c)); await loadAll(); }, 'Salvato'));
+    $('chan-edit').querySelectorAll('input[data-c]').forEach(i => i.onchange = () => run(async () => { PERM.changed(await sb.from('sales_plan_channels').update({ [i.dataset.k]: Number(i.value) }).eq('code', i.dataset.c).select('code')); await loadAll(); }, 'Salvato'));
   }
 
   init();

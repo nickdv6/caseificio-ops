@@ -42,12 +42,12 @@
   const stamp = ops => ops.forEach(op => { if (op.table && !op.update && op.row && !op.row.id && UUID_TABLES.has(op.table)) op.row.id = uuid(); });
   async function save(ops) {                 // ops: [{table, row}] executed in order; later rows may reference earlier via $0.id
     stamp(ops);
-    if (!navigator.onLine) { setQueue([...queue(), { at: Date.now(), ops }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
+    if (!navigator.onLine) { setQueue([...queue(), { qid: uuid(), at: Date.now(), ops }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
     try { await run(ops); return true; }
     catch (e) {
       console.error(e);
       if (!retryable(e)) { toast(e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
-      setQueue([...queue(), { at: Date.now(), ops }]); toast('Rete assente: messo in coda', 'err'); return true;
+      setQueue([...queue(), { qid: uuid(), at: Date.now(), ops }]); toast('Rete assente: messo in coda', 'err'); return true;
     }
   }
   async function run(ops) {
@@ -69,6 +69,7 @@
   async function flush() {
     if (flushing) return;
     const q = queue(); if (!q.length || !navigator.onLine) return;
+    q.forEach(i => { if (!i.qid) i.qid = uuid(); }); setQueue(q);   // v0.56: every item gets an id (same tick as the read, so nothing is lost)
     flushing = true;
     try {
       try { await sb.auth.getSession(); } catch {}           // refreshes an expired login before re-sending
@@ -78,7 +79,8 @@
         try { await run(item.ops); }
         catch (e) { console.error(e); (retryable(e) ? left : failed).push(retryable(e) ? item : { ...item, error: e.message, code: e.code, failed_at: Date.now() }); }
       }
-      setQueue(left);
+      const seen = new Set(q.map(i => i.qid));                  // v0.56: keep what save() queued while this flush was sending
+      setQueue([...left, ...queue().filter(i => !seen.has(i.qid))]);
       if (failed.length) { setFailed([...failedList(), ...failed]); toast(`${failed.length} registrazioni rifiutate dal database: tocca la riga in basso`, 'err'); }
       const sent = q.length - left.length - failed.length;
       if (sent > 0) { toast(`Inviate ${sent} registrazioni`); loadTasks(); }
@@ -340,11 +342,12 @@
   }
   // 3/5/6 — a lot label: milk lot → start/end batch; batch lot → sale or shipment
   async function stepLot(lot) {
-    const { data: milk } = await sb.from('milk_intake').select('id, qty_kg, intake_date').eq('milk_lot', lot).order('intake_date', { ascending: false }).limit(1).maybeSingle();
+    const { data: milk } = await sb.from('milk_intake').select('id, qty_kg, intake_date, accepted, rejection_reason').eq('milk_lot', lot).order('intake_date', { ascending: false }).limit(1).maybeSingle();
     const { data: batch } = await sb.from('production_batches').select('*').eq('batch_lot', lot).maybeSingle();
     if (batch) return batch.output_kg == null ? stepBatchWork(batch) : stepPick(batch);   // open batch → working steps, then close
     if (!milk) throw new Error('Lotto sconosciuto: ' + lot);
-    const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
+    if (milk.accepted === false) throw new Error(`Latte respinto (${milk.rejection_reason || 'non conforme'}): non si può usare in produzione`);   // v0.55
+    const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, preset_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
     if (open && open[0]) return stepBatchWork(open[0].production_batches);
     return stepBatchStart(milk, lot);
   }
