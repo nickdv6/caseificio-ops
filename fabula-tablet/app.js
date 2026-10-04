@@ -308,6 +308,7 @@
   async function stepMilk(ddt) {
     const { data: sup } = await sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true);
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
+    const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
     const { data: cpT } = await sb.from('haccp_control_points').select('max_value, warn_max').eq('code', 'CCP-MILK-TEMP').maybeSingle();
     const tMax = Number(cpT?.max_value ?? 8), tWarn = Number(cpT?.warn_max ?? 6);
     field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
@@ -317,17 +318,18 @@
     let planTxt = '';
     try { const { data: plan } = await sb.from('milk_plans').select('milk_kg, status').eq('plan_date', today()).in('status', ['proposed', 'approved']).maybeSingle();
       if (plan) planTxt = ` · piano ${plan.status === 'approved' ? 'approvato' : 'PROPOSTO (non approvato)'}: ${Number(plan.milk_kg).toLocaleString('it-IT')} kg`; } catch {}
-    openForm('Arrivo latte', 'DDT ' + ddt + planTxt, async () => {
+    openForm('Arrivo latte', (ddt ? 'DDT ' + ddt : 'Scrivi il numero del DDT') + planTxt, async () => {
       if (val('abx') === '') { toast('Registra l\'esito del test antibiotici', 'err'); throw new Error('abx'); }
+      const ddtNo = String(val('ddtn') || '').trim().toUpperCase();
       const hot = val('temp') > tMax, abxPos = val('abx') === '1', accepted = !hot && !abxPos;
       const why = [hot ? `temperatura > ${tMax} °C` : null, abxPos ? 'test antibiotici positivo' : null].filter(Boolean).join(' · ');
       const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')) } }),
-        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: val('lot'), qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddt, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
+        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: val('lot'), qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
         { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + val('lot'), lot_number: val('lot'), milk_intake_id: '$1.id', printed_by_id: staff.id } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: staff.id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: staff.id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
       await save(ops);
-      const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${ddt}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
+      const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${ddtNo.replace(/[^A-Z0-9-]/g, '_')}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
       toast(accepted ? (val('temp') > tWarn ? `Latte accettato · ${val('temp')} °C: iniziare la lavorazione entro 2 ore` : 'Latte registrato ✓') : 'Latte RIFIUTATO: ' + why, accepted && val('temp') <= tWarn ? 'ok' : 'err');
       const lotv = val('lot'), kgv = val('kg'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
       if (!accepted) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, why, 'Isola il latte e avvisa la Masseria e il responsabile.'], []);
@@ -807,8 +809,12 @@
     if (testCode) $('test').value = testCode;
     field('lot', 'Lotto (prodotto) — facoltativo', 'text', { required: false }); field('point', 'Punto di prelievo (se diverso dal piano)', 'text', { required: false });
     openForm('Campione per il laboratorio', 'Poi scrivi il codice sul contenitore', async () => {
-      const r = await rpcNow('record_sample_taken', { p_test_code: val('test'), p_lot: val('lot') || null, p_point: val('point') || null, p_staff_id: staff.id });
-      toast(r ? `Scrivi sul contenitore: ${r.sample_code}` : 'Salvato offline', 'ok');
+      const testv = val('test'), lotv = val('lot') || '';
+      const r = await rpcNow('record_sample_taken', { p_test_code: testv, p_lot: lotv || null, p_point: val('point') || null, p_staff_id: staff.id });
+      if (!r || !r.sample_code) return toast('Salvato offline: scrivi a mano analisi, lotto e data sul contenitore', 'ok');
+      toast(`Campione ${r.sample_code} registrato ✓`);
+      return showDone(`Campione ${r.sample_code}`, [`Analisi ${testv}${lotv ? ' · lotto ' + lotv : ''}`, 'Stampa l\'etichetta e attaccala al contenitore (oppure scrivi il codice a mano).'],
+        [['🖨 Stampa etichetta campione', 'labels.html?' + new URLSearchParams({ code: r.sample_code, name: 'Campione ' + testv, sub: (lotv ? 'lotto ' + lotv + ' · ' : '') + ddmm(today()), n: '2' })]]);
     });
   }
   window.__haccp = () => handleCode('HACCP:');

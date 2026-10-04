@@ -9,7 +9,7 @@ Several tablets: open the app once with `?device=tablet-2` (remembered on that d
 ## Files
 - `index.html`, `app.js` — the app (Italian UI, one screen per scan point from SOP-01)
 - `config.js` — Supabase URL + publishable key + device name (edit this)
-- `labels.html` — prints QR labels: equipment, cleaning sign, meter, badges (`STAFF:…`), and lot labels via `?code=LOT:…&name=…&sub=…&n=…` (opened by the tablet after milk intake and batch close)
+- `labels.html` — prints QR labels: equipment, cleaning sign, meter, badges (`STAFF:…`), station codes (`DDT:`, `COUNT`, `SHIP`, `EFFL`, `HACCP:`), lot labels via `?code=LOT:…&name=…&sub=…&n=…` (opened by the tablet after milk intake and batch close), lab-sample labels (v0.53) and any list via repeated `?l=CODE|Nome|Nota` (Configurazione › Utenti uses it for badges)
 - `console.html`, `console.js` — owner console (Oggi · Operazioni · Andamento · Anagrafiche · Ricette · Personale)
 - `admin.html`, `admin.js` — Configurazione (Parametri · Macchine e scadenze · Prodotti Shopify · Bot · Utenti e accessi · Registro modifiche)
 - `ui.js`, `ui.css` — shared shell for console and Configurazione since v0.51: login, header (page links, Bot bell, user menu with hide-hints and logout), lazy tabs with #hash, formatting helpers, unsaved-change guard (edited rows turn orange, Enter saves, leaving asks first)
@@ -41,7 +41,7 @@ Several tablets: open the app once with `?device=tablet-2` (remembered on that d
 | `EQ:RT-01` | on the till | read-only: "La cassa è Shopify POS" with today's synced total (the Ordini Shopify bot closes the day) |
 | `CLEAN` | lab door | cleaning checklist → `haccp_log` PRP-CLEAN |
 | `METER:elec_main` | meter | reading → `meter_readings` |
-| `DDT:<numero>` | on the milk DDT (or typed) | milk intake (temperature CCP 1a, antibiotic test CCP 1b) → `milk_intake` + milk-lot label, printable from the result card (v0.52) |
+| `DDT:<numero>` or `DDT:` | on the milk DDT, or the station QR at the intake point (v0.53: the DDT number is typed in its own field) | milk intake (temperature CCP 1a, antibiotic test CCP 1b) → `milk_intake` + milk-lot label, printable from the result card (v0.52) |
 | `LOT:<lotto latte>` | milk lot label | 1st scan: start batch (creates `L<yyyymmdd>-A`); then scan the batch lot for the working steps and the close (kg out, yield, stock, printable lot labels) |
 | `LOT:<lotto prodotto>` | finished-goods label | open batch → working steps / close · closed batch → direct shipment without an order. Counter sales are on Shopify POS; orders are packed from 🚚 Da spedire |
 

@@ -12,15 +12,23 @@ EQ:TERM-02 | Termometro alta temperatura
 EQ:PH-01 | pH-metro
 EQ:RT-01 | Registratore telematico
 CLEAN | Sanificazione fine turno
-METER:elec_main | Contatore luce</textarea>
+METER:elec_main | Contatore luce
+DDT: | Arrivo latte | stazione ricevimento
+COUNT | Conta magazzino
+SHIP | Da spedire
+EFFL | Reflui
+HACCP: | Menu HACCP</textarea>
 <div class="bar"><button type="button" id="gen">Genera</button><button type="button" id="prt">Stampa</button><span>su carta adesiva · badge: <code>STAFF:CODICE | Nome</code> · lotto: <code>LOT:L20261005-A | Mozzarella | scad. 10/10/2026</code></span></div>
 <div class="grid" id="g"></div>
 <script>
-// v0.52: ?code=LOT:…&name=…&sub=…&n=6 prints n copies of one label (the tablet opens this after milk intake and batch close).
+// v0.52: ?code=LOT:…&name=…&sub=…&n=6 prints n copies of one label (tablet: milk intake, batch close, lab sample).
+// v0.53: ?l=CODE|Nome|Nota&l=… prints several different labels (Configurazione: badges).
 // Text is set with textContent only: values come from the URL.
 (function () {
   const P = new URLSearchParams(location.search);
-  if (P.get('code')) {
+  if (P.getAll('l').length) {
+    document.getElementById('src').value = P.getAll('l').slice(0, 120).map(s => s.replace(/\n/g, ' ')).join('\n');
+  } else if (P.get('code')) {
     const n = Math.max(1, Math.min(60, parseInt(P.get('n') || '1', 10) || 1));
     const line = [P.get('code'), P.get('name') || '', P.get('sub') || ''].map(s => s.replace(/[|\n]/g, ' ')).join(' | ');
     document.getElementById('src').value = Array(n).fill(line).join('\n');

@@ -313,6 +313,7 @@
     if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch {} throw new Error(m); }
     if (data && data.error) throw new Error(data.error); return data;
   }
+  const badgeLine = p => [p.badge_code, p.full_name, (JOBS.find(([v]) => v === p.role) || [, ''])[1]].map(s => String(s || '').replace(/[|\n]/g, ' ')).join(' | ');
   async function loadUsers() {
     const admin = PERM.isAdmin();
     $('usr-invite').hidden = !admin; $('usr-ro').hidden = admin;
@@ -334,6 +335,8 @@
       [em, rs, js].forEach(x => { const td = document.createElement('td'); td.append(x); tr.append(td); });
       const tdl = document.createElement('td'); tdl.innerHTML = `<small>${login}</small>`; tr.append(tdl);
       const tda = document.createElement('td'); tda.style.whiteSpace = 'nowrap';
+      if (p.active && p.badge_code) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.cssText = 'text-decoration:none;margin-right:4px'; a.target = '_blank'; a.textContent = 'Badge';
+        a.title = 'Stampa il badge QR da passare sul tablet'; a.href = 'labels.html?' + new URLSearchParams({ l: badgeLine(p) }); tda.append(a); }
       if (admin) {
         const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'btn sm ' + cls; x.textContent = label; x.style.marginRight = '4px';
           x.onclick = async () => { x.disabled = true; try { await fn(); UI.clean(x); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
@@ -344,6 +347,10 @@
       tr.append(tda); tbl.append(tr);
     });
     box.innerHTML = ''; box.append(tbl);
+    const withBadge = (people || []).filter(p => p.active && p.badge_code);
+    if (withBadge.length) { const q = new URLSearchParams(); withBadge.forEach(p => q.append('l', badgeLine(p)));
+      const all = document.createElement('a'); all.className = 'btn sm sec'; all.style.cssText = 'text-decoration:none;display:inline-block;margin-top:8px'; all.target = '_blank';
+      all.textContent = `Stampa tutti i badge (${withBadge.length})`; all.href = 'labels.html?' + q; box.append(all); }
     // matrix
     const mbox = $('roles-matrix'); const lv = {}; (perms || []).forEach(x => { lv[x.role_code + '|' + x.area] = x.level; });
     const mt = document.createElement('table');
