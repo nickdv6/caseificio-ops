@@ -1,46 +1,131 @@
-/* La Perla configuration page, separate from the operational console: one tab per category (Azienda, Produzione, Vendite, Utenze e reflui, Lavoro e benchmark, Macchine e scadenze, Bot, Account). Settings rows are routed to cards by key prefix; data_type text|number. Owner/partner only. */
+/* Configuration page (v0.51), separate from the operational console. Tabs: Parametri (every fabula.settings row, grouped by key
+   prefix, searchable, one "Salva tutto" bar; groups not listed in SECTIONS show under "Altri parametri" so no setting is ever hidden) ·
+   Macchine e scadenze · Prodotti Shopify · Bot (status cards, notification feed, run log) · Utenti e accessi (people, profiles,
+   own password) · Registro modifiche. Shared shell (login, header, tabs, helpers) in ui.js. */
 (() => {
-  const CFG = window.FABULA_CONFIG;
-  const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
-  const $ = id => document.getElementById(id);
-  // Mouse wheel over a focused number field must never change its value (keyboard only).
-  document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
+  const { sb, $, esc, fmtD, nOrNull, dOrNull, toast, badge, upd, saveBtn } = UI;
   let staff = null;
-  const show = v => document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-' + v));
-  const toast = (m, cls = '') => { const t = $('toast'); t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2800); };
-  const eur = n => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
-  const num = (n, d = 1) => n == null ? '–' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
-  const dateIt = s => new Date(s + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const dueCls = s => { if (!s) return ''; const d = (new Date(s) - new Date(UI.romeISO())) / 864e5; return d <= 30 ? 'ko' : ''; };
 
+  // ---------- Parametri ----------
+  // [anchor, title, key prefixes, explanation]. Old links (#azienda, #produzione, #vendite, #utenze, #lavoro) land on their section.
+  const SECTIONS = [
+    ['azienda', 'Azienda', ['company'], "Intestazione di ordini e documenti stampati. Inserisci i dati dell'acquirente (non quelli del venditore) quando la società è definita. Il nome commerciale cambia subito intestazioni e titoli di tutte le pagine."],
+    ['produzione', 'Produzione e latte', ['milk', 'farm'], 'Come il bot Piano latte dimensiona il latte del giorno dopo. I kg disponibili giorno per giorno si correggono in <a class="lnk" href="console.html#ops">Console → Operazioni</a>.'],
+    ['acquisti', 'Acquisti', ['purchasing'], 'Quando il bot Acquisti propone un ordine. Tempi e minimi per singolo fornitore: <a class="lnk" href="console.html#anag">Console → Anagrafiche</a>.'],
+    ['vendite', 'Vendite e prezzi', ['price', 'sell', 'sales'], 'Prezzi di riferimento, soglie del bot Vendere prima (lotti in scadenza) e obiettivi del bot Vendite.'],
+    ['canali', 'Shopify, ritiri e spedizioni', ['shopify', 'pickup', 'ship'], 'Shopify è la cassa e il sito: le vendite arrivano ogni mattina (bot Ordini Shopify). Fasce di ritiro (anche in Marketing) e vettori/tolleranze usati dal tablet in spedizione.'],
+    ['marketing', 'Marketing', ['mkt'], 'Usati dal bot Marketing e dalle bozze dei contenuti.'],
+    ['sicurezza', 'Sicurezza alimentare', ['food'], 'Latte crudo o pastorizzato (attiva il CCP 2), laboratorio e data di avvio del piano campionamenti: da quella data il bot del martedì prepara la richiesta al laboratorio. Piano completo in <a class="lnk" href="haccp.html">HACCP</a>.'],
+    ['utenze', 'Utenze e reflui', ['energy', 'effluent'], 'Tariffe da bolletta (entrano nel costo pieno al kg e nel pacchetto mensile) e stime dei reflui per giorno di produzione, confrontate con il registro 💧 Reflui del tablet.'],
+    ['lavoro', 'Lavoro', ['labor'], 'Costo orario e regole per ore e straordinari (<a class="lnk" href="console.html#personale">Console → Personale</a>).'],
+    ['benchmark', 'Benchmark economici', ['opex', 'benchmark'], 'Usati dal brief settimanale finché non arriva la contabilità reale.'],
+  ];
+  const SEC_OF = Object.fromEntries(SECTIONS.flatMap(([id, , g]) => g.map(p => [p, id])));
+  const canEdit = () => PERM.can('sistema', 3);
+  let PROWS = [], pendingSection = null;
+  // field kind from the setting itself: 0/1 switches, dates, months, numbers, free text
+  const kindOf = r => {
+    const d = r.description || '';
+    if (r.data_type === 'number' && /\(1\s*=\s*s[iì]/i.test(d)) return 'flag';
+    if (r.data_type === 'number') return 'number';
+    if (/AAAA-MM-01/.test(d)) return 'month';
+    if (/AAAA-MM-GG/.test(d)) return 'date';
+    return 'text';
+  };
+  const shown = (r, v) => { const k = kindOf(r); if (v === '' || v == null) return 'vuoto'; if (k === 'flag') return Number(v) === 1 ? 'sì' : 'no'; if (k === 'date') return fmtD(v); return v; };
+  async function loadParams() {
+    const { data, error } = await sb.from('settings').select('*').order('key');
+    if (error) { $('p-secs').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    PROWS = (data || []).map(r => ({ ...r, orig: r.value ?? '' }));
+    renderParams();
+  }
+  function renderParams() {
+    const edit = canEdit(); $('p-ro').hidden = edit;
+    const extra = [...new Set(PROWS.map(r => r.key.split('.')[0]).filter(p => !SEC_OF[p]))];
+    const secs = [...SECTIONS, ...(extra.length ? [['altro', 'Altri parametri', extra, 'Parametri senza una sezione dedicata (nuovi o tecnici).']] : [])];
+    const host = $('p-secs'); host.innerHTML = '';
+    secs.forEach(([id, title, groups, hint]) => {
+      const mine = PROWS.filter(r => groups.includes(r.key.split('.')[0])).sort((a, b) => groups.indexOf(a.key.split('.')[0]) - groups.indexOf(b.key.split('.')[0]) || (a.sort ?? 100) - (b.sort ?? 100) || a.key.localeCompare(b.key));
+      if (!mine.length) return;
+      const card = document.createElement('div'); card.className = 'card psec'; card.id = 'sec-' + id; card.dataset.title = title;
+      card.innerHTML = `<h3>${esc(title)}</h3><div class="hint">${hint}</div>`;
+      mine.forEach(r => card.append(paramRow(r, edit)));
+      host.append(card);
+    });
+    $('p-jump').innerHTML = [...host.querySelectorAll('.psec')].map(c => `<a href="#${c.id.slice(4)}" data-sec="${c.id}">${esc(c.dataset.title)}<span class="n" hidden></span></a>`).join('');
+    $('p-jump').querySelectorAll('a').forEach(a => a.onclick = e => { e.preventDefault(); $(a.dataset.sec).scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    filterParams(); saveState();
+    if (pendingSection && $('sec-' + pendingSection)) { const s = pendingSection; pendingSection = null; setTimeout(() => $('sec-' + s).scrollIntoView({ block: 'start' }), 50); }
+  }
+  function paramRow(r, edit) {
+    const k = kindOf(r), row = document.createElement('div'); row.className = 'set-row' + (k === 'text' ? ' text' : ''); row.dataset.key = r.key;
+    row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small><span class="was" hidden></span></div>`;
+    let inp;
+    if (k === 'flag') { inp = document.createElement('select'); inp.innerHTML = '<option value="1">Sì</option><option value="0">No</option>'; inp.value = Number(r.value) === 1 ? '1' : '0'; }
+    else { inp = document.createElement('input'); inp.type = k === 'date' ? 'date' : k === 'month' ? 'month' : 'text';
+      inp.value = k === 'month' ? String(r.value || '').slice(0, 7) : (r.value ?? '');
+      if (k === 'number') { inp.inputMode = 'decimal'; inp.style.textAlign = 'right'; }
+      if (k === 'text') { inp.className = 'wide'; inp.placeholder = '—'; } }
+    inp.disabled = !edit; inp.setAttribute('aria-label', r.description || r.key);
+    const val = () => k === 'month' ? (inp.value ? inp.value + '-01' : '') : k === 'number' ? inp.value.trim().replace(',', '.') : inp.value.trim();
+    const sync = () => { r.value = val(); const dirty = String(r.value) !== String(r.orig) && !(k === 'number' && r.value !== '' && Number(r.value) === Number(r.orig));
+      row.classList.toggle('dirty', dirty); const w = row.querySelector('.was'); w.hidden = !dirty; w.textContent = 'prima: ' + shown(r, r.orig); saveState(); };
+    inp.oninput = sync; inp.onchange = sync;
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); saveParams(); } if (e.key === 'Escape') { inp.value = k === 'month' ? String(r.orig).slice(0, 7) : k === 'flag' ? (Number(r.orig) === 1 ? '1' : '0') : r.orig; sync(); } };
+    const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0'; right.append(inp); row.append(right);
+    return row;
+  }
+  function saveState() {
+    const dirty = PROWS.filter(r => String(r.value) !== String(r.orig) && !(kindOf(r) === 'number' && r.value !== '' && Number(r.value) === Number(r.orig)));
+    $('p-save').hidden = !dirty.length; $('p-save-n').textContent = dirty.length === 1 ? '1 modifica non salvata' : `${dirty.length} modifiche non salvate`;
+    badge('n-par', dirty.length);
+    document.querySelectorAll('#p-jump a').forEach(a => { const n = $(a.dataset.sec).querySelectorAll('.set-row.dirty').length, s = a.querySelector('.n'); s.hidden = !n; s.textContent = n; });
+    return dirty;
+  }
+  async function saveParams() {
+    const dirty = saveState(); if (!dirty.length) return;
+    for (const r of dirty) {
+      const k = kindOf(r);
+      if (k === 'number' && (r.value === '' || isNaN(Number(r.value)))) { focusRow(r.key); throw new Error(`"${r.description || r.key}": inserisci un numero`); }
+      if (k === 'date' && r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": data non valida`); }
+    }
+    const res = await Promise.all(dirty.map(r => { const v = kindOf(r) === 'number' ? String(Number(r.value)) : r.value; return sb.from('settings').update({ value: v }).eq('key', r.key).select('key').then(x => ({ r, v, ...x })); }));
+    const bad = res.filter(x => x.error || !(x.data || []).length);
+    res.filter(x => !x.error && (x.data || []).length).forEach(({ r, v }) => { r.orig = v; r.value = v; if (r.key.startsWith('company.')) BRAND.set({ [r.key]: v }); });
+    renderParams();
+    if (bad.length) throw new Error(`${bad.length} non salvati: ${bad[0].error ? bad[0].error.message : 'permesso negato'} (${bad.map(x => x.r.key).join(', ')})`);
+    toast(res.length === 1 ? 'Parametro salvato' : `${res.length} parametri salvati`);
+  }
+  const focusRow = key => { const row = document.querySelector(`.set-row[data-key="${CSS.escape(key)}"]`); if (row) { row.scrollIntoView({ block: 'center' }); const i = row.querySelector('input, select'); if (i) i.focus(); } };
+  function filterParams() {
+    const q = $('p-q').value.trim().toLowerCase(); let any = false;
+    document.querySelectorAll('#p-secs .psec').forEach(sec => {
+      let n = 0;
+      sec.querySelectorAll('.set-row').forEach(row => {
+        const r = PROWS.find(x => x.key === row.dataset.key) || {};
+        const hit = !q || [r.key, r.description, r.value, sec.dataset.title].some(x => String(x || '').toLowerCase().includes(q));
+        row.hidden = !hit; row.classList.toggle('hit', !!q && hit); if (hit) n++;
+      });
+      sec.hidden = !n; if (n) any = true;
+    });
+    document.querySelectorAll('#p-jump a').forEach(a => { a.hidden = $(a.dataset.sec).hidden; });
+    $('p-none').hidden = any;
+  }
+  $('p-q').oninput = filterParams;
+  $('p-go').onclick = () => UI.act($('p-go'), saveParams);
+  $('p-undo').onclick = () => { PROWS.forEach(r => { r.value = r.orig; }); renderParams(); };
+  window.addEventListener('beforeunload', e => { if (PROWS.some(r => String(r.value) !== String(r.orig))) { e.preventDefault(); e.returnValue = ''; } });
 
-  // ---------- auth (owner / partner only) ----------
-  async function init() {
-    const { data: { session } } = await sb.auth.getSession();
-    if (!session) return show('login');
-    const P = await PERM.load(sb);
-    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
-    if (!PERM.page('admin')) return PERM.deny(sb, PERM.notForProfile());
-    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
-    staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
-    $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
-    $('who').textContent = `${staff.full_name} · ${staff.role_name}`;
-    show('main'); load(); showTab((location.hash || '#azienda').slice(1).replace(/[^a-z]/g, '') || 'azienda', false);
+  // ---------- Macchine e scadenze ----------
+  async function loadMaint() {
+    const [e, d] = await Promise.all([sb.from('v_equipment_schedule').select('*'), sb.from('compliance_deadlines').select('*').is('done_on', null).order('due_on', { nullsFirst: false })]);
+    if (e.error || d.error) { toast((e.error || d.error).message, 'err'); return; }
+    renderEquipment(e.data || []); renderDeadlines(d.data || []);
+    const today = UI.romeISO(), late = (d.data || []).filter(x => x.due_on && x.due_on < today).length + (e.data || []).filter(x => x.active && [x.next_calibration_on, x.next_maintenance_on].some(v => v && v < today)).length;
+    badge('n-maint', late); $('n-maint').title = 'scadenze o tarature già passate';
   }
-  $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
-  $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
-  $('btn-logout').onclick = async () => { await sb.auth.signOut(); location.reload(); };
-  $('btn-refresh').onclick = () => load();
-  function showTab(name, push = true) {
-    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
-    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
-    if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
-  }
-  $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
-  async function load() { loadSettings(); loadBots(); loadBotFeed(); loadVariantMap(); loadAudit(); loadUsers(); }
   // ---------- Bot dashboard: every bot notification (bot_messages) ----------
-  const SEV = { alert: 'Allarme', warn: 'Attenzione', info: 'Info' };
-  const fmtR = s => new Date(s).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
   let bdFilter = 'unread', bdAgent = null, bdLimit = 50, bdNames = {}, bdNick = {};
   // v0.46 display-only nicknames (Zio/Zia) from bot_nicknames; agent keys never change
   async function loadNicknames() { const { data } = await sb.from('bot_nicknames').select('agent, nickname, title_it, avatar_url'); (data || []).forEach(n => { bdNick[n.agent] = n; }); }
@@ -116,8 +201,8 @@
       sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000),
       sb.from('bot_messages').select('agent, title, severity, body, created_at, read_at').in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']).order('created_at', { ascending: false }).limit(300),
       loadNicknames()]);
-    const unread = cnt.data || [], nU = unread.length, nA = unread.filter(x => x.severity === 'alert').length;
-    const tb = $('n-bots'); tb.textContent = nA || nU; tb.classList.toggle('on', nU > 0); tb.classList.toggle('al', nA > 0);
+    const nU = (cnt.data || []).length;
+    UI.bellCount();
     (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); bdRole[b.agent] = b.name_it; });
     Object.entries(SYS).forEach(([a, x]) => { bdRole[a] = bdNick[a] ? bdNick[a].title_it : x.role; });
     Object.keys(SYS).forEach(a => { bdNames[a] = botLabel(a, bdNick[a] ? bdNick[a].title_it : a); });
@@ -157,7 +242,7 @@
     const bb = $('bd-bots');
     bb.innerHTML = ['al', 'wn', 'ok', 'new', 'off'].map(k => { const g = items.filter(i => i.st === k).sort((x, y) => (x.next ? x.next.key : 1e9) - (y.next ? y.next.key : 1e9));
       return g.length ? `<div class="bd-grp s-${k}"><h4>${ST[k][1]} <span>${g.length}</span></h4><div class="bd-bots">${g.map(card).join('')}</div></div>` : ''; }).join('');
-    const pick = el => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); if (bdAgent) $('bd-feed-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const pick = el => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); if ($('runs-card').open) loadRuns(); if (bdAgent) $('bd-feed-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     bb.querySelectorAll('.botc').forEach(el => { el.onclick = () => pick(el); el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(el); } }; });
     $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdNames[bdAgent] || bdAgent) : '';
     let q = sb.from('bot_messages').select('*').order('created_at', { ascending: false }).limit(bdLimit + 1);
@@ -207,8 +292,19 @@
     const { data, error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids.map(x => x.id) }); if (error) return toast(error.message, 'err');
     toast(`${data} notifiche segnate come lette`); loadBotFeed();
   };
-  setInterval(() => { if (document.visibilityState === 'visible' && PERM.data && PERM.page('admin')) loadBotFeed(); }, 60000);
-  // ---------- Utenti e ruoli ----------
+  setInterval(() => { if (document.visibilityState === 'visible' && T.current === 'bots' && !UI.unsaved()) loadBotFeed(); }, 60000);
+  // run log: loaded when opened, follows the selected bot
+  $('runs-card').addEventListener('toggle', () => { if ($('runs-card').open) loadRuns(); });
+  async function loadRuns() {
+    const box = $('runs'); box.innerHTML = '<div class="status">Carico…</div>';
+    let q = sb.from('agent_runs').select('agent, started_at, status, summary, error').order('started_at', { ascending: false }).limit(40);
+    if (bdAgent) q = q.in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]);
+    const { data: runs, error } = await q;
+    $('runs-who').textContent = bdAgent ? '· solo ' + (bdNames[bdAgent] || bdAgent) : '· ultime 40';
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const fmtT = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    box.innerHTML = (runs && runs.length) ? '<table><tr><th>Bot</th><th>Quando</th><th>Esito</th><th>Dettaglio</th></tr>' + runs.map(r => `<tr><td>${esc(botLabel(r.agent))}</td><td class="status" style="white-space:nowrap">${fmtT(r.started_at)}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td><td class="status">${esc(r.summary || r.error || '')}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
+  }  // ---------- Utenti e ruoli ----------
   const LVL = ['—', 'vede', 'registra', 'gestisce'];
   const JOBS = [['owner', 'titolare'], ['partner', 'socio'], ['casaro', 'casaro'], ['operaio', 'operaio'], ['commesso', 'commesso'], ['consulente', 'consulente']];
   async function callUsers(body) {
@@ -239,10 +335,10 @@
       const tda = document.createElement('td'); tda.style.whiteSpace = 'nowrap';
       if (admin) {
         const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'btn sm ' + cls; x.textContent = label; x.style.marginRight = '4px';
-          x.onclick = async () => { x.disabled = true; try { await fn(); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
-        b('Salva', '', async () => { const { error } = await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id); if (error) throw error; toast('Salvato'); loadUsers(); });
+          x.onclick = async () => { x.disabled = true; try { await fn(); UI.clean(x); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
+        b('Salva', 'save', async () => { const { error } = await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id); if (error) throw error; toast('Salvato'); loadUsers(); });
         if (p.active && p.email && p.id !== staff.id) b(p.auth_user_id ? 'Reinvia link' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role }); toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : 'Invito inviato'); loadUsers(); });
-        if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
+        if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
       }
       tr.append(tda); tbl.append(tr);
     });
@@ -268,27 +364,31 @@
       const ch = edits.filter(e => String(e.s.value) !== String(e.s.dataset.orig)).map(e => ({ role_code: e.role, area: e.area, level: Number(e.s.value) }));
       if (!ch.length) return toast('Nessuna modifica');
       const { error } = await sb.from('role_permissions').upsert(ch, { onConflict: 'role_code,area' }); if (error) return toast(error.message, 'err');
-      toast(`Permessi aggiornati (${ch.length})`); loadUsers();
+      UI.clean($('roles-card')); toast(`Permessi aggiornati (${ch.length})`); loadUsers();
     };
   }
   $('inv-go').onclick = async () => {
     const b = $('inv-go'); b.disabled = true;
-    try { const r = await callUsers({ action: 'invite', full_name: $('inv-name').value, email: $('inv-email').value, app_role: $('inv-role').value });
-      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; loadUsers();
+    if (!$('inv-name').value.trim() || !/^\S+@\S+\.\S+$/.test($('inv-email').value.trim())) { b.disabled = false; return toast('Scrivi nome e un\'email valida', 'err'); }
+    try { const r = await callUsers({ action: 'invite', full_name: $('inv-name').value.trim(), email: $('inv-email').value.trim(), app_role: $('inv-role').value });
+      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite')); loadUsers();
     } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
   };
   const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',
     compliance_deadlines: 'Scadenze', haccp_control_points: 'Punti HACCP', process_steps: 'Processo', supplier_products: 'Condizioni fornitori', supplier_prices: 'Listini',
     farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni' };
   const AUD_A = { insert: 'aggiunto', update: 'modificato', delete: 'eliminato' };
-  const short = v => { if (v == null) return '∅'; const s = typeof v === 'object' ? JSON.stringify(v) : String(v); return s.length > 60 ? s.slice(0, 57) + '…' : s; };
-  async function loadAudit() {
+  const short = v => { if (v == null) return '∅'; const s = typeof v === 'object' ? JSON.stringify(v) : String(v); return s.length > 60 ? s.slice(0, 57) + '…' : s; };  async function loadAudit() {
     const sel = $('aud-table'); if (sel.options.length === 1) Object.entries(AUD_T).forEach(([k, l]) => sel.add(new Option(l, k)));
     const box = $('audit'); box.innerHTML = '<div class="status">Carico…</div>';
     let q = sb.from('audit_log').select('*').order('at', { ascending: false }).limit(150);
     if (sel.value) q = q.eq('table_name', sel.value);
     const { data, error } = await q;
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    audRows = data || []; renderAudit();
+  }
+  function renderAudit() {
+    const box = $('audit'), data = audRows;
     const needle = $('aud-q').value.trim().toLowerCase();
     const rows = (data || []).filter(r => !needle || JSON.stringify(r).toLowerCase().includes(needle));
     if (!rows.length) { box.innerHTML = '<div class="empty">Nessuna modifica registrata.</div>'; return; }
@@ -297,47 +397,18 @@
       const diff = r.action === 'update' ? (r.changed || []).map(c => `<b>${esc(c)}</b>: ${esc(short(r.old_data?.[c]))} → ${esc(short(r.new_data?.[c]))}`).join('<br>') : esc(AUD_A[r.action]);
       return `<tr><td class="nw">${new Date(r.at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(r.actor)}</td><td>${esc(AUD_T[r.table_name] || r.table_name)}</td><td>${esc(label(r))}</td><td><small>${diff}</small></td></tr>`; }).join('')}</table>`;
   }
-  $('aud-go').onclick = () => loadAudit(); $('aud-table').onchange = () => loadAudit();
-  $('aud-q').addEventListener('keydown', e => { if (e.key === 'Enter') loadAudit(); });
-
-  // ---------- helpers ----------
-  const GROUPS = { milk: 'Piano latte', sell: 'Vendere prima', opex: 'Benchmark OpEx (€/anno)', price: 'Prezzi', shopify: 'Shopify', farm: 'Masseria (latte)', energy: 'Energia', labor: 'Lavoro' };
-  const canEdit = () => PERM.can('sistema', 3);
-  const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
-  const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
-  const dOrNull = v => v || null, nOrNull = v => v === '' || v == null ? null : Number(v);
-  const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
-  const dueCls = s => { if (!s) return ''; const d = (new Date(s) - new Date(new Date().toISOString().slice(0, 10))) / 864e5; return d < 0 ? 'ko' : d <= 30 ? 'ko' : ''; };
-
-  // ---------- bots: schedule register + last runs ----------
-  const BOTS = [
-    ['daily_brief', 'Brief giornaliero', 'lun–sab 12:47', 'daily_brief()'],
-    ['procurement', 'Acquisti', 'lun–sab 12:20', 'propose_purchase_orders()'],
-    ['sell_down', 'Vendere prima', 'lun–sab 13:23', 'sell_down_signals()'],
-    ['wholesale_orders', 'Ordini ingrosso', 'lun–sab 18:20', 'confirm_standing_orders()'],
-    ['milk_planning', 'Piano latte', 'lun–sab 18:52', 'plan_milk()'],
-    ['haccp_nudge', 'Chiusura serata', 'lun–sab 19:02', 'haccp_evening_status()'],
-    ['ops_health', 'Controllo sistema', 'lun–sab 20:36', 'ops_health_check()'],
-    ['weekly_brief', 'Brief settimanale', 'lunedì 13:08', 'weekly_brief()'],
-    ['compliance_calendar', 'Manutenzioni e scadenze', 'martedì 13:17', 'compliance_calendar()'],
-    ['monthly_review', 'Revisione mensile', '1° del mese 13:41', 'monthly_review()']];
-  async function loadBots() {
-    await loadNicknames();
-    const { data: runs } = await sb.from('agent_runs').select('agent, started_at, status, summary, error').order('started_at', { ascending: false }).limit(60);
-    const last = {}; (runs || []).forEach(r => { if (!last[r.agent]) last[r.agent] = r; });
-    const fmtT = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
-    $('bots').innerHTML = '<table class="nw2"><tr><th>Bot</th><th>Quando (ora italiana)</th><th>Legge</th><th>Ultima esecuzione</th><th>Esito</th></tr>' + BOTS.map(([a, n, w, f]) => {
-      const r = last[a];
-      return `<tr><td><b>${esc(botLabel(a, n))}</b><br><small class="status">${a}</small></td><td>${w}</td><td><code>${f}</code></td><td>${r ? fmtT(r.started_at) : '<span class="status">mai</span>'}</td><td class="${r ? (r.status === 'ok' ? 'ok' : 'ko') : ''}">${r ? esc(r.status) + (r.summary ? ' · <span class="status">' + esc(r.summary) + '</span>' : '') + (r.error ? ' · ' + esc(r.error) : '') : ''}</td></tr>`; }).join('') + '</table>';
-    $('runs').innerHTML = (runs && runs.length) ? '<table>' + runs.slice(0, 40).map(r => `<tr><td>${esc(botLabel(r.agent))}<br><small class="status">${esc(r.agent)}</small></td><td class="status">${fmtT(r.started_at)}</td><td class="${r.status === 'ok' ? 'ok' : 'ko'}">${esc(r.status)}</td><td class="status">${esc(r.summary || r.error || '')}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna esecuzione registrata.</div>';
-  }
-
+  // the table filter asks the database again; the text filter works on what is already loaded, as you type
+  let audRows = [], audT = null;
+  $('aud-table').onchange = () => loadAudit();
+  $('aud-q').oninput = () => { clearTimeout(audT); audT = setTimeout(renderAudit, 200); };
   // ---------- Shopify variant → stock product map ----------
   async function loadVariantMap() {
     const box = $('variant-map'); box.innerHTML = '';
     const [{ data: rows, error }, { data: prods }] = await Promise.all([sb.from('v_shopify_variant_map').select('*'), sb.from('products').select('id, sku, name, unit').eq('kind', 'finished_good').eq('active', true).order('name')]);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!rows || !rows.length) { box.innerHTML = '<div class="empty">Nessuna variante ancora vista: compare dopo il primo ordine o la prima sincronizzazione.</div>'; return; }
+    rows.sort((a, b) => (b.unmapped_lines || 0) - (a.unmapped_lines || 0) || (!a.product_sku) - (!b.product_sku));
+    badge('n-prod', rows.filter(r => r.unmapped_lines).length); $('n-prod').title = 'varianti con righe d\'ordine in attesa';
     const tbl = document.createElement('table'); tbl.className = 'rec';
     tbl.innerHTML = '<tr><th>Variante Shopify</th><th>Tipo</th><th>Prodotto magazzino</th><th class="num">kg / pezzo</th><th></th></tr>';
     rows.forEach(r => {
@@ -354,43 +425,11 @@
     });
     box.append(tbl);
   }
-
-  // ---------- settings, machines, deadlines ----------
-  async function loadSettings() {
-    const [s, e, d] = await Promise.all([
-      sb.from('settings').select('*').order('key'),
-      sb.from('v_equipment_schedule').select('*'),
-      sb.from('compliance_deadlines').select('*').is('done_on', null).order('due_on', { nullsFirst: false })]);
-    renderParams(s.data || []); renderEquipment(e.data || []); renderDeadlines(d.data || []);
-  }
-  function renderParams(rows) {
-    document.querySelectorAll('.params').forEach(box => {
-      box.innerHTML = '';
-      const groups = box.dataset.groups.split(',');
-      const mine = rows.filter(r => groups.includes(r.key.split('.')[0])).sort((a, b) => (a.sort ?? 100) - (b.sort ?? 100) || a.key.localeCompare(b.key));
-      if (!mine.length) { box.innerHTML = '<div class="empty">Nessun parametro.</div>'; return; }
-      if (!canEdit()) { const n = document.createElement('div'); n.className = 'hint'; n.textContent = 'Sola lettura: modifica chi ha il livello "gestisce" in Sistema (titolare, socio).'; box.append(n); }
-      mine.forEach(r => {
-        const isText = r.data_type === 'text';
-        const row = document.createElement('div'); row.className = 'set-row' + (isText ? ' text' : '');
-        row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small></div>`;
-        const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
-        const inp = document.createElement('input'); inp.type = 'text'; inp.value = r.value; inp.disabled = !canEdit(); inp.oninput = () => row.classList.add('dirty');
-        if (isText) { inp.className = 'wide'; inp.placeholder = '—'; } else inp.inputMode = 'decimal';
-        right.append(inp);
-        if (canEdit()) right.append(saveBtn(async () => {
-          let v = inp.value.trim();
-          if (!isText) { if (v === '' || isNaN(Number(v.replace(',', '.')))) throw new Error('Inserisci un numero'); v = String(Number(v.replace(',', '.'))); }
-          await upd('settings', { key: r.key }, { value: v }); row.classList.remove('dirty');
-          if (r.key.startsWith('company.')) BRAND.set({ [r.key]: v });   // header and tab title follow at once
-        }));
-        row.append(right); box.append(row);
-      });
-    });
-  }
   function renderEquipment(rows) {
     const box = $('set-equipment'); box.innerHTML = '';
-    rows.filter(r => r.active).forEach(r => {
+    const act = rows.filter(r => r.active).sort((a, b) => (!!(a.next_calibration_on || a.next_maintenance_on)) - (!!(b.next_calibration_on || b.next_maintenance_on)) || String(a.code).localeCompare(String(b.code)));
+    if (!act.length) box.innerHTML = '<div class="empty">Nessuna macchina attiva.</div>';
+    act.forEach(r => {
       const c = document.createElement('details'); c.className = 'eq';
       const nc = r.next_calibration_on, nm = r.next_maintenance_on, unset = !nc && !nm;
       c.innerHTML = `<summary class="h"><b>${esc(r.name)} <small class="status">${esc(r.code)}</small></b><span class="status">${unset ? '<span class="ko">date da impostare</span>' : `taratura <span class="${dueCls(nc)}">${fmtD(nc)}</span> · manutenzione <span class="${dueCls(nm)}">${fmtD(nm)}</span>`}</span></summary>
@@ -404,7 +443,7 @@
       const row = document.createElement('div'); row.className = 'row';
       row.append(saveBtn(async () => {
         const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
-        await upd('equipment', { id: r.id }, v); loadSettings();
+        await upd('equipment', { id: r.id }, v); loadMaint();
       }));
       c.append(row); box.append(c);
     });
@@ -423,9 +462,9 @@
           <div style="grid-column:1/-1"><label>Note</label><input type="text" data-k="notes" value="${esc(r.notes || '')}"></div>
         </div>`;
       const row = document.createElement('div'); row.className = 'row';
-      row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); loadSettings(); }));
+      row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); loadMaint(); }));
       const done = document.createElement('button'); done.className = 'btn sm sec'; done.textContent = 'Fatto oggi';
-      done.onclick = async () => { done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadSettings(); };
+      done.onclick = async () => { done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadMaint(); };
       row.append(done); c.append(row); box.append(c);
     });
   }
@@ -433,13 +472,34 @@
     const subj = $('dl-new-subject').value.trim(); if (!subj) return toast('Scrivi la descrizione', 'err');
     const { error } = await sb.from('compliance_deadlines').insert({ kind: 'other', subject_it: subj, due_on: dOrNull($('dl-new-due').value), interval_days: nOrNull($('dl-new-int').value), responsible: 'partner' });
     if (error) return toast(error.message, 'err');
-    $('dl-new-subject').value = ''; $('dl-new-due').value = ''; $('dl-new-int').value = ''; toast('Aggiunta'); loadSettings();
-  };
-  $('pw-save').onclick = async () => {
+    $('dl-new-subject').value = ''; $('dl-new-due').value = ''; $('dl-new-int').value = ''; UI.clean($('dl-add')); toast('Aggiunta'); loadMaint();
+  };  $('pw-save').onclick = async () => {
     const pw = $('pw-new').value; if (pw.length < 8) return toast('Minimo 8 caratteri', 'err');
     $('pw-save').disabled = true; const { error } = await sb.auth.updateUser({ password: pw }); $('pw-save').disabled = false;
-    if (error) return toast(error.message, 'err'); $('pw-new').value = ''; toast('Password cambiata');
+    if (error) return toast(error.message, 'err'); $('pw-new').value = ''; UI.clean($('account')); toast('Password cambiata');
   };
 
-  init();
+  // ---------- tabs + start ----------
+  const SEC_IDS = SECTIONS.map(s => s[0]).concat('altro');
+  const T = UI.tabs({
+    def: 'parametri', alias: Object.assign({ account: 'utenti' }, Object.fromEntries(SEC_IDS.map(s => [s, 'parametri']))),
+    loaders: { parametri: loadParams, maint: loadMaint, prodotti: loadVariantMap, bots: loadBotFeed, utenti: loadUsers, registro: loadAudit }
+  });
+  async function refresh() {
+    if ((UI.unsaved() || PROWS.some(r => String(r.value) !== String(r.orig))) && !confirm('Ci sono modifiche non salvate: aggiornando le perdi. Continuare?')) return false;
+    document.querySelectorAll('.dirty').forEach(e => e.classList.remove('dirty'));
+    await T.reload(); UI.bellCount();
+  }
+  UI.boot({
+    page: 'admin', onRefresh: refresh,
+    onReady: async s => {
+      staff = s;
+      const h = (location.hash || '').slice(1);
+      if (SEC_IDS.includes(h)) pendingSection = h;
+      T.start();
+      if (h === 'account') setTimeout(() => { $('account').scrollIntoView({ block: 'start' }); $('pw-new').focus(); }, 150);
+      // counts for the tabs that are not open yet
+      if (!T.isLoaded('maint')) loadMaint(); if (!T.isLoaded('prodotti')) sb.from('v_shopify_variant_map').select('unmapped_lines').then(({ data }) => badge('n-prod', (data || []).filter(r => r.unmapped_lines).length));
+    }
+  });
 })();

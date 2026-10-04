@@ -1,88 +1,104 @@
-/* La Perla owner console — operations only. Oggi: daily_brief() tiles + approvals gate; Operazioni: PO send, wholesale, farm supply, effluent; Andamento: charts; Anagrafiche: parties (table, Fornitori|Clienti), standing orders, staff; Ricette: dosing steps. Bot parameters, machines, deadlines and account live in admin.html. */
+/* Owner console (v0.51) — operations only. Oggi: daily_brief() tiles + approvals gate + compliance; Operazioni: PO send, purchase signals,
+   wholesale, Shopify orders, milk for the next 7 days (demand + Masseria availability in one table), effluent; Andamento: charts + monthly pack;
+   Anagrafiche: Fornitori (parties + terms/prices) | Clienti (Shopify customers + standing orders); Ricette: doses + process presets;
+   Personale: rota, hours/overtime, people (contract hours, safety roles, certificates). Shared shell (login, header, tabs, helpers) in ui.js;
+   parameters, machines, bots and users in admin.html. */
 (() => {
-  const CFG = window.FABULA_CONFIG;
-  const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
-  const $ = id => document.getElementById(id);
-  // Mouse wheel over a focused number field must never change its value (keyboard only).
-  document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
-  let staff = null;
-  const show = v => document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-' + v));
-  const toast = (m, cls = '') => { const t = $('toast'); t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2800); };
-  const eur = n => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
-  const num = (n, d = 1) => n == null ? '–' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
-  const dateIt = s => new Date(s + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const { sb, $, esc, eur, num, fmtD, dateIt, daysAgo, nOrNull, toast, badge, upd, saveBtn } = UI;
+  let staff = null, PRODUCTS = {}, NICK = {}, APPR = [], briefP = null;
 
-  // ---------- auth ----------
-  async function init() {
-    const { data: { session } } = await sb.auth.getSession();
-    if (!session) return show('login');
-    const P = await PERM.load(sb);
-    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
-    if (!PERM.page('console')) return PERM.deny(sb, PERM.notForProfile());
-    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
-    staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
-    $('who').textContent = `${staff.full_name} · ${staff.role_name}`; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
-    PERM.navLinks(); $('btn-pkg').hidden = !PERM.page('pacchetto'); $('btn-admin').hidden = !PERM.page('admin');
-    $('btn-bots').hidden = !PERM.page('admin');
-    const botBadge = async () => { if (!PERM.page('admin')) return; const { data } = await sb.from('bot_messages').select('severity').is('read_at', null).limit(1000);
-      const n = (data || []).length, al = (data || []).filter(x => x.severity === 'alert').length;
-      $('bots-n').textContent = n ? `· ${n}${al ? ` (${al} allarmi)` : ''}` : ''; $('bots-n').className = al ? 'ko' : 'status'; };
-    botBadge(); setInterval(() => { if (document.visibilityState === 'visible') botBadge(); }, 120000);
-    const TAB_AREAS = { ops: ['produzione', 'acquisti', 'vendite'], trend: ['produzione', 'vendite'], anag: ['vendite', 'acquisti', 'personale'], ricette: ['produzione'], turni: ['personale'] };
-    document.querySelectorAll('.tab').forEach(t => { const a = TAB_AREAS[t.dataset.tab]; if (a) t.hidden = !a.some(x => PERM.can(x)); });
-    show('main'); load(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
-  }
-  $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
-  $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
-  $('btn-logout').onclick = async () => { await sb.auth.signOut(); location.reload(); };
-  $('btn-refresh').onclick = () => load();
+  // ---------- daily brief: fetched once per refresh, shared by Oggi, Operazioni and Andamento ----------
+  const getBrief = () => briefP || (briefP = sb.rpc('daily_brief').then(({ data, error }) => {
+    if (error) { briefP = null; throw new Error('daily_brief: ' + error.message); }
+    $('simbadge').hidden = !data.is_simulation; $('sub').textContent = 'Brief di ' + dateIt(data.date);
+    return data;
+  }));
 
-  // ---------- data ----------
-  async function load() {
-    const [brief, appr, prods, prod, sales] = await Promise.all([
-      sb.rpc('daily_brief'),
+  // ---------- Oggi ----------
+  async function loadOggi() {
+    const [b, appr, prods, nick] = await Promise.all([
+      getBrief(),
       sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table').eq('status', 'pending').order('requested_at'),
       sb.from('products').select('sku, name, unit'),
-      sb.from('v_daily_production').select('batch_date, product, yield_pct, output_kg').ilike('product', 'Mozzarella%').gte('batch_date', daysAgo(30)).order('batch_date'),
-      sb.from('v_daily_sales').select('order_date, channel, revenue_eur').gte('order_date', daysAgo(30)).order('order_date')
-    ]);
-    if (brief.error) return toast('daily_brief: ' + brief.error.message, 'err');
-    const b = brief.data;
-    $('simbadge').hidden = !b.is_simulation;
-    $('sub').textContent = 'Brief di ' + dateIt(b.date);
+      sb.from('bot_nicknames').select('agent, nickname, title_it')]);
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
-    renderTiles(b); renderApprovals(appr.data || [], b.date); renderHaccp(b); renderStock(b.stock_finished, b.date); renderProcurement(b.procurement_signals);
-    badge('n-oggi', (b.pending_approvals || []).length); refreshBadges();
-    if (loaded.ops) { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }
-    yieldChart(prod.data || [], b.yield); salesChart(sales.data || []);
+    NICK = Object.fromEntries((nick.data || []).map(n => [n.agent, n]));
+    APPR = appr.data || [];
+    const issues = complianceItems(b);
+    renderTiles(b, issues); renderApprovals(b.date); renderHaccp(b, issues); renderStock(b.stock_finished, b.date);
   }
-  const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
 
-  // ---------- tiles ----------
-  function renderTiles(b) {
+  // one list of compliance issues: the tile counts exactly the red lines the card shows
+  function complianceItems(b) {
+    const h = b.haccp || {}, t = b.tasks || {}, items = [];
+    (h.non_conformities || []).forEach(n => items.push(['ko', `Non conformità ${esc(n.point)}: ${num(n.value)} °C${n.action ? ' · ' + esc(n.action) : ''}`]));
+    (h.missing_daily_checks || []).forEach(c => items.push(['ko', `Controllo mancante: ${esc(c)}`]));
+    (h.evening_cold_checks_missing || []).filter(c => !(h.missing_daily_checks || []).includes(c)).forEach(c => items.push(['ko', `Controllo serale mancante: ${esc(c)}`]));
+    // the same recurring task missed several times = one line with the count, not one line per missed slot
+    const od = {}; (t.overdue || []).forEach(o => { const k = o.code + '|' + o.title; (od[k] = od[k] || { o, n: 0, first: o.due }).n++; if (o.due < od[k].first) od[k].first = o.due; });
+    Object.values(od).forEach(({ o, n, first }) => items.push(['ko', `Attività scaduta: ${esc(o.title)} (${esc(o.code)})${n > 1 ? ` · ${n} volte dal ${fmtD(String(first).slice(0, 10)).slice(0, 5)}` : ''}`]));
+    if (t.open_non_conformities) items.push(['ko', `${t.open_non_conformities} non conformità ancora aperte`]);
+    (t.calibration_due || []).forEach(c => items.push(['ko', `Taratura ${esc(c.code)} entro ${fmtD(c.due)}`]));
+    (t.training_expiring || []).forEach(s => items.push(['ko', `Formazione HACCP ${esc(s.name)} scade ${fmtD(s.expires)}`]));
+    const pc = b.pos_close || {};
+    if (pc.missing) items.push(['status', 'Nessuna vendita di cassa sincronizzata per ieri (normale se il negozio era chiuso)']);
+    else if (pc.variance_eur && Math.abs(pc.variance_eur) > 0.5) items.push(['ko', `Cassa: scostamento ${eur(pc.variance_eur)} tra scontrino Z e registrato`]);
+    const e = b.energy || {};
+    if (e.yesterday_kwh_per_kg && e.avg_30d_kwh_per_kg && e.yesterday_kwh_per_kg > e.avg_30d_kwh_per_kg * 1.15) items.push(['ko', `Energia ${num(e.yesterday_kwh_per_kg, 2)} kWh/kg vs media ${num(e.avg_30d_kwh_per_kg, 2)}`]);
+    return items;
+  }
+
+  function renderTiles(b, issues) {
     const moz = (b.production || []).find(p => /Mozzarella/.test(p.product)) || {};
-    const y = b.yield || {}, st = b.sales_trend || {}, w = b.waste || {}, t = b.tasks || {}, h = b.haccp || {};
+    const y = b.yield || {}, st = b.sales_trend || {}, w = b.waste || {};
     const yieldDelta = y.yesterday != null && y.avg_30d != null ? y.yesterday - y.avg_30d : null;
     const salesDelta = st.same_weekday_avg_4w_eur ? (st.yesterday_eur - st.same_weekday_avg_4w_eur) / st.same_weekday_avg_4w_eur * 100 : null;
-    const pc = b.pos_close || {};
-    const compliance = (h.non_conformities || []).length + (h.missing_daily_checks || []).length + (h.evening_cold_checks_missing || []).filter(c => !(h.missing_daily_checks || []).includes(c)).length
-      + (t.overdue || []).length + (t.open_non_conformities || 0) + (t.calibration_due || []).length + (t.training_expiring || []).length + (pc.missing || Math.abs(pc.variance_eur || 0) > 0.5 ? 1 : 0);
+    const ko = issues.filter(i => i[0] === 'ko').length;
     const tiles = [
-      ['Resa ieri', y.yesterday != null ? num(y.yesterday) + ' %' : '–', yieldDelta != null ? (yieldDelta >= 0 ? '+' : '') + num(yieldDelta) + ' vs 30 gg' : 'nessuna produzione', yieldDelta != null && yieldDelta < -1.5],
+      ['Resa ieri', y.yesterday != null ? num(y.yesterday) + ' %' : '–', yieldDelta != null ? (yieldDelta >= 0 ? '+' : '') + num(yieldDelta) + ' vs media 30 gg' : 'nessuna produzione', yieldDelta != null && yieldDelta < -1.5],
       ['Mozzarella ieri', moz.output_kg != null ? num(moz.output_kg, 0) + ' kg' : '–', moz.milk_in_kg ? 'da ' + num(moz.milk_in_kg, 0) + ' kg latte' : '', false],
       ['Vendite ieri', eur(st.yesterday_eur), salesDelta != null ? (salesDelta >= 0 ? '+' : '') + num(salesDelta, 0) + ' % vs stesso giorno' : '', salesDelta != null && salesDelta < -15],
       ['Settimana', eur(st.week_to_date_eur), 'da lunedì', false],
       ['Scarti 7 gg', w.last_7d_pct_of_output != null ? num(w.last_7d_pct_of_output) + ' %' : '–', num(w.last_7d_kg, 0) + ' kg', (w.last_7d_pct_of_output || 0) > 10],
-      ['Conformità', compliance === 0 ? 'OK' : String(compliance), compliance === 0 ? 'nessun problema' : 'segnalazioni aperte', compliance > 0],
-      ['Da approvare', String((b.pending_approvals || []).length), 'richieste dei bot', (b.pending_approvals || []).length > 0],
+      ['Conformità', ko ? String(ko) : 'OK', ko ? (ko === 1 ? 'punto da verificare ↓' : 'punti da verificare ↓') : 'nessun problema', ko > 0, 'c-haccp'],
+      ['Da approvare', String(APPR.length), APPR.length ? 'richieste dei bot ↓' : 'niente in attesa', APPR.length > 0, 'h-appr'],
     ];
-    $('tiles').innerHTML = tiles.map(([l, v, d, bad]) => `<div class="tile${bad ? ' bad' : ''}"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join('');
+    $('tiles').innerHTML = tiles.map(([l, v, d, bad, go]) => `<div class="tile${bad ? ' bad' : ''}${go ? ' go' : ''}"${go ? ` data-go="${go}" role="button" tabindex="0"` : ''}${l === 'Da approvare' ? ' id="tile-appr"' : ''}><div class="l">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join('');
+    $('tiles').querySelectorAll('[data-go]').forEach(t => { const go = () => $(t.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' }); t.onclick = go; t.onkeydown = e => { if (e.key === 'Enter') go(); }; });
   }
+  const apprCount = () => {
+    const n = APPR.length; badge('n-oggi', n);
+    const t = $('tile-appr'); if (t) { t.querySelector('.v').textContent = n; t.querySelector('.d').textContent = n ? 'richieste dei bot ↓' : 'niente in attesa'; t.classList.toggle('bad', n > 0); }
+  };
+  const proposer = a => { const k = String(a.requested_by || '').replace(/^agent:/, ''), n = NICK[k]; return n ? `${n.nickname} · ${n.title_it}` : k.replace(/_/g, ' ') || 'sistema'; };
 
-  // ---------- approvals: one structured card per request, facts laid out as a grid instead of a sentence ----------
-  let PRODUCTS = {};
-  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], content_post: ['Post social', 'milk'], recall_assessment: ['Sicurezza alimentare', ''], other: ['Richiesta', ''] };
+  // ---------- approvals: one structured card per request; deciding one never reloads the others (notes typed elsewhere stay) ----------
+  function renderApprovals(today) {
+    const box = $('approvals'); apprCount();
+    if (!APPR.length) { box.innerHTML = '<div class="empty">Niente in attesa. I bot propongono, tu decidi: tutto ciò che impegna denaro o documenti compare qui prima.</div>'; return; }
+    const age = a => Math.max(0, Math.round((Date.now() - new Date(a.requested_at)) / 864e5));
+    box.innerHTML = APPR.map(a => { const v = approvalView(a, today); return `
+      <div class="appr" data-id="${a.id}">
+        <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><div class="t">${v.title}</div><div class="by">proposto da ${esc(proposer(a))} · ${age(a) === 0 ? 'oggi' : age(a) === 1 ? 'ieri' : age(a) + ' giorni fa'}</div></div><div class="amt">${v.amount}</div></div>
+        ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
+        ${PERM.can(PERM.approvalArea(a), 3) ? `<div class="row nodirty"><input type="text" placeholder="${v.type === 'recall_assessment' ? 'Nota (obbligatoria se rifiuti)' : 'Nota (facoltativa)'}" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>` : `<div class="status" style="margin-top:8px">Solo lettura: decide chi ha "gestisce" in quest'area.</div>`}
+      </div>`; }).join('');
+    box.querySelectorAll('button[data-act]').forEach(btn => btn.onclick = async () => {
+      const card = btn.closest('.appr'), id = card.dataset.id, act = btn.dataset.act, a = APPR.find(x => String(x.id) === id) || {};
+      const note = $('note-' + id).value.trim();
+      if (act === 'rejected' && approvalView(a, today).type === 'recall_assessment' && !note) { toast('Scrivi nella nota perché il ritiro non serve', 'err'); $('note-' + id).focus(); return; }
+      card.querySelectorAll('button').forEach(b => b.disabled = true);
+      const { data: row, error } = await sb.from('approvals').update({ status: act, decided_by: staff.full_name, decided_at: new Date().toISOString(), decision_note: note || null }).eq('id', id).eq('status', 'pending').select().single();
+      if (error) { toast(error.code === 'PGRST116' ? 'Non hai il permesso di decidere questa richiesta, o è già stata decisa' : error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
+      if (row.related_table === 'purchase_orders' && row.related_id) { const { error: e2 } = await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id); if (e2) toast('Approvazione salvata, ma l\'ordine non si è aggiornato: ' + e2.message, 'err'); }
+      APPR = APPR.filter(x => String(x.id) !== id); card.remove(); apprCount();
+      if (!APPR.length) renderApprovals(today);
+      toast(act === 'approved' ? 'Approvato' : 'Rifiutato');
+      if (row.related_table === 'purchase_orders' && T.isLoaded('ops')) renderPoSend();
+      refreshBadges();
+    });
+  }
+  const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], sell_down: ['Vendere prima', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], content_post: ['Post social', 'milk'], recall_assessment: ['Sicurezza alimentare', ''], other: ['Richiesta', ''] };
   const WDAY = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
   const dShort = s => s ? WDAY[new Date(s + 'T12:00:00').getDay()] + ' ' + fmtD(s) : '—';
   const fact = (l, v, cls = '') => `<div><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
@@ -130,7 +146,7 @@
         const dist = p.distribution || [];
         title = `Valutare ritiro/richiamo · lotto ${esc(p.lot || 'n/d')}`;
         facts = fact('Analisi', esc(p.test || '')) + fact('Campione', esc(p.sample_code || '')) + fact('Destinazioni', String(dist.length), dist.length ? 'ko' : '');
-        more = `<details open><summary>A chi è andato il lotto</summary>${dist.length ? dist.map(d => `<div>• ${esc(d.on_date || '')} · ${esc(d.channel || '')} · ${esc(d.customer || 'banco')} · ${num(d.qty)} kg</div>`).join('') : '<div>Nessuna uscita registrata: il lotto è tutto in giacenza (bloccato).</div>'}<div style="margin-top:6px">Approva = ritiro/richiamo deciso (avvisare ASL Salerno e clienti) · Rifiuta = non necessario, motivare nella nota. <a href="haccp.html#registro">Apri HACCP</a></div></details>`;
+        more = `<details open><summary>A chi è andato il lotto</summary>${dist.length ? dist.map(d => `<div>• ${fmtD(d.on_date)} · ${esc(d.channel || '')} · ${esc(d.customer || 'banco')} · ${num(d.qty)} kg</div>`).join('') : '<div>Nessuna uscita registrata: il lotto è tutto in giacenza (bloccato).</div>'}<div style="margin-top:6px">Approva = ritiro/richiamo deciso (avvisare ASL Salerno e clienti) · Rifiuta = non necessario, motivare nella nota. <a href="haccp.html#registro">Apri HACCP</a></div></details>`;
         break;
       }
       case 'dop_declaration':
@@ -139,75 +155,146 @@
         break;
     }
     const [klabel, kcls] = KIND[type] || KIND.other;
-    return { title, facts, more, amount, klabel, kcls };
+    return { type, title, facts, more, amount, klabel, kcls };
   }
-  function renderApprovals(list, today) {
-    const box = $('approvals');
-    if (!list || !list.length) { box.innerHTML = '<div class="empty">Niente in attesa. I bot propongono, tu decidi: tutto ciò che impegna denaro o documenti compare qui prima.</div>'; return; }
-    const age = a => Math.max(0, Math.round((Date.now() - new Date(a.requested_at)) / 864e5));
-    box.innerHTML = list.map(a => { const v = approvalView(a, today); return `
-      <div class="appr" data-id="${a.id}">
-        <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><div class="t">${v.title}</div><div class="by">proposto da ${esc(String(a.requested_by || '').replace('agent:', 'bot ').replace('_', ' '))} · ${age(a) === 0 ? 'oggi' : age(a) + ' g fa'}</div></div><div class="amt">${v.amount}</div></div>
-        ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
-        ${PERM.can(PERM.approvalArea(a), 3) ? `<div class="row"><input type="text" placeholder="Nota (facoltativa)" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>` : `<div class="status" style="margin-top:8px">Solo lettura: decide chi ha "gestisce" in quest'area.</div>`}
-      </div>`; }).join('');
-    box.querySelectorAll('button[data-act]').forEach(btn => btn.onclick = async () => {
-      const card = btn.closest('.appr'), id = card.dataset.id, act = btn.dataset.act;
-      card.querySelectorAll('button').forEach(b => b.disabled = true);
-      const { data: row, error } = await sb.from('approvals').update({ status: act, decided_by: staff.full_name, decided_at: new Date().toISOString(), decision_note: $('note-' + id).value || null }).eq('id', id).eq('status', 'pending').select().single();
-      if (error) { toast(error.code === 'PGRST116' ? 'Non hai il permesso di decidere questa richiesta (o è già stata decisa)' : error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
-      if (row.related_table === 'purchase_orders' && row.related_id) await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id);
-      toast(act === 'approved' ? 'Approvato' : 'Rifiutato'); load();
+  function renderHaccp(b, items) {
+    const h = b.haccp || {};
+    $('haccp').innerHTML = items.length ? '<ul style="margin:0;padding-left:18px">' + items.map(([c, s]) => `<li class="${c}">${s}</li>`).join('') + '</ul>' : `<div class="ok">${h.checks_logged || 0} controlli registrati, nessuna anomalia.</div>`;
+  }
+
+  // ---------- tab badges (cheap counts, refreshed after every decision) ----------
+  async function refreshBadges() {
+    const [ap, po, ws, pl, ce] = await Promise.all([
+      sb.from('approvals').select('id').eq('status', 'pending'),
+      sb.from('v_pos_to_send').select('po_number'),
+      sb.from('v_wholesale_tomorrow').select('order_number'),
+      sb.from('v_parties_editor').select('id').eq('is_placeholder', true),
+      PERM.can('personale') ? sb.from('v_certificates_expiring').select('status') : Promise.resolve({ data: [] })]);
+    badge('n-oggi', (ap.data || []).length);
+    const nPo = (po.data || []).length, nWs = (ws.data || []).length;
+    badge('n-ops', nPo); $('n-ops').title = `${nPo} ordini da inviare · ${nWs} consegne ingrosso prenotate`;
+    badge('n-anag', (pl.data || []).length); $('n-anag').title = 'segnaposto da completare';
+    const bad = (ce.data || []).filter(x => x.status === 'scaduto' || x.status === 'mancante').length;
+    badge('n-pers', bad); $('n-pers').title = 'attestati scaduti o mancanti';
+  }
+
+  // ---------- Operazioni: milk for the next 7 days — demand and Masseria availability in one table ----------
+  async function loadMilk7() {
+    const box = $('demand7'); box.innerHTML = '<div class="status">Carico…</div>'; UI.clean(box.closest('[data-scope]'));
+    const [{ data: dem, error }, { data: farm, error: e2 }] = await Promise.all([sb.from('v_demand_7d').select('*'), sb.from('v_farm_supply_next').select('*')]);
+    if (error || e2) { box.innerHTML = `<div class="empty">${esc((error || e2).message)}</div>`; return; }
+    const F = Object.fromEntries((farm || []).map(r => [r.supply_date, r])), D = Object.fromEntries((dem || []).map(r => [r.plan_date, r]));
+    // production days come from the demand view; a farm day without demand is shown only if it is not a Sunday
+    const dates = [...new Set([...Object.keys(D), ...Object.keys(F).filter(d => new Date(d + 'T12:00:00').getDay() !== 0)])].sort();
+    if (!dates.length) { box.innerHTML = '<div class="empty">Nessun giorno di produzione nei prossimi 7 giorni.</div>'; return; }
+    box.innerHTML = '';
+    const tbl = document.createElement('table');
+    tbl.innerHTML = '<tr><th>Giorno</th><th class="num">Banco kg</th><th class="num">Ingrosso kg</th><th class="num">Preordini kg</th><th class="num">Mozzarella kg</th><th class="num">Latte kg</th><th class="num">Masseria kg</th><th>Piano latte</th></tr>';
+    const t = { r: 0, w: 0, p: 0, o: 0, m: 0, c: 0 }, inputs = [];
+    dates.forEach(dt => {
+      const r = D[dt] || {}, f = F[dt] || {}, d = new Date(dt + 'T12:00:00');
+      const avail = f.kg_available != null ? Number(f.kg_available) : Number(r.farm_kg || 0), milk = Number(r.milk_kg || 0);
+      t.r += +(r.retail_kg || 0); t.w += +(r.wholesale_kg || 0); t.p += +(r.preorder_kg || 0); t.o += +(r.output_kg || 0); t.m += milk; t.c += +(r.est_cost_eur || 0);
+      const plan = r.plan_status ? `${r.plan_status === 'approved' ? 'approvato' : 'proposto'} ${num(r.plan_milk_kg, 0)} kg` : (f.planned_kg != null ? `${num(f.planned_kg, 0)} kg` : '–');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td style="white-space:nowrap">${d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}${r.plan_date && Number(r.history_days) < 2 ? ' <small class="status" title="Meno di 2 settimane di vendite per questo giorno: la previsione banco è incerta">poco storico</small>' : ''}</td>
+        <td class="num">${num(r.retail_kg, 0)}</td><td class="num" title="${esc(r.wholesale_source || '')}">${num(r.wholesale_kg, 0)}</td><td class="num">${Number(r.preorder_kg) ? num(r.preorder_kg, 0) : '–'}</td>
+        <td class="num">${num(r.output_kg, 0)}</td><td class="num${r.capacity_hit ? ' ko' : ''}" title="${r.capacity_hit ? 'Serve più della capacità della caldaia' : ''}">${r.plan_date ? num(milk, 0) : '–'}${r.capacity_hit ? ' ▲' : ''}</td>`;
+      const td = document.createElement('td'); td.className = 'num'; td.style.whiteSpace = 'nowrap';
+      const inp = document.createElement('input'); inp.type = 'number'; inp.step = '25'; inp.min = '0'; inp.style.width = '84px'; inp.value = avail; inp.title = 'kg di latte disponibili dalla Masseria';
+      const tag = document.createElement('small'); tag.className = 'status'; tag.style.display = 'block'; tag.textContent = f.source ? '' : 'predefinito';
+      const mark = () => { const short = r.plan_date && milk > Number(inp.value || 0); td.classList.toggle('ko', !!short); inp.style.borderColor = short ? 'var(--warn)' : ''; inp.title = short ? `La Masseria non basta: mancano ${num(milk - Number(inp.value || 0), 0)} kg` : 'kg di latte disponibili dalla Masseria'; };
+      inp.oninput = () => { mark(); tag.textContent = Number(inp.value) !== avail ? 'modificato' : f.source ? '' : 'predefinito'; };
+      td.append(inp, tag); mark();
+      const tdp = document.createElement('td'); tdp.innerHTML = `<small>${plan}</small>`;
+      tr.append(td, tdp); tbl.append(tr); inputs.push({ dt, inp, orig: avail });
+    });
+    const tf = document.createElement('tr'); tf.style.fontWeight = '600';
+    tf.innerHTML = `<td>Totale</td><td class="num">${num(t.r, 0)}</td><td class="num">${num(t.w, 0)}</td><td class="num">${t.p ? num(t.p, 0) : '–'}</td><td class="num">${num(t.o, 0)}</td><td class="num">${num(t.m, 0)}</td><td></td><td><small>${t.c ? '€ ' + num(t.c, 0) + ' latte' : ''}</small></td>`;
+    tbl.append(tf);
+    const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(tbl); box.append(wrap);
+    const bar = document.createElement('div'); bar.className = 'row';
+    bar.append(saveBtn(async () => {
+      const ch = inputs.filter(x => String(x.inp.value) !== String(x.orig));
+      if (!ch.length) { toast('Nessuna modifica'); return; }
+      if (ch.some(x => x.inp.value === '' || Number(x.inp.value) < 0)) throw new Error('Inserisci i kg disponibili (0 o più)');
+      const { error } = await sb.from('farm_supply').upsert(ch.map(x => ({ supply_date: x.dt, kg_available: Number(x.inp.value), source: 'console', notes: 'da ' + staff.full_name })), { onConflict: 'supply_date' });
+      if (error) throw error; loadMilk7();
+    }, 'Salva disponibilità Masseria'));
+    box.append(bar);
+    const rows = dates.map(d => D[d]).filter(Boolean);
+    const capDays = rows.filter(r => r.capacity_hit).length, shortDays = rows.filter(r => Number(r.farm_gap_kg) < 0).length;
+    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px';
+    note.innerHTML = (rows[0] ? `Resa usata ${num(rows[0].yield_pct, 1)}% (media 30 gg). ` : '') + (capDays ? `<span class="ko">${capDays} giorni oltre la capacità della caldaia (▲): anticipare produzione o aumentare i turni.</span> ` : '')
+      + (shortDays ? `<span class="ko">${shortDays} giorni la Masseria non basta: serve latte da altri fornitori.</span> ` : 'La Masseria copre tutti i giorni. ')
+      + `"predefinito" = <a class="lnk" href="admin.html#produzione">farm.default_kg_per_day</a>.`;
+    box.append(note);
+  }
+
+  // ---------- Personale: people — contract hours, safety designations, certificates (one Salva per person) ----------
+  const DESIG = [['primo_soccorso', 'Primo soccorso'], ['antincendio', 'Antincendio'], ['preposto', 'Preposto'], ['rls', 'RLS']];
+  async function loadStaffCard() {
+    const box = $('set-staff');
+    const [{ data: rows, error }, { data: exp }, { data: cfg }] = await Promise.all([
+      sb.from('staff').select('id, full_name, role, contract_hours_week, designations, active').eq('active', true).order('full_name'),
+      sb.from('v_certificates_expiring').select('*'),
+      sb.from('settings').select('value').eq('key', 'labor.contract_hours_week').maybeSingle()]);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const defH = Number(cfg?.value || 40), edit = PERM.can('personale', 3);
+    box.innerHTML = rows && rows.length ? '' : '<div class="empty">Nessuna persona attiva.</div>';
+    (rows || []).forEach(r => {
+      const mine = (exp || []).filter(x => x.staff_id === r.id);
+      const bad = mine.filter(x => x.status === 'scaduto' || x.status === 'mancante'), soon = mine.filter(x => x.status !== 'scaduto' && x.status !== 'mancante');
+      const row = document.createElement('div'); row.className = 'set-row';
+      const lines = [...bad.map(x => `<span class="ko">${esc(x.course_name)}: ${x.status === 'scaduto' ? 'scaduto il ' + fmtD(x.expires_on) : 'manca'}</span>`),
+                     ...soon.map(x => `${esc(x.course_name)}: scade ${fmtD(x.expires_on)} (${x.days_left} gg)`)];
+      row.innerHTML = `<div class="lbl"><b>${esc(r.full_name)}</b><small>${esc(r.role)}${lines.length ? '<br>' + lines.join('<br>') : ' · attestati in regola'}</small></div>`;
+      const right = document.createElement('div'); right.className = 'row'; right.style.cssText = 'margin-top:0;flex-wrap:wrap;gap:6px 10px;justify-content:flex-end';
+      const hl = document.createElement('label'); hl.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:.85rem';
+      const h = document.createElement('input'); h.type = 'number'; h.step = '0.5'; h.min = '0'; h.style.width = '64px'; h.value = r.contract_hours_week ?? ''; h.placeholder = String(defH); h.disabled = !edit; h.title = `Vuoto = ${defH} h (valore aziendale)`;
+      hl.append('Ore/sett.', h); right.append(hl);
+      const boxes = DESIG.map(([k, l]) => { const lab = document.createElement('label'); lab.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:.85rem'; const c = document.createElement('input'); c.type = 'checkbox'; c.value = k; c.checked = (r.designations || []).includes(k); c.disabled = !edit; lab.append(c, l); right.append(lab); return c; });
+      if (edit) right.append(saveBtn(async () => { await upd('staff', { id: r.id }, { contract_hours_week: nOrNull(h.value), designations: boxes.filter(c => c.checked).map(c => c.value) }); loadStaffCard(); if (rotaDirty()) loadHours(isoDay(rotaMon)); else loadRota(); refreshBadges(); }));
+      row.append(right); box.append(row);
     });
   }
 
-  // ---------- lists ----------
-  function renderHaccp(b) {
-    const h = b.haccp || {}, t = b.tasks || {}; const items = [];
-    (h.non_conformities || []).forEach(n => items.push(['ko', `Non conformità ${esc(n.point)}: ${num(n.value)} °C${n.action ? ' · ' + esc(n.action) : ''}`]));
-    (h.missing_daily_checks || []).forEach(c => items.push(['ko', `Controllo mancante: ${esc(c)}`]));
-    (h.evening_cold_checks_missing || []).filter(c => !(h.missing_daily_checks || []).includes(c)).forEach(c => items.push(['ko', `Controllo serale mancante: ${esc(c)}`]));
-    (t.overdue || []).forEach(o => items.push(['ko', `Attività scaduta: ${esc(o.title)} (${esc(o.code)})`]));
-    if (t.open_non_conformities) items.push(['ko', `${t.open_non_conformities} non conformità aperte`]);
-    (t.calibration_due || []).forEach(c => items.push(['ko', `Taratura ${esc(c.code)} entro ${c.due}`]));
-    (t.training_expiring || []).forEach(s => items.push(['ko', `Formazione HACCP ${esc(s.name)} scade ${s.expires}`]));
-    const pc = b.pos_close || {}; if (pc.missing) items.push(['status', 'Nessuna vendita POS sincronizzata per ieri']); else if (pc.variance_eur && Math.abs(pc.variance_eur) > 0.5) items.push(['ko', `Cassa: scostamento ${eur(pc.variance_eur)} tra scontrino Z e registrato`]);
-    const e = b.energy || {}; if (e.yesterday_kwh_per_kg && e.avg_30d_kwh_per_kg && e.yesterday_kwh_per_kg > e.avg_30d_kwh_per_kg * 1.15) items.push(['ko', `Energia ${num(e.yesterday_kwh_per_kg, 2)} kWh/kg vs media ${num(e.avg_30d_kwh_per_kg, 2)}`]);
-    $('haccp').innerHTML = items.length ? '<ul style="margin:0;padding-left:18px">' + items.map(([c, s]) => `<li class="${c}">${s}</li>`).join('') + '</ul>' : `<div class="ok">${h.checks_logged || 0} controlli registrati, nessuna anomalia.</div>`;
+  // ---------- tabs ----------
+  const T = UI.tabs({
+    def: 'oggi', alias: { turni: 'personale' },
+    loaders: {
+      oggi: loadOggi,
+      ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders()]); },
+      trend: loadTrend,
+      anag: () => Promise.all([loadParties(), loadTerms(), loadStanding()]),
+      ricette: () => Promise.all([loadRecipes(), loadPresets()]),
+      personale: () => Promise.all([loadRota(), loadStaffCard()])
+    }
+  });
+  async function loadTrend() {
+    const [b, prod, sales] = await Promise.all([getBrief(),
+      sb.from('v_daily_production').select('batch_date, product, yield_pct, output_kg').ilike('product', 'Mozzarella%').gte('batch_date', daysAgo(30)).order('batch_date'),
+      sb.from('v_daily_sales').select('order_date, channel, revenue_eur').gte('order_date', daysAgo(30)).order('order_date')]);
+    yieldChart(prod.data || [], b.yield || {}); salesChart(sales.data || []);
+  }
+  async function refresh() {
+    if (UI.unsaved() && !confirm('Ci sono modifiche non salvate: aggiornando le perdi. Continuare?')) return false;
+    document.querySelectorAll('.dirty').forEach(e => e.classList.remove('dirty'));
+    briefP = null; await Promise.all([T.reload(), refreshBadges()]);
+    if (T.current !== 'oggi') getBrief().catch(() => {});
   }
   function renderStock(list, date) {
     const soon = (list || []).filter(s => s.expires && (new Date(s.expires) - new Date(date)) / 864e5 <= 2);
-    $('stock').innerHTML = soon.length ? '<table><tr><th>Lotto</th><th>Prodotto</th><th class="num">kg</th><th>Scade</th></tr>' + soon.map(s => `<tr><td>${esc(s.lot)}</td><td>${esc(s.sku)}</td><td class="num">${num(s.kg)}</td><td class="${s.expires <= date ? 'ko' : ''}">${s.expires}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessun lotto in scadenza entro 2 giorni.</div>';
+    $('stock').innerHTML = soon.length ? '<table><tr><th>Lotto</th><th>Prodotto</th><th class="num">kg</th><th>Scade</th></tr>' + soon.map(s => `<tr><td>${esc(s.lot)}</td><td>${esc((PRODUCTS[s.sku] || {}).name || s.sku)}</td><td class="num">${num(s.kg)}</td><td class="${s.expires <= date ? 'ko' : ''}">${fmtD(s.expires)}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessun lotto in scadenza entro 2 giorni.</div>';
   }
   function renderProcurement(list) {
     $('procurement').innerHTML = (list && list.length) ? '<table><tr><th>Articolo</th><th class="num">Giacenza</th><th class="num">Copertura</th><th class="num">Riordino</th></tr>' + list.map(p => `<tr><td>${esc(p.name)}</td><td class="num">${num(p.on_hand, 0)}</td><td class="num ${p.days_cover != null && p.days_cover < 5 ? 'ko' : ''}">${p.days_cover != null ? num(p.days_cover) + ' gg' : '–'}</td><td class="num">${num(p.reorder_qty, 0)}</td></tr>`).join('') + '</table>' : '<div class="empty">Scorte consumabili sopra il punto di riordino.</div>';
-  }
-  // ---------- settings & dates editor ----------
-  // ---------- tabs (lazy: each pane loads the first time it is opened; Oggi loads with the brief) ----------
-  const loaded = {};
-  const LOADERS = { ops: () => { renderPoSend(); renderWholesale(); loadFarm(); loadDemand7(); loadEffluent(); loadShopifyOrders(); }, anag: () => { loadParties(); loadTerms(); loadStanding(); loadStaffCard(); }, ricette: () => { loadRecipes(); loadPresets(); }, turni: () => loadRota() };
-  function showTab(name, push = true) {
-    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
-    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'p-' + name));
-    if (push) { try { history.replaceState(null, '', '#' + name); } catch {} }
-    if (LOADERS[name] && !loaded[name]) { loaded[name] = true; LOADERS[name](); }
-  }
-  $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) showTab(t.dataset.tab); };
-  const badge = (id, n) => { const el = $(id); if (!el) return; el.textContent = n; el.classList.toggle('on', n > 0); };
-  async function refreshBadges() {
-    const [po, ws, pl] = await Promise.all([
-      sb.from('v_pos_to_send').select('po_number'),
-      sb.from('v_wholesale_tomorrow').select('order_number'),
-      sb.from('v_parties_editor').select('id').eq('is_placeholder', true)]);
-    badge('n-ops', (po.data || []).length);
-    badge('n-anag', (pl.data || []).length);
-    $('n-ops').title = `${(po.data || []).length} ordini da inviare · ${(ws.data || []).length} consegne ingrosso`;
-  }
-  async function loadTerms() {
-    const box = $('set-terms'); box.innerHTML = '';
+  }  async function loadTerms() {
+    const box = $('set-terms'); box.innerHTML = '<div class="status">Carico…</div>';
     const { data, error } = await sb.from('v_supplier_terms').select('*').order('supplier').order('sku');
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!(data || []).length) { box.innerHTML = '<div class="empty">Nessun articolo collegato a un fornitore: imposta un prezzo di listino o il fornitore preferito.</div>'; return; }
+    box.innerHTML = '';
     const tbl = document.createElement('table');
     tbl.innerHTML = '<tr><th>Fornitore</th><th>Articolo</th><th class="num">Consegna gg</th><th class="num">Minimo</th><th class="num">Multipli</th><th>Pagamento</th><th class="num">Listino €</th><th class="num">Pagato €</th><th class="num">90 gg</th><th></th></tr>';
     const ni = (v, step) => { const i = document.createElement('input'); i.type = 'number'; i.step = step; i.min = '0'; i.style.width = '70px'; i.value = v ?? ''; return i; };
@@ -226,23 +313,24 @@
       const td = document.createElement('td'); td.style.whiteSpace = 'nowrap';
       td.append(saveBtn(async () => { await upd('supplier_products', { supplier_id: r.supplier_id, product_id: r.product_id }, { lead_time_days: nOrNull(lead.value), min_order_qty: nOrNull(mn.value), order_multiple: nOrNull(mul.value), payment_terms: pay.value.trim() || null, updated_at: new Date().toISOString() }); loadTerms(); }));
       const h = document.createElement('button'); h.className = 'btn sm sec'; h.textContent = '↗'; h.title = 'Storico prezzi'; h.style.marginLeft = '4px';
-      h.onclick = () => loadPriceHist(r); td.append(h); tr.append(td);
+      h.onclick = () => togglePriceHist(r, tr, h); td.append(h); tr.append(td);
       tbl.append(tr);
     });
     box.append(tbl);
   }
-  async function loadPriceHist(r) {
-    const box = $('price-hist'); box.innerHTML = '<div class="status">Carico…</div>';
+  async function togglePriceHist(r, tr, btn) {
+    const nx = tr.nextElementSibling; if (nx && nx.classList.contains('hist')) { nx.remove(); btn.textContent = '↗'; return; }
+    const htr = document.createElement('tr'); htr.className = 'hist nodirty'; const box = document.createElement('td'); box.colSpan = 10; box.style.background = 'var(--bg)'; htr.append(box); tr.after(htr); btn.textContent = '✕';
+    box.innerHTML = '<div class="status">Carico…</div>';
     const { data, error } = await sb.from('v_supplier_price_history').select('*').eq('supplier_id', r.supplier_id).eq('product_id', r.product_id).order('price_date', { ascending: false }).limit(40);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
-    box.innerHTML = `<h4 style="margin:14px 0 6px">Storico prezzi · ${esc(r.product)} da ${esc(r.supplier)}</h4>`;
+    box.innerHTML = `<h4 style="margin:4px 0 6px">Storico prezzi · ${esc(r.product)} da ${esc(r.supplier)}</h4>`;
     if (!(data || []).length) { box.innerHTML += '<div class="empty">Ancora nessun prezzo.</div>'; return; }
     const tbl = document.createElement('table');
     tbl.innerHTML = '<tr><th>Data</th><th>Fonte</th><th>Rif.</th><th class="num">Qtà</th><th class="num">€ / ' + esc(r.unit || 'unità') + '</th><th class="num">Var.</th></tr>' +
       data.map(x => `<tr><td>${fmtD(x.price_date)}</td><td>${esc(x.source)}</td><td>${esc(x.ref || '')}</td><td class="num">${x.qty != null ? num(x.qty, 0) : ''}</td><td class="num">${num(x.price_eur, 4)}</td><td class="num ${Number(x.change_pct) > 5 ? 'ko' : ''}">${x.change_pct != null ? (x.change_pct > 0 ? '+' : '') + num(x.change_pct, 1) + '%' : ''}</td></tr>`).join('');
     box.append(tbl);
-  }
-  // ---------- Turni: weekly rota + hours/overtime ----------
+  }  // ---------- Personale: weekly rota + hours/overtime ----------
   const isoDay = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
   const mondayOf = d => { const x = new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
   let rotaMon = mondayOf(new Date()); rotaMon.setDate(rotaMon.getDate() + 7);
@@ -261,7 +349,7 @@
   async function loadRota() {
     const mon = isoDay(rotaMon), sunD = new Date(rotaMon); sunD.setDate(sunD.getDate() + 6); const sun = isoDay(sunD);
     $('rota-week').textContent = `${rotaMon.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – ${sunD.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })}`;
-    const box = $('rota-grid'); box.innerHTML = '<div class="status">Carico…</div>';
+    const box = $('rota-grid'); box.innerHTML = '<div class="status">Carico…</div>'; UI.clean(box.closest('[data-scope]'));
     const [{ data: people, error: e1 }, { data: rows, error: e2 }, { data: cfg }] = await Promise.all([
       sb.from('staff').select('id, full_name, role, contract_hours_week').eq('active', true).order('full_name'),
       sb.from('rota_entries').select('*').gte('work_date', mon).lte('work_date', sun),
@@ -306,7 +394,7 @@
         }
         if (ups.length) { const { error } = await sb.from('rota_entries').upsert(ups, { onConflict: 'staff_id,work_date' }); if (error) throw error; }
         if (dels.length) { const { error } = await sb.from('rota_entries').delete().in('id', dels); if (error) throw error; }
-        toast(ups.length + dels.length ? `Turni salvati (${ups.length + dels.length})` : 'Nessuna modifica'); loadRota();
+        UI.clean(b); toast(ups.length + dels.length ? `Turni salvati (${ups.length + dels.length})` : 'Nessuna modifica'); loadRota();
       } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
     };
     loadHours(mon);
@@ -318,15 +406,14 @@
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     const week = (data || []).filter(r => r.week_start === mon);
     const tbl = document.createElement('table');
-    tbl.innerHTML = '<tr><th>Persona</th><th class="num">Previste</th><th class="num">Lavorate</th><th class="num">Contratto h</th><th class="num">Straord. h</th><th class="num">Straord. €</th><th class="num">Domenica h</th><th>Note</th><th></th></tr>';
-    if (!week.length) tbl.innerHTML += '<tr><td colspan="9" class="empty">Nessuna timbratura né turno in questa settimana.</td></tr>';
+    tbl.innerHTML = '<tr><th>Persona</th><th class="num">Previste</th><th class="num">Lavorate</th><th class="num">Contratto h</th><th class="num">Straord. h</th><th class="num">Straord. €</th><th class="num">Domenica h</th><th>Note</th></tr>';
+    if (!week.length) tbl.innerHTML += '<tr><td colspan="8" class="empty">Nessuna timbratura né turno in questa settimana.</td></tr>';
     week.forEach(r => {
       const tr = document.createElement('tr');
       const notes = [r.planned_no_clock_days ? `${r.planned_no_clock_days} gg in turno senza badge` : '', r.clock_no_rota_days ? `${r.clock_no_rota_days} gg timbrati fuori turno` : '', r.absence_days ? `${r.absence_days} gg assenza` : ''].filter(Boolean).join(' · ');
       tr.innerHTML = `<td>${esc(r.full_name)}</td><td class="num">${num(r.planned_h, 1)}</td><td class="num">${num(r.worked_h, 1)}</td>`;
-      const tdc = document.createElement('td'); tdc.className = 'num'; const ci = document.createElement('input'); ci.type = 'number'; ci.step = '0.5'; ci.min = '0'; ci.style.width = '64px'; ci.value = Number(r.contract_h); tdc.append(ci); tr.append(tdc);
+      tr.insertAdjacentHTML('beforeend', `<td class="num">${num(r.contract_h, 1)}</td>`);
       tr.insertAdjacentHTML('beforeend', `<td class="num${Number(r.overtime_h) > 0 ? ' ko' : ''}">${num(r.overtime_h, 1)}</td><td class="num">${Number(r.overtime_eur) ? '€ ' + num(r.overtime_eur, 0) : '–'}</td><td class="num">${r.sunday_h ? num(r.sunday_h, 1) : '–'}</td><td><small>${esc(notes)}</small></td>`);
-      const tds = document.createElement('td'); tds.append(saveBtn(async () => { await upd('staff', { id: r.staff_id }, { contract_hours_week: nOrNull(ci.value) }); loadRota(); })); tr.append(tds);
       tbl.append(tr);
     });
     box.append(tbl);
@@ -334,45 +421,11 @@
     const names = Object.keys(four);
     if (names.length) { const n = document.createElement('div'); n.className = 'status'; n.style.marginTop = '8px'; n.textContent = 'Ultime 4 settimane: ' + names.map(k => `${k} ${num(four[k].w, 0)} h, straordinari ${num(four[k].o, 1)} h (€ ${num(four[k].e, 0)})`).join(' · '); box.append(n); }
   }
-  $('rota-prev').onclick = () => { rotaMon.setDate(rotaMon.getDate() - 7); loadRota(); };
-  $('rota-next').onclick = () => { rotaMon.setDate(rotaMon.getDate() + 7); loadRota(); };
-  $('rota-copy').onclick = async () => { const prev = new Date(rotaMon); prev.setDate(prev.getDate() - 7); const { data, error } = await sb.rpc('copy_rota_week', { p_from: isoDay(prev), p_to: isoDay(rotaMon) }); if (error) return toast(error.message, 'err'); toast(`${data} turni copiati (le celle già compilate restano)`); loadRota(); };
-
-  async function loadStaffCard() {
-    const [{ data }, { data: exp }] = await Promise.all([
-      sb.from('staff').select('id, full_name, role, haccp_training_expires, designations, active').eq('active', true).order('full_name'),
-      sb.from('v_certificates_expiring').select('*')]);
-    renderStaff(data || [], exp || []);
-  }
-  const canEdit = () => PERM.can('vendite', 3) || PERM.can('acquisti', 3) || PERM.can('personale', 3);
-  const saveBtn = (fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva'; b.onclick = async () => { b.disabled = true; try { await fn(); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } }; return b; };
-  const upd = async (table, match, row) => { const { error } = await sb.from(table).update(row).match(match); if (error) throw error; };
-  const dOrNull = v => v || null, nOrNull = v => v === '' || v == null ? null : Number(v);
-
-  const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
-  const dueCls = s => { if (!s) return ''; const d = (new Date(s) - new Date(new Date().toISOString().slice(0, 10))) / 864e5; return d < 0 ? 'ko' : d <= 30 ? 'ko' : ''; };
-  const DESIG = [['primo_soccorso', 'Primo soccorso'], ['antincendio', 'Antincendio'], ['preposto', 'Preposto'], ['rls', 'RLS']];
-  function renderStaff(rows, exp) {
-    const box = $('set-staff'); box.innerHTML = '';
-    rows.forEach(r => {
-      const mine = exp.filter(x => x.staff_id === r.id);
-      const bad = mine.filter(x => x.status === 'scaduto' || x.status === 'mancante'), soon = mine.filter(x => x.status !== 'scaduto' && x.status !== 'mancante');
-      const row = document.createElement('div'); row.className = 'set-row';
-      const lines = [...bad.map(x => `<span class="ko">${esc(x.course_name)}: ${x.status === 'scaduto' ? 'scaduto il ' + fmtD(x.expires_on) : 'manca'}</span>`),
-                     ...soon.map(x => `${esc(x.course_name)}: scade ${fmtD(x.expires_on)} (${x.days_left} gg)`)];
-      row.innerHTML = `<div class="lbl">${esc(r.full_name)}<small>${esc(r.role)}${lines.length ? '<br>' + lines.join('<br>') : ' · attestati in regola'}</small></div>`;
-      const right = document.createElement('div'); right.className = 'row'; right.style.cssText = 'margin-top:0;flex-wrap:wrap;gap:6px';
-      const boxes = DESIG.map(([k, l]) => { const lab = document.createElement('label'); lab.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:.85rem'; const c = document.createElement('input'); c.type = 'checkbox'; c.value = k; c.checked = (r.designations || []).includes(k); lab.append(c, l); right.append(lab); return c; });
-      right.append(saveBtn(async () => { await upd('staff', { id: r.id }, { designations: boxes.filter(c => c.checked).map(c => c.value) }); loadStaffCard(); }));
-      row.append(right); box.append(row);
-    });
-    const n = document.createElement('div'); n.className = 'status'; n.style.marginTop = '6px';
-    n.innerHTML = 'Le nomine aggiungono i corsi obbligatori (primo soccorso, antincendio, preposto, RLS). Gli attestati si caricano in <a href="haccp.html#formazione">Sicurezza alimentare → Formazione</a>; le scadenze arrivano anche nel bot Scadenze.';
-    box.append(n);
-  }
-
-
-
+  const rotaDirty = () => !!document.querySelector('#p-personale [data-scope].dirty');
+  const leaveRota = () => !rotaDirty() || confirm('Ci sono turni non salvati in questa settimana: se continui li perdi. Continuare?');
+  $('rota-prev').onclick = () => { if (!leaveRota()) return; rotaMon.setDate(rotaMon.getDate() - 7); loadRota(); };
+  $('rota-next').onclick = () => { if (!leaveRota()) return; rotaMon.setDate(rotaMon.getDate() + 7); loadRota(); };
+  $('rota-copy').onclick = async () => { if (!leaveRota()) return; const prev = new Date(rotaMon); prev.setDate(prev.getDate() - 7); const { data, error } = await sb.rpc('copy_rota_week', { p_from: isoDay(prev), p_to: isoDay(rotaMon) }); if (error) return toast(error.message, 'err'); toast(`${data} turni copiati (le celle già compilate restano)`); loadRota(); };
   // ---------- Tier 2: send POs, wholesale confirmations ----------
   const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Copiato'); } catch { toast('Copia non riuscita', 'err'); } };
   const waLink = (phone, text) => 'https://wa.me/' + String(phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent(text);
@@ -381,9 +434,9 @@
     const { data, error } = await sb.from('v_pos_to_send').select('*');
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessun ordine approvato in attesa di invio.</div>'; return; }
+    const pks = await Promise.all(data.map(po => sb.rpc('po_send_package', { p_po_number: po.po_number }).then(r => r.data)));
     box.innerHTML = '';
-    for (const po of data) {
-      const { data: pk } = await sb.rpc('po_send_package', { p_po_number: po.po_number });
+    data.forEach((po, k) => { const pk = pks[k];
       const c = document.createElement('div'); c.className = 'eq';
       c.innerHTML = `<div class="h"><b>${esc(po.po_number)}</b><span class="status">${esc(pk?.supplier || po.supplier)} · ${eur(pk?.total_eur)} · consegna ${fmtD(pk?.expected_date)}</span></div>
         <pre style="white-space:pre-wrap;font:inherit;font-size:13px;background:var(--bg,#f6f3ee);padding:8px;border-radius:6px;margin:6px 0">${esc(pk?.body_it || '')}</pre>`;
@@ -396,7 +449,7 @@
       const sent = document.createElement('button'); sent.className = 'btn sm'; sent.textContent = '✓ Segna inviato';
       sent.onclick = async () => { sent.disabled = true; const { error } = await sb.rpc('mark_po_sent', { p_po_number: po.po_number, p_via: 'console' }); if (error) { toast(error.message, 'err'); sent.disabled = false; return; } toast('Ordine segnato come inviato'); renderPoSend(); refreshBadges(); };
       row.append(mail, wa, cp, pr, sent); c.append(row); box.append(c);
-    }
+    });
   }
   async function renderWholesale() {
     const box = $('wholesale');
@@ -405,11 +458,9 @@
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessuna consegna ingrosso prenotata. Il bot "Ordini ingrosso" prenota ogni giorno alle 18:20 per il giorno dopo.</div>'; return; }
     box.innerHTML = '<table class="nw2"><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${dShort(o.order_date).replace(/^(\w{3})\w*/, '$1').slice(0, -5)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, ${BRAND.name} conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
   }
-
-  // ---------- Tier 2 settings: parties, standing orders, farm supply ----------
-  // ---------- parties: one compact editable table, sub-tabs Fornitori | Clienti ----------
+    // ---------- parties: one compact editable table, sub-tabs Fornitori | Clienti ----------
   let partyType = 'supplier', PARTIES = [];
-  $('party-tabs').onclick = e => { const b = e.target.closest('.sub'); if (!b) return; partyType = b.dataset.type; document.querySelectorAll('#party-tabs .sub').forEach(x => x.setAttribute('aria-selected', x === b)); renderParties(); };
+  $('party-tabs').onclick = e => { const b = e.target.closest('.sub'); if (!b) return; if (document.querySelector('#p-anag .dirty') && !confirm('Ci sono modifiche non salvate: se cambi scheda le perdi. Continuare?')) return; partyType = b.dataset.type; document.querySelectorAll('#party-tabs .sub').forEach(x => x.setAttribute('aria-selected', x === b)); document.querySelectorAll('#p-anag [data-show]').forEach(x => { x.hidden = x.dataset.show !== partyType; }); renderParties(); };
   async function loadParties() {
     const { data, error } = await sb.from('v_parties_editor').select('*');
     if (error) { $('set-parties').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
@@ -419,6 +470,10 @@
   }
   function renderParties() {
     const box = $('set-parties'); box.innerHTML = '';
+    const last = PARTIES.filter(p => p.type === 'customer' && p.last_synced_at).map(p => p.last_synced_at).sort().pop();
+    $('party-hint').innerHTML = partyType === 'customer'
+      ? `I clienti si creano e si modificano su <b>Shopify → Clienti</b>; il bot "Clienti Shopify" li copia qui ogni mattina (ultima sincronizzazione: ${last ? new Date(last).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'mai'}). Tag <b>ingrosso</b> su Shopify = cliente all'ingrosso qui. Un segnaposto con la stessa e-mail viene adottato automaticamente. Qui si modificano solo i giorni di pagamento.`
+      : '"Fornitore 1" e simili sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito. Modifica nella riga e premi Salva (o Invio).';
     const rows = PARTIES.filter(p => p.type === partyType);
     if (!rows.length) { box.innerHTML = `<div class="empty">Nessun ${partyType === 'supplier' ? 'fornitore' : 'cliente'}.</div>`; return; }
     const tbl = document.createElement('table'); tbl.className = 'par';
@@ -457,15 +512,9 @@
       }));
       tr.append(t1, t2, t3, t4, t5, t6); tbl.append(tr);
     });
-    if (isCus) {
-      box.append(tbl);
-      const h = document.createElement('div'); h.className = 'hint'; h.style.marginTop = '8px';
-      const last = PARTIES.filter(p => p.type === 'customer' && p.last_synced_at).map(p => p.last_synced_at).sort().pop();
-      h.innerHTML = `I clienti si creano e si modificano su <b>Shopify → Clienti</b>; il bot "Clienti Shopify" li copia qui ogni mattina (ultima sincronizzazione: ${last ? new Date(last).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'mai'}). Tag <b>ingrosso</b> su Shopify = cliente all'ingrosso qui. Un segnaposto con la stessa e-mail viene adottato automaticamente.`;
-      box.append(h); return;
-    }
+    if (isCus) { box.append(tbl); return; }
     // new supplier row
-    const add = document.createElement('tr'); add.style.background = 'var(--tile)';
+    const add = document.createElement('tr'); add.className = 'nodirty'; add.style.background = 'var(--tile)';
     const nn = document.createElement('input'); nn.type = 'text'; nn.placeholder = 'Nuovo fornitore…';
     const ne = document.createElement('input'); ne.type = 'email'; ne.placeholder = 'email'; const np = document.createElement('input'); np.type = 'tel'; np.placeholder = '+39 …'; const nd = document.createElement('input'); nd.type = 'number'; nd.value = 30;
     const nb = document.createElement('button'); nb.className = 'btn sm'; nb.textContent = 'Aggiungi';
@@ -482,6 +531,7 @@
       sb.from('parties').select('id, legal_name').eq('type', 'customer').eq('active', true).eq('is_wholesale', true).order('legal_name'),
       sb.from('products').select('id, name, sku').eq('sku', 'MOZ-DOP-KG').maybeSingle()]);
     const moz = prod; if (!moz) { box.innerHTML = '<div class="empty">Prodotto MOZ-DOP-KG non trovato.</div>'; return; }
+    if (!(cust || []).length) { box.innerHTML = '<div class="empty">Nessun cliente con tag <b>ingrosso</b> su Shopify: aggiungi il tag al cliente e domani mattina compare qui.</div>'; return; }
     const tbl = document.createElement('table');
     tbl.innerHTML = '<tr><th>Cliente</th>' + WD.map(d => `<th class="num">${d}</th>`).join('') + '<th></th></tr>';
     (cust || []).forEach(cu => {
@@ -505,57 +555,7 @@
       tr.append(td); tbl.append(tr);
     });
     box.append(tbl);
-    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Prezzo ingrosso: Configurazione → Vendite. Qui compaiono solo i clienti con tag ingrosso su Shopify.'; box.append(note);
-  }
-  async function loadDemand7() {
-    const box = $('demand7'); box.innerHTML = '';
-    const { data, error } = await sb.from('v_demand_7d').select('*');
-    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
-    if (!(data || []).length) { box.innerHTML = '<div class="empty">Nessun giorno di produzione nei prossimi 7 giorni.</div>'; return; }
-    const tbl = document.createElement('table');
-    tbl.innerHTML = '<tr><th>Giorno</th><th class="num">Banco kg</th><th class="num">Ingrosso kg</th><th class="num">Preordini kg</th><th class="num">Mozzarella kg</th><th class="num">Latte kg</th><th class="num">Masseria kg</th><th>Piano</th></tr>';
-    const t = { r: 0, w: 0, p: 0, o: 0, m: 0, f: 0, c: 0 };
-    data.forEach(r => {
-      const d = new Date(r.plan_date + 'T12:00:00');
-      const short = Number(r.farm_gap_kg) < 0, cap = r.capacity_hit;
-      t.r += +r.retail_kg; t.w += +r.wholesale_kg; t.p += +r.preorder_kg; t.o += +r.output_kg; t.m += +r.milk_kg; t.f += +r.farm_kg; t.c += +r.est_cost_eur;
-      const plan = r.plan_status ? `${r.plan_status === 'approved' ? 'approvato' : 'proposto'} ${num(r.plan_milk_kg, 0)} kg` : '–';
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}${Number(r.history_days) < 2 ? ' <small class="status">poco storico</small>' : ''}</td>
-        <td class="num">${num(r.retail_kg, 0)}</td><td class="num" title="${esc(r.wholesale_source)}">${num(r.wholesale_kg, 0)}</td><td class="num">${Number(r.preorder_kg) ? num(r.preorder_kg, 0) : '–'}</td>
-        <td class="num">${num(r.output_kg, 0)}</td><td class="num${cap ? ' ko' : ''}" title="${cap ? 'Serve più della capacità della caldaia' : ''}">${num(r.milk_kg, 0)}${cap ? ' ▲' : ''}</td>
-        <td class="num${short ? ' ko' : ''}">${num(r.farm_kg, 0)}${short ? ` (−${num(-r.farm_gap_kg, 0)})` : ''}</td><td><small>${plan}</small></td>`;
-      tbl.append(tr);
-    });
-    const tf = document.createElement('tr'); tf.style.fontWeight = '600';
-    tf.innerHTML = `<td>Totale</td><td class="num">${num(t.r, 0)}</td><td class="num">${num(t.w, 0)}</td><td class="num">${t.p ? num(t.p, 0) : '–'}</td><td class="num">${num(t.o, 0)}</td><td class="num">${num(t.m, 0)}</td><td class="num">${num(t.f, 0)}</td><td><small>€ ${num(t.c, 0)} latte</small></td>`;
-    tbl.append(tf); box.append(tbl);
-    const capDays = data.filter(r => r.capacity_hit).length, shortDays = data.filter(r => Number(r.farm_gap_kg) < 0).length;
-    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px';
-    note.textContent = `Resa usata ${num(data[0].yield_pct, 1)}% (media 30 gg). ` + (capDays ? `${capDays} giorni oltre la capacità della caldaia (▲): anticipare produzione o aumentare i turni. ` : '') + (shortDays ? `${shortDays} giorni la Masseria non basta: serve latte da altri fornitori.` : 'La Masseria copre tutti i giorni.');
-    box.append(note);
-  }
-  async function loadFarm() {
-    const box = $('set-farm'); box.innerHTML = '';
-    const { data, error } = await sb.from('v_farm_supply_next').select('*');
-    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
-    const tbl = document.createElement('table'); tbl.innerHTML = '<tr><th>Giorno</th><th class="num">Disponibili kg</th><th class="num">Piano kg</th><th></th></tr>';
-    (data || []).forEach(r => {
-      const tr = document.createElement('tr');
-      const d = new Date(r.supply_date + 'T12:00:00'); const isSun = d.getDay() === 0;
-      tr.innerHTML = `<td>${d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}${r.source ? '' : ' <small class="status">default</small>'}</td>`;
-      const td1 = document.createElement('td'); td1.className = 'num';
-      const inp = document.createElement('input'); inp.type = 'number'; inp.step = '25'; inp.min = '0'; inp.style.width = '90px'; inp.value = Number(r.kg_available); inp.disabled = isSun; td1.append(inp);
-      const td2 = document.createElement('td'); td2.className = 'num' + (r.planned_kg != null && Number(r.planned_kg) > Number(r.kg_available) ? ' ko' : ''); td2.textContent = r.planned_kg != null ? num(r.planned_kg, 0) : '–';
-      const td3 = document.createElement('td');
-      if (!isSun) td3.append(saveBtn(async () => { const { error } = await sb.from('farm_supply').upsert({ supply_date: r.supply_date, kg_available: Number(inp.value), source: 'console', notes: 'da ' + staff.full_name }, { onConflict: 'supply_date' }); if (error) throw error; loadFarm(); }));
-      tr.append(td1, td2, td3); tbl.append(tr);
-    });
-    box.append(tbl);
-    const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px'; note.textContent = 'Default giornaliero: impostazione farm.default_kg_per_day (Parametri dei bot).'; box.append(note);
-  }
-
-  const EFFL_KIND = { scotta: 'Scotta', siero: 'Siero', acque_lavaggio: 'Acque di lavaggio', fanghi: 'Fanghi', altro: 'Altro' };
+  }  const EFFL_KIND = { scotta: 'Scotta', siero: 'Siero', acque_lavaggio: 'Acque di lavaggio', fanghi: 'Fanghi', altro: 'Altro' };
   const EFFL_DEST = { ricotta: 'ricotta', allevamento: 'allevamento', fognatura: 'fognatura', trasportatore: 'trasportatore', depuratore_interno: 'depuratore interno', altro: 'altro' };
   async function loadEffluent() {
     const box = $('effluent');
@@ -569,7 +569,6 @@
       : '<div class="empty">Nessun refluo registrato negli ultimi 14 giorni.</div>';
     box.innerHTML = html;
   }
-
   // ---------- recipes: dose per kg, versioned by date ----------
   const BASIS = (fin) => ({ per_kg_milk: fin === 'RIC-BUF-KG' ? 'per kg siero' : 'per kg latte', per_kg_output: 'per kg prodotto', per_batch: 'per lotto' });
   const PHASE = { start: 'Avvio', close: 'Chiusura' };
@@ -685,7 +684,7 @@
         tdB.append(end); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr);
       });
       // add row
-      const add = document.createElement('tr'); add.style.background = 'var(--tile)';
+      const add = document.createElement('tr'); add.className = 'nodirty'; add.style.background = 'var(--tile)';
       const used = new Set(mine.map(r => r.component_sku));
       const selC = document.createElement('select'); selC.innerHTML = '<option value="">+ componente…</option>' + (comps || []).filter(c => !used.has(c.sku)).map(c => `<option value="${esc(c.sku)}">${esc(c.name)} (${esc(c.unit)})</option>`).join('');
       const selB = document.createElement('select'); selB.innerHTML = Object.entries(BASIS(f.sku)).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
@@ -703,11 +702,10 @@
       const c1 = document.createElement('td'); c1.append(selP, document.createTextNode(' '), ord); const c2 = document.createElement('td'); c2.append(selC); const c3 = document.createElement('td'); c3.append(selB);
       const c4 = document.createElement('td'); c4.className = 'num'; c4.append(q2); const c5 = document.createElement('td'); c5.append(ru2); const c6 = document.createElement('td'); c6.append(ins2); const c7 = document.createElement('td'); c7.append(btn);
       add.append(c1, c2, c3, c4, c5, c6, c7); tbl.append(add);
-      card.append(tbl); box.append(card);
+      const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(tbl); card.append(wrap); box.append(card);
     });
     const note = document.createElement('div'); note.className = 'hint'; note.textContent = 'Le dosi attuali sono segnaposto finché i partner non confermano caglio, sale, acido citrico e imballi reali. La revisione mensile propone correzioni quando i casari dosano sistematicamente in modo diverso.'; box.append(note);
   }
-
 
   const OSTATUS = { draft: ['non pagato', 'status'], confirmed: ['pagato · da spedire', 'ko'], fulfilled: ['spedito', 'ok'], cancelled: ['annullato', 'status'], refunded: ['rimborsato', 'status'] };
   async function loadShopifyOrders() {
@@ -766,5 +764,15 @@
     box.querySelectorAll('g[data-i]').forEach(g => { g.onmousemove = e => { const d = days[g.dataset.i]; showTip(e, `${dateIt(d)}<br>banco <b>${eur(by[d].store)}</b> · ingrosso <b>${eur(by[d].whole)}</b>`); }; g.onmouseleave = hideTip; });
   }
 
-  init();
+  // ---------- start ----------
+  UI.boot({
+    page: 'console', onRefresh: refresh,
+    onReady: async s => {
+      staff = s;
+      const TAB_AREAS = { ops: ['produzione', 'acquisti', 'vendite'], trend: ['produzione', 'vendite'], anag: ['vendite', 'acquisti'], ricette: ['produzione'], personale: ['personale'] };
+      document.querySelectorAll('.tab').forEach(t => { const a = TAB_AREAS[t.dataset.tab]; if (a) t.hidden = !a.some(x => PERM.can(x)); });
+      $('c-pkg').hidden = !PERM.page('pacchetto'); PERM.navLinks();
+      T.start(); refreshBadges();
+    }
+  });
 })();

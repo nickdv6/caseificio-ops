@@ -32,3 +32,11 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   to the 16 scheduled bots, whose prompts read `company.name` at run time. Not dynamic: `fabula-tablet/manifest.json`
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
+
+## Console and Configurazione (v0.51)
+- Both pages share `fabula-tablet/ui.js` + `ui.css` (login, header with page links / Bot bell / user menu, lazy tabs, helpers). Add new
+  console or config features there instead of copying helpers into a page.
+- Configurazione → Parametri lists **every** `settings` row, grouped by key prefix (`SECTIONS` in `admin.js`); a new prefix appears under
+  "Altri parametri" automatically, so a setting can never be hidden again. 0/1 settings whose description says "(1 = sì, 0 = …)" show as Sì/No;
+  descriptions containing AAAA-MM-GG / AAAA-MM-01 get a date / month picker.
+- Bot schedules are shown only from `bot_schedule` (via `v_bot_dashboard`); there is no hand-typed schedule table any more.

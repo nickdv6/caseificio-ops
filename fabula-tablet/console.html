@@ -6,128 +6,15 @@
 <title>La Perla · Console</title>
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
-<style>
-/* Layout: owner console — five operational tabs (Oggi · Operazioni · Andamento · Anagrafiche · Ricette); Oggi holds the numbers and the approval gate. Configuration lives in admin.html. */
-:root{
-  --bg:#f6f4ef; --paper:#fff; --fg:#161514; --muted:#5d6168; --rule:#e4e0d6; --tile:#eef2f7;
-  --accent:#1e3a5f; --accent-fg:#fff; --warn:#b4472c; --good:#2f7a4d;
-  --series-1:#1e3a5f; --series-2:#c99a3c; --grid:#e8e5de;
-  --display:"Fraunces",Georgia,"Times New Roman",serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.35;padding-block:0 32px;padding-inline:16px}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:3px solid var(--accent);margin-bottom:16px;flex-wrap:wrap}
-header h1{font-family:var(--display);font-size:1.8rem;margin:0;font-weight:700}
-header .sub{color:var(--muted);font-size:.9rem}
-.badge{display:inline-block;font-family:var(--display);font-size:.85rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--warn);color:#fff;margin-left:8px;vertical-align:middle}
-.view{display:none}.view.active{display:block}
-.wrap{max-width:1180px;margin:0 auto}
-h2{font-family:var(--display);font-size:1.25rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);margin:22px 0 8px}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.tile{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:10px 12px;min-width:0}
-.tile .l{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-.tile .v{font-family:var(--display);font-size:2rem;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
-.tile .d{font-size:.85rem;color:var(--muted)}
-.tile.bad .v{color:var(--warn)}
-.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
-.grid2.four{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
-.grid2.two{grid-template-columns:repeat(2,minmax(0,1fr))}.col{display:flex;flex-direction:column;gap:16px;min-width:0}@media (max-width:760px){.grid2.two{grid-template-columns:1fr}}
-table.nw2 td:nth-child(1),table.nw2 td:nth-child(2),table.nw2 td:nth-child(4){white-space:nowrap}
-.card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:12px 14px;min-width:0}
-.card h3{font-family:var(--display);font-size:1.05rem;text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px;color:var(--muted)}
-table{width:100%;border-collapse:collapse;font-size:.95rem}
-td,th{text-align:left;padding:6px 4px;border-bottom:1px solid var(--rule);vertical-align:top}
-th{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
-td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-.empty{color:var(--muted);font-style:italic;padding:8px 0}
-.appr{border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:8px;padding:12px 14px;margin-bottom:12px;background:var(--paper)}
-.appr .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
-.appr .kind{display:inline-block;font-family:var(--display);font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:1px 7px;border-radius:3px;border:1.5px solid var(--warn);color:var(--warn);margin-bottom:4px}
-.appr .kind.po{border-color:var(--series-1);color:var(--series-1)}.appr .kind.milk{border-color:var(--accent);color:var(--accent)}
-.appr .t{font-family:var(--display);font-size:1.3rem;font-weight:700;line-height:1.2;margin-top:2px}
-.appr .amt{font-family:var(--display);font-size:1.4rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
-.appr .by{font-size:.8rem;color:var(--muted);margin-top:2px}
-.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px 14px;margin:10px 0 4px;padding:10px 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
-.facts div{min-width:0}.facts .l{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-.facts .v{font-size:1.05rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.facts .v small{font-weight:400;color:var(--muted);font-size:.85rem}
-.facts .v.ko{color:var(--warn)}
-.appr details{font-size:.9rem;color:var(--muted);margin-top:6px}.appr details summary{cursor:pointer;color:var(--accent);font-weight:600;list-style:none}.appr details summary::-webkit-details-marker{display:none}
-.appr .row input{flex:1}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
-.btn{border:0;border-radius:6px;padding:8px 14px;font:600 .95rem var(--body);cursor:pointer;background:var(--accent);color:var(--accent-fg)}
-.btn.sec{background:var(--paper);color:var(--fg);border:1px solid var(--rule)}
-.btn.warn{background:var(--warn);color:#fff}
-.btn:disabled{opacity:.5}
-input[type=text],input[type=email],input[type=password]{font:1rem var(--body);padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);min-width:0;flex:1}
-.chart{width:100%;height:auto;display:block}
-.chart text{font-family:var(--body);fill:var(--muted);font-size:11px}
-.chart .grid line{stroke:var(--grid);stroke-width:1}
-.chart .axis{stroke:var(--rule)}
-.legend{display:flex;gap:14px;font-size:.85rem;color:var(--muted);margin-top:6px}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.tip{position:fixed;pointer-events:none;background:var(--fg);color:var(--bg);padding:6px 9px;border-radius:5px;font-size:.85rem;display:none;z-index:5;white-space:nowrap}
-.toast{position:fixed;left:16px;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:12px 16px;border-radius:8px;font-weight:600;display:none;z-index:9;max-width:520px;margin:0 auto}
-.toast.err{background:var(--warn);color:#fff}
-.login{max-width:380px;margin:60px auto}
-.login label{display:block;font-size:.85rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:12px}
-.login input{width:100%;margin-top:4px;font-size:1.1rem}
-.login .btn{width:100%;margin-top:16px;padding:12px}
-.status{font-size:.85rem;color:var(--muted)}
-.ok{color:var(--good)}.ko{color:var(--warn)}
-@media (max-width:640px){ header h1{font-size:1.4rem} .tile .v{font-size:1.6rem} }
-.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;align-items:start}
-.grid2{align-items:start}
-.set-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--rule)}
-.set-row:last-child{border-bottom:0}
-.set-row .lbl{font-size:.95rem}.set-row .lbl small{display:block;color:var(--muted);font-size:.8rem}
-.set-row input,.set-row select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);width:120px}
-.set-row input[type=date]{width:150px}.set-row input.wide{width:200px}
-.set-row.dirty input{border-color:var(--accent)}
-.eq{border:1px solid var(--rule);border-radius:6px;padding:8px 10px;margin-bottom:8px}
-.eq .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.eq .h b{font-family:var(--display);font-size:1.1rem}
-details.eq{padding:0}details.eq>summary{list-style:none;cursor:pointer;padding:8px 10px}details.eq>summary::-webkit-details-marker{display:none}details.eq>summary b::before{content:"▸ ";color:var(--muted);font-size:.9rem}details.eq[open]>summary b::before{content:"▾ "}details.eq>.f,details.eq>.row{padding:0 10px}details.eq>.row{padding-bottom:8px}
-.eq .f{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px 10px;margin-top:6px}
-.eq label{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:block;white-space:nowrap}
-.eq input{width:100%;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}
-.eq .next{font-size:.85rem;color:var(--muted);margin-top:4px}.eq .next .ko{font-weight:600}
-.btn.sm{padding:5px 10px;font-size:.85rem}
-.tabs{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--rule);margin:0 -16px 16px;padding:6px 16px 0;scrollbar-width:none}
-.tabs::-webkit-scrollbar{display:none}
-.tab{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--body);padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap;display:flex;gap:6px;align-items:center}
-.tab[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent)}
-.tab .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px}
-.tab .n.on{display:inline-block}
-.pane{display:none}.pane.active{display:block}
-details.card{padding:0}
-details.card>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px}
-details.card>summary::-webkit-details-marker{display:none}
-details.card>summary h3{margin:0}
-details.card>summary::after{content:"▸";color:var(--muted);transition:transform .15s}
-details.card[open]>summary::after{transform:rotate(90deg)}
-details.card>.body{padding:0 14px 12px}
-.hint{font-size:.85rem;color:var(--muted);margin-bottom:8px}
-.grp{margin-top:10px}.grp>summary{cursor:pointer;font-weight:600;padding:6px 0;color:var(--fg);list-style:none;display:flex;justify-content:space-between}
-.grp>summary::-webkit-details-marker{display:none}.grp>summary::after{content:"▸";color:var(--muted)}.grp[open]>summary::after{content:"▾"}
-.pw{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
-table.rec input[type=number].n{width:50px;padding:5px 4px}table.rec select.phs{width:112px}table.rec td .rng{opacity:.55;margin:0 1px}table.rec input[type=text].w{min-width:120px;width:140px}table.rec input[type=text].sh{min-width:70px;width:70px}table.rec select.eq{max-width:170px}table.rec tr.stepsub td{border-top:none;padding-top:0;color:var(--muted);font-size:.85rem}table.rec tr.stepsub input[type=text]{width:100%;min-width:0}.pchip{display:inline-block;padding:6px 12px;border:1px solid var(--rule);border-radius:999px;margin:0 6px 6px 0;cursor:pointer;background:var(--tile);font-size:13px}.pchip.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}.pchip small{opacity:.75}
-table.rec td{vertical-align:middle}table.rec td.num{white-space:nowrap}table.rec input[type=number]{width:96px;font:.95rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec input[type=text]{width:100%;min-width:180px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec select{font:.9rem var(--body);padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.rec .ph{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
-.subtabs{display:flex;gap:4px;border-bottom:1px solid var(--rule);margin:-4px 0 10px}.sub{appearance:none;border:0;background:none;color:var(--muted);font:600 .95rem var(--body);padding:8px 12px;border-bottom:3px solid transparent;cursor:pointer;display:flex;gap:6px;align-items:center}.sub[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent)}.sub .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px}.sub .n.on{display:inline-block}
-table.par input[type=text],table.par input[type=email],table.par input[type=tel]{width:100%;min-width:120px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.par input[type=number]{width:64px;font:.9rem var(--body);padding:5px 7px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}table.par td{vertical-align:middle}table.par tr.ph td:first-child{border-left:3px solid var(--warn)}
-</style>
+<link rel="stylesheet" href="ui.css">
 </head>
 <body>
+<!-- Owner console (v0.51): Oggi (numbers + approval gate) · Operazioni · Andamento · Anagrafiche · Ricette · Personale. Parameters, machines, bots and users live in admin.html. -->
 <div class="wrap">
 <header>
   <div><h1><span data-brand="name">La Perla del Cilento</span> <span id="simbadge" class="badge" hidden>simulazione</span></h1><div class="sub" id="sub">Console di gestione</div></div>
-  <div class="row" style="margin:0"><span class="status" id="who"></span><a class="btn sec" href="pacchetto.html" id="btn-pkg" hidden style="text-decoration:none">Pacchetto mensile</a><a class="btn sec" href="haccp.html" data-page="haccp" style="text-decoration:none">🛡 HACCP</a><a class="btn sec" href="marketing.html" data-page="marketing" style="text-decoration:none">Marketing</a><a class="btn sec" href="vendite.html" data-page="vendite" style="text-decoration:none">Vendite</a><a class="btn sec" href="admin.html#bots" id="btn-bots" hidden style="text-decoration:none">Bot <span id="bots-n" class="status"></span></a><a class="btn sec" href="admin.html" id="btn-admin" hidden style="text-decoration:none">⚙ Configurazione</a><button class="btn sec" id="btn-refresh" hidden>Aggiorna</button><button class="btn sec" id="btn-logout" hidden>Esci</button></div>
 </header>
-
-<section class="view login" id="v-login">
-  <label for="email">Email</label><input id="email" type="email" autocomplete="username">
-  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
-  <button class="btn" id="btn-login">Entra</button>
-</section>
+<nav class="top" id="nav"></nav>
 
 <section class="view" id="v-main">
   <nav class="tabs" role="tablist" id="tabs">
@@ -136,75 +23,75 @@ table.par input[type=text],table.par input[type=email],table.par input[type=tel]
     <button class="tab" role="tab" data-tab="trend">Andamento</button>
     <button class="tab" role="tab" data-tab="anag">Anagrafiche <span class="n" id="n-anag"></span></button>
     <button class="tab" role="tab" data-tab="ricette">Ricette</button>
-    <button class="tab" role="tab" data-tab="turni">Turni</button>
+    <button class="tab" role="tab" data-tab="personale">Personale <span class="n" id="n-pers"></span></button>
   </nav>
 
   <!-- OGGI: numbers, the human gate, compliance -->
   <div class="pane active" id="p-oggi">
     <div class="tiles" id="tiles"></div>
-    <h2>Da approvare</h2>
+    <h2 id="h-appr">Da approvare</h2>
     <div id="approvals"></div>
     <div class="grid2" style="margin-top:16px">
-      <div class="card"><h3>Conformità ieri</h3><div id="haccp"></div></div>
+      <div class="card" id="c-haccp"><h3>Conformità ieri <a class="lnk" href="haccp.html" data-page="haccp">HACCP →</a></h3><div id="haccp"></div></div>
       <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
     </div>
   </div>
 
-  <!-- OPERAZIONI: orders in and out, milk supply -->
+  <!-- OPERAZIONI: orders in and out, milk -->
   <div class="pane" id="p-ops">
+    <div class="card" data-scope style="margin-bottom:16px"><h3>Latte · prossimi 7 giorni</h3><div class="hint">Domanda (banco ultime 4 settimane, ingrosso confermato o fisso, preordini, margine) → mozzarella e latte da lavorare. La colonna <b>Masseria</b> è il latte disponibile: correggila qui, il piano latte non la supera mai.</div><div id="demand7"></div></div>
     <div class="grid2 two">
       <div class="col">
-        <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati, pronti da inviare: email, WhatsApp o stampa (con QR per la ricezione), poi "Segna inviato".</div><div id="po-send"></div></div>
-        <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone, tu approvi in Oggi.</div><div id="procurement"></div></div>
-        <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi.</div><div id="wholesale"></div></div>
-        <div class="card"><h3>Ordini online (Shopify) · 14 giorni</h3><div class="hint">Copiati ogni mattina dal bot Ordini Shopify; alla spedizione il magazzino si scarica dai lotti più vecchi.</div><div id="shopify-orders"></div></div>
+        <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati in Oggi: invia per email, WhatsApp o stampa (con QR per la ricezione), poi "Segna inviato".</div><div id="po-send" style="overflow-x:auto"></div></div>
+        <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone l'ordine, tu lo approvi in Oggi.</div><div id="procurement" style="overflow-x:auto"></div></div>
+        <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi (Anagrafiche → Clienti).</div><div id="wholesale" style="overflow-x:auto"></div></div>
+        <div class="card"><h3>Ordini online (Shopify) · 14 giorni</h3><div class="hint">Copiati ogni mattina dal bot Ordini Shopify; alla spedizione il magazzino si scarica dai lotti più vecchi.</div><div id="shopify-orders" style="overflow-x:auto"></div></div>
       </div>
       <div class="col">
-        <div class="card"><h3>Domanda e latte · prossimi 7 giorni</h3><div class="hint">Stessa logica del piano latte, giorno per giorno: vendite stesso giorno ultime 4 settimane, ingrosso (ordini confermati o fissi), preordini ritiro, margine di sicurezza → mozzarella e latte da lavorare contro la Masseria.</div><div id="demand7"></div></div>
-        <div class="card"><h3>Latte dalla Masseria · prossimi 7 giorni</h3><div class="hint">Kg disponibili per giorno. Il piano latte non supera mai questo valore.</div><div id="set-farm"></div></div>
-        <div class="card"><h3>Reflui · ultimi 14 giorni</h3><div class="hint">Scotta, siero e acque di lavaggio registrati dal tablet (💧 Reflui) con destinazione e documento.</div><div id="effluent"></div></div>
+        <div class="card"><h3>Reflui · ultimi 14 giorni</h3><div class="hint">Scotta, siero e acque di lavaggio registrati dal tablet (💧 Reflui) con destinazione e documento.</div><div id="effluent" style="overflow-x:auto"></div></div>
       </div>
     </div>
   </div>
 
-  <!-- ANDAMENTO: charts and bot log -->
+  <!-- ANDAMENTO: charts and reports -->
   <div class="pane" id="p-trend">
     <div class="grid2">
       <div class="card"><h3>Resa mozzarella · 30 giorni</h3><div id="chart-yield"></div></div>
-      <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="chart-sales"></div><div class="legend"><span><i style="background:var(--series-1)"></i>Banco</span><span><i style="background:var(--series-2)"></i>Ingrosso</span></div></div>
+      <div class="card"><h3>Vendite per canale · 30 giorni</h3><div id="chart-sales"></div><div class="legend"><span><i style="background:var(--series-1)"></i>Banco e online</span><span><i style="background:var(--series-2)"></i>Ingrosso</span></div></div>
     </div>
+    <div class="card" id="c-pkg" style="margin-top:16px" hidden><h3>Pacchetto mensile</h3><div class="hint">Riepilogo del mese per il commercialista (dati gestionali, non documenti fiscali): stampabile o in PDF.</div><a class="btn" href="pacchetto.html" style="text-decoration:none;display:inline-block">Apri il pacchetto mensile</a></div>
   </div>
 
-  <!-- ANAGRAFICHE: who we buy from, who we sell to, who works here -->
+  <!-- ANAGRAFICHE: who we buy from and sell to -->
   <div class="pane" id="p-anag">
-    <div class="set-grid">
-      <div class="card" style="grid-column:1/-1"><div class="subtabs" id="party-tabs"><button class="sub" data-type="supplier" aria-selected="true">Fornitori <span class="n" id="n-sup"></span></button><button class="sub" data-type="customer">Clienti <span class="n" id="n-cus"></span></button></div>
-        <div class="hint">"Fornitore 1", "Cliente 1" sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito. Modifica direttamente nella riga e premi Salva.</div><div id="set-parties"></div></div>
-      <div class="card" style="grid-column:1/-1"><h3>Fornitori · condizioni e storico prezzi</h3><div class="hint">Per ogni fornitore × articolo: giorni di consegna, minimo d'ordine, multipli e pagamento. Il bot Acquisti li usa per data prevista e quantità. "Pagato" viene dai DDT ricevuti sul tablet; tocca ↗ per lo storico prezzi.</div><div id="set-terms"></div><div id="price-hist"></div></div>
-      <div class="set-grid" style="grid-column:1/-1">
-        <div class="card"><h3>Ordini fissi ingrosso · kg al giorno</h3><div class="hint">Il bot Ordini ingrosso prenota queste quantità per il giorno dopo e prepara il messaggio di conferma.</div><div id="set-standing"></div></div>
-        <div class="card"><h3>Personale · attestati e nomine</h3><div id="set-staff"></div></div>
-      </div>
+    <div class="subtabs" id="party-tabs"><button class="sub" data-type="supplier" aria-selected="true">Fornitori <span class="n" id="n-sup"></span></button><button class="sub" data-type="customer" aria-selected="false">Clienti <span class="n" id="n-cus"></span></button></div>
+    <div class="card"><div class="hint" id="party-hint"></div><div id="set-parties" style="overflow-x:auto"></div></div>
+    <div data-show="supplier">
+      <div class="card" style="margin-top:16px"><h3>Condizioni e prezzi per articolo</h3><div class="hint">Per ogni fornitore × articolo: giorni di consegna, minimo d'ordine, multipli e pagamento. Il bot Acquisti li usa per data prevista e quantità. "Pagato" viene dai DDT ricevuti sul tablet; tocca ↗ per lo storico prezzi.</div><div id="set-terms" style="overflow-x:auto"></div></div>
+    </div>
+    <div data-show="customer" hidden>
+      <div class="card" style="margin-top:16px"><h3>Ordini fissi ingrosso · kg al giorno</h3><div class="hint">Il bot Ordini ingrosso prenota queste quantità per il giorno dopo e prepara il messaggio di conferma. Prezzo ingrosso: <a class="lnk" href="admin.html#vendite">Configurazione → Parametri → Vendite</a>.</div><div id="set-standing" style="overflow-x:auto"></div></div>
     </div>
   </div>
 
-  <!-- RICETTE: dosing steps the tablet follows -->
-  <!-- TURNI: weekly rota + hours and overtime from badge clocks -->
-  <div class="pane" id="p-turni">
-    <div class="card"><h3>Turni della settimana</h3>
-      <div class="row" style="gap:8px;align-items:center;margin-bottom:8px"><button class="btn sm sec" id="rota-prev">◀</button><b id="rota-week"></b><button class="btn sm sec" id="rota-next">▶</button>
-        <span style="flex:1"></span><button class="btn sm sec" id="rota-copy">Copia settimana precedente</button><button class="btn sm" id="rota-save">Salva settimana</button></div>
-      <div class="hint">Scrivi l'orario come <b>05-14</b> o <b>05:30-13:30/30</b> (/30 = pausa in minuti) e, se vuoi, il reparto dopo uno spazio: <b>05-14 banco</b>. Lettere: <b>F</b> ferie, <b>P</b> permesso, <b>M</b> malattia, <b>R</b> riposo. Cella vuota = nessun turno.</div>
-      <div id="rota-grid"></div></div>
-    <div class="card" style="margin-top:14px"><h3>Ore lavorate e straordinari</h3><div class="hint">Dalle timbrature del badge sul tablet. Straordinario = ore oltre il contratto settimanale (o oltre il limite giornaliero, se impostato in Configurazione → Lavoro). € = costo orario × (1 + maggiorazione).</div><div id="rota-hours"></div></div>
-  </div>
-
+  <!-- RICETTE: dosing steps and machine presets the tablet follows -->
   <div class="pane" id="p-ricette">
     <div class="hint" style="margin-bottom:12px">Dosi per kg di latte (o di siero per la ricotta), per kg di prodotto finito o per lotto. Il tablet le trasforma nelle quantità da pesare a ogni lotto; ogni modifica vale da oggi e la storia resta. "↑" = arrotonda per eccesso (pezzi).</div>
     <div id="recipes"></div>
-    <h3 style="margin-top:22px">Processo e preset macchine</h3>
+    <h2>Processo e preset macchine</h2>
     <div class="hint">Per ogni prodotto puoi salvare più configurazioni con nome (temperature, tempi, velocità, pH per ogni passo). Il casaro sceglie il preset all'avvio del lotto; il tablet mostra i valori obiettivo passo per passo e registra quelli effettivi. Copia un preset per provare una variante senza perdere quello che funziona.</div>
     <div id="presets"></div>
+  </div>
+
+  <!-- PERSONALE: weekly rota, hours/overtime from badge clocks, people (contract hours, safety roles, certificates) -->
+  <div class="pane" id="p-personale">
+    <div class="card" data-scope><h3>Turni della settimana</h3>
+      <div class="row" style="gap:8px;align-items:center;margin:0 0 8px"><button class="btn sm sec" id="rota-prev" aria-label="Settimana precedente">◀</button><b id="rota-week"></b><button class="btn sm sec" id="rota-next" aria-label="Settimana successiva">▶</button>
+        <span style="flex:1"></span><button class="btn sm sec" id="rota-copy">Copia settimana precedente</button><button class="btn sm save" id="rota-save">Salva settimana</button></div>
+      <div class="hint keep">Scrivi l'orario come <b>05-14</b> o <b>05:30-13:30/30</b> (/30 = pausa in minuti) e, se vuoi, il reparto dopo uno spazio: <b>05-14 banco</b>. Lettere: <b>F</b> ferie, <b>P</b> permesso, <b>M</b> malattia, <b>R</b> riposo. Cella vuota = nessun turno.</div>
+      <div id="rota-grid" style="overflow-x:auto"></div></div>
+    <div class="card" style="margin-top:14px"><h3>Ore lavorate e straordinari</h3><div class="hint">Dalle timbrature del badge sul tablet. Straordinario = ore oltre il contratto settimanale della persona (o oltre il limite giornaliero in <a class="lnk" href="admin.html#lavoro">Configurazione → Parametri → Lavoro</a>). € = costo orario × (1 + maggiorazione).</div><div id="rota-hours" style="overflow-x:auto"></div></div>
+    <div class="card" style="margin-top:14px"><h3>Persone · contratto, nomine e attestati</h3><div class="hint">Ore di contratto (vuoto = valore aziendale), nomine per la sicurezza (aggiungono i corsi obbligatori) e stato degli attestati. Gli attestati si caricano in <a class="lnk" href="haccp.html#formazione">HACCP → Formazione</a>; email e profilo di accesso in <a class="lnk" href="admin.html#utenti">Configurazione → Utenti</a>.</div><div id="set-staff"></div></div>
   </div>
 </section>
 </div>
@@ -215,6 +102,7 @@ table.par input[type=text],table.par input[type=email],table.par input[type=tel]
 <script src="config.js"></script>
 <script src="brand.js"></script>
 <script src="perm.js"></script>
+<script src="ui.js"></script>
 <script src="console.js"></script>
 </body>
 </html>

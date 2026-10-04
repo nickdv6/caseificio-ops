@@ -10,6 +10,9 @@ Several tablets: open the app once with `?device=tablet-2` (remembered on that d
 - `index.html`, `app.js` — the app (Italian UI, one screen per scan point from SOP-01)
 - `config.js` — Supabase URL + publishable key + device name (edit this)
 - `labels.html` — prints the QR labels for equipment, cleaning sign, meter
+- `console.html`, `console.js` — owner console (Oggi · Operazioni · Andamento · Anagrafiche · Ricette · Personale)
+- `admin.html`, `admin.js` — Configurazione (Parametri · Macchine e scadenze · Prodotti Shopify · Bot · Utenti e accessi · Registro modifiche)
+- `ui.js`, `ui.css` — shared shell for console and Configurazione since v0.51: login, header (page links, Bot bell, user menu with hide-hints and logout), lazy tabs with #hash, formatting helpers, unsaved-change guard (edited rows turn orange, Enter saves, leaving asks first)
 - `manifest.json`, `sw.js`, `icon.svg` — PWA shell
 
 ## Setup (once)
