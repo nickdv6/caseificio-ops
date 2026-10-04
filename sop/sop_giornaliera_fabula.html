@@ -49,7 +49,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--ti
     <h1>Routine giornaliera · punti di scansione</h1>
     <div class="sub">Selezionati da Masseria Cilentana · Agropoli · ogni passaggio si chiude con una scansione dal tablet o dal telefono</div>
   </div>
-  <div class="meta">SOP-01 · rev. 2 · 04/10/2026<b>10 scansioni al giorno</b></div>
+  <div class="meta">SOP-01 · rev. 3 · 04/10/2026<b>10 scansioni al giorno</b></div>
 </header>
 
 <div class="grid">
@@ -58,48 +58,48 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--ti
 
   <div class="step"><div class="n">1</div><div>
     <h3>Temperatura celle</h3>
-    <span class="scan">CF-01</span><span class="scan">CF-02</span>
+    <span class="scan">QR CELLA 1</span><span class="scan">QR CELLA 2</span>
     <p class="enter">Inserisci: <b>°C</b> letti sul display &nbsp;·&nbsp; <span class="lim">limite 0–6 °C</span> (allerta sopra 4 °C)</p>
   </div></div>
 
   <div class="step"><div class="n">2</div><div>
     <h3>Arrivo latte</h3>
-    <span class="scan">STAZIONE DDT:</span>
-    <p class="enter">Inserisci: <b>numero DDT</b>, <b>kg</b> dalla bilancia BIL-01, <b>°C</b> con sonda TERM-01 e <b>test antibiotici</b> prima dello scarico &nbsp;·&nbsp; <span class="lim">latte ≤ 8 °C, test negativo</span>. Fotografa il DDT. Poi stampa l'etichetta del lotto latte.</p>
+    <span class="scan">QR ARRIVO LATTE</span>
+    <p class="enter">Inserisci: <b>numero DDT</b>, <b>kg</b> dalla bilancia, <b>°C</b> con il termometro a sonda e <b>test antibiotici</b> prima dello scarico &nbsp;·&nbsp; <span class="lim">latte ≤ 8 °C, test negativo</span>. Fotografa il DDT. Poi stampa l'etichetta del lotto latte.</p>
   </div></div>
 
   <div class="step phase"><h2>Lavorazione</h2></div>
 
   <div class="step"><div class="n">3</div><div>
     <h3>Inizio lotto</h3>
-    <span class="scan">LOTTO LATTE</span>
-    <p class="enter">Inserisci: <b>prodotto, preset e kg in caldaia</b>, poi segui i passi sul tablet (✓ Fatto). Il sistema crea il lotto <code>L+data+lettera</code> (es. <code>L20261002-A</code>).</p>
+    <span class="scan">ETICHETTA SUL TANK</span>
+    <p class="enter">Inserisci: <b>prodotto e kg in caldaia</b>, poi segui i passi sul tablet (✓ Fatto). Il tablet dà il numero di lotto: <b>L + data + lettera</b> (es. <b>L20261002-A</b>).</p>
   </div></div>
 
   <div class="step"><div class="n">4</div><div>
     <h3>Pastorizzazione</h3>
-    <span class="scan">PAST-01</span>
+    <span class="scan">PASSO SUL TABLET</span>
     <p class="enter">Passo guidato sul tablet: <b>°C raggiunti</b> &nbsp;·&nbsp; <span class="lim">minimo 72 °C per 15 s (CCP 2)</span>. Filatura: pasta ≥ 58 °C (CCP 3).</p>
   </div></div>
 
   <div class="step"><div class="n">5</div><div>
     <h3>Fine lotto</h3>
-    <span class="scan">LOTTO L…-A</span>
-    <p class="enter">Scansiona di nuovo il lotto: <b>kg prodotto</b>, etichette, siero per ricotta. Poi <b>🖨 Stampa etichette</b>: una per cassa e confezione. La resa si calcola da sola.</p>
+    <span class="scan">ETICHETTA SUL TANK</span>
+    <p class="enter">Scansiona di nuovo l'etichetta sul tank: <b>kg prodotto</b>, etichette, siero per ricotta. Poi <b>🖨 Stampa etichette</b>: una per cassa e confezione. La resa si calcola da sola.</p>
   </div></div>
 
   <div class="step"><div class="n">6</div><div>
     <h3>Spedizione</h3>
     <span class="scan">🚚 DA SPEDIRE</span>
-    <p class="enter">Tocca l'ordine, scansiona il lotto di ogni riga, pesa, poi <b>Stampa DDT</b>. Al banco si vende solo su <b>Shopify POS</b>.</p>
+    <p class="enter">Tocca l'ordine, scansiona il lotto di ogni riga, pesa, poi <b>Stampa DDT</b>. Al banco si vende solo dalla <b>cassa (POS)</b>.</p>
   </div></div>
 
   <div class="step phase"><h2>Chiusura</h2></div>
 
   <div class="step"><div class="n">7</div><div>
     <h3>Temperatura celle</h3>
-    <span class="scan">CF-01</span><span class="scan">CF-02</span>
-    <p class="enter">Inserisci: <b>°C</b> &nbsp;·&nbsp; <span class="lim">limite 0–6 °C</span>. Se la sonda wifi è attiva il sistema lo fa da solo: controlla solo che il tablet non segnali rosso.</p>
+    <span class="scan">QR CELLA 1</span><span class="scan">QR CELLA 2</span>
+    <p class="enter">Inserisci: <b>°C</b> &nbsp;·&nbsp; <span class="lim">limite 0–6 °C</span>. Se la sonda wifi è attiva la temperatura arriva da sola: controlla solo che il tablet non segnali rosso.</p>
   </div></div>
 
   <div class="step"><div class="n">8</div><div>
@@ -111,7 +111,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--ti
   <div class="step"><div class="n">9</div><div>
     <h3>Reflui del giorno</h3>
     <span class="scan">💧 REFLUI</span>
-    <p class="enter">Una riga per ogni ritiro o scarico: cosa, quantità, destinazione, documento. La cassa si chiude da sola da Shopify POS.</p>
+    <p class="enter">Una riga per ogni ritiro o scarico: cosa, quantità, destinazione, documento. La cassa si chiude da sola.</p>
   </div></div>
 
   <div class="step"><div class="n">10</div><div>
@@ -124,7 +124,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--ti
 
 <footer>
   <div><h4>Se qualcosa è fuori limite</h4>
-    <ul><li>Il tablet mostra <b>rosso</b>: scrivi cosa hai fatto (es. spostato prodotto in CF-02)</li><li>Non cancellare il valore: si registra la non conformità e la correzione</li><li>Avvisa il casaro di turno</li></ul></div>
+    <ul><li>Il tablet mostra <b>rosso</b>: scrivi cosa hai fatto (es. spostato prodotto in cella 2)</li><li>Non cancellare il valore: si registra la non conformità e la correzione</li><li>Avvisa il casaro di turno</li></ul></div>
   <div><h4>Se il tablet non funziona</h4>
     <ul><li>Scrivi su carta: ora, cosa, valore, firma</li><li>Inserisci tutto a fine turno dal telefono</li><li>Le foto dei DDT si caricano anche dopo</li></ul></div>
   <div><h4>Settimanali e mensili</h4>

@@ -234,6 +234,7 @@
         toast(r.action === 'in' ? `${r.staff}: inizio turno ✓` : `${r.staff}: fine turno ✓ · ${Number(r.hours).toLocaleString('it-IT')} h`);
         loadShifts(); return show('home');
       }
+      if (!rest.length && /^[LR]\d{8}-[A-Z]$/.test(kind)) return await stepLot(kind);   // v0.54: a lot number typed by hand (L20261005-A) without LOT:
       toast('Codice non riconosciuto: ' + code, 'err'); show('home');
     } catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
   }
@@ -357,7 +358,7 @@
     const doneIds = new Set((done || []).map(d => d.step_id));
     const left = make.filter(st => !doneIds.has(st.step_id));
     if (!left.length) return stepBatchEnd(b);
-    runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo LOT:' + b.batch_lot); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
+    runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo l\'etichetta sul tank'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
   async function stepBatchStart(milk, lot) {
     const { data: prods } = await sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true);
@@ -396,8 +397,9 @@
       const startRicotta = async () => {
         const ricLot = 'R' + b.batch_lot.slice(1);
         await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: b.batch_lot, p_whey_kg: whey, p_staff_id: staff.id } }]);
-        const done = () => { toast(`Ricotta ${ricLot} avviata ✓ · a fine lotto scansiona LOT:${ricLot}`);
-          return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`, `Ricotta ${ricLot} avviata con ${whey} kg di siero: a fine lotto scansiona LOT:${ricLot} (le sue etichette si stampano alla chiusura).`], [lotLink]); };
+        const done = () => { toast(`Ricotta ${ricLot} avviata ✓ · stampa l'etichetta per il tino`);
+          return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`, `Ricotta ${ricLot} avviata con ${whey} kg di siero. Attacca l'etichetta al tino: a fine ricotta scansionala per chiudere il lotto (le etichette delle fuscelle si stampano alla chiusura).`],
+            [lotLink, ['🖨 Stampa etichetta tino ricotta', labelUrl(ricLot, 'Ricotta in lavorazione', 'tino · ' + ddmm(today()), 1)]]); };   // v0.54: the tino gets its own label to scan at close
         const steps = await doseSteps(byp, 'start', { milk: whey });
         if (!steps.length) return done();
         runDosing(`Ricotta ${ricLot} · ${whey} kg siero`, ricLot, steps, async () => done());
