@@ -52,6 +52,14 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Placeholder customers and routine messages (v0.72)
+- `confirm_standing_orders` (wholesale bot and its database stand-in) does not book the standing orders of a placeholder customer
+  (`fabula.is_placeholder_party`: parties.notes/source = 'placeholder', i.e. "Cliente 1/2" not yet renamed); their unshipped
+  orders are cancelled at every run (`fabula.cancel_placeholder_orders`). Renaming the customer in the console clears the flag
+  and booking resumes. Before, they added fake wholesale demand to the milk plan and piled up in Da spedire.
+- pg_cron `fabula_bot_messages_autoread` (hourly :17): info messages older than 24 h are marked read; warnings and alerts stay.
+- Test: `tools/go-live/drill/prod-test/test_placeholders_autoread.sql` (7).
+
 ## Packing on autopilot (v0.71)
 - `fabula.packing_plan(date)` (tablet → 🚚 Da spedire): orders in packing order (late first, then due date, wholesale before
   online on the same day) with lots already allocated — oldest in-date first (FEFO), a line split over lots when one is not
