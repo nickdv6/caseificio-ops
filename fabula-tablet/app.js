@@ -422,7 +422,7 @@
 
   // ---------- Route a code to its step ----------
   // v0.59: what each scan needs (area, level 2 = registra); the database enforces the same, this just stops before a form that can't be saved
-  const NEED = { EQ: 'haccp', CAL: 'haccp', CCP: 'haccp', PEST: 'haccp', SAMPLE: 'haccp', HACCP: 'haccp', CLEAN: 'haccp', DDT: 'produzione', LOT: 'produzione', METER: 'produzione', EFFL: 'produzione', PO: 'magazzino', COUNT: 'magazzino', SHIP: 'spedizioni' };
+  const NEED = { EQ: 'haccp', CAL: 'haccp', CCP: 'haccp', PAPER: 'haccp', PEST: 'haccp', SAMPLE: 'haccp', HACCP: 'haccp', CLEAN: 'haccp', DDT: 'produzione', LOT: 'produzione', METER: 'produzione', EFFL: 'produzione', PO: 'magazzino', COUNT: 'magazzino', SHIP: 'spedizioni' };
   const allowed = kind => { const a = NEED[kind]; if (!a || PERM.can(a, 2)) return true; toast(`Il profilo "${(PERM.data && PERM.data.role_name) || '?'}" non può registrare qui (${a}): chiedi al responsabile`, 'err'); show('home'); return false; };
   async function handleCode(code) {
     $('form').innerHTML = ''; current = { code };
@@ -443,6 +443,7 @@
       if (kind === 'PEST') return await stepPest();
       if (kind === 'SAMPLE') return await stepSample(ref);
       if (kind === 'HACCP') return stepHaccpMenu();
+      if (kind === 'PAPER') return ref ? await stepPaper(ref) : stepPaperMenu();
       if (kind === 'STAFF') {                       // one scan = clock in, next scan = clock out
         const { data: r, error } = await sb.rpc('toggle_shift', { p_badge: code });
         if (error) throw error;
@@ -1093,7 +1094,7 @@
     const items = [['🥛 Test antibiotici latte (CCP 1b)', 'CCP:CCP-MILK-ABX'], ['🔥 Temperatura pasta filata (CCP 3)', 'CCP:CCP-STRETCH'], ['🍶 Ricotta: affioramento (CCP 4)', 'CCP:CCP-RIC'],
       ['♨ Pastorizzazione (CCP 2)', 'CCP:CCP-PAST'], ['🔧 Pastorizzatore: verifica di inizio giornata', 'CCP:PRP-PAST-VALVE'], ['🧫 Siero-innesto: acidità', 'CCP:PRP-INNESTO'],
       ['🧂 Salamoia: concentrazione', 'CCP:PRP-BRINE'], ['💧 Cloro acqua (settimanale)', 'CCP:PRP-WATER-CL'], ['🌡 Verifica termometro sonda', 'CAL:TERM-01'], ['🌡 Verifica termometro alta temperatura', 'CAL:TERM-02'],
-      ['⚗ Calibrazione pH-metro', 'CAL:PH-01'], ['🐭 Giro infestanti', 'PEST:'], ['🧪 Campione prelevato per il laboratorio', 'SAMPLE:']];
+      ['⚗ Calibrazione pH-metro', 'CAL:PH-01'], ['🐭 Giro infestanti', 'PEST:'], ['🧪 Campione prelevato per il laboratorio', 'SAMPLE:'], ['📝 Ricopia da foglio di carta', 'PAPER:']];
     items.forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode(c); $('form').append(b); });
     openForm('Sicurezza alimentare', 'Scegli cosa registrare', async () => {}); $('btn-form-save').style.display = 'none';
   }
@@ -1131,6 +1132,53 @@
       if (r.result === 'non_conformity') toast(`NON CONFORMITÀ${r.lot_on_hold ? ' · lotto ' + theLot + ' BLOCCATO' : ''}. ${r.corrective_it || ''}`, 'err');
       else if (r.result === 'warning') toast('Registrato · ALLERTA vicino al limite', 'err');
       else toast(`${r.ccp} registrato ✓`);
+    });
+  }
+  // v0.77: PAPER:[<control point>] — a check written on the printed sheet (tablet or Wi-Fi down), typed in later with the time on the sheet
+  const PAPER_CPS = [['🥛 Test antibiotici latte (MOD-01)', 'CCP-MILK-ABX'], ['🔧 Pastorizzatore: verifica di inizio giornata (MOD-02)', 'PRP-PAST-VALVE'], ['♨ Pastorizzazione (MOD-02)', 'CCP-PAST'],
+    ['🧫 Siero-innesto (MOD-03)', 'PRP-INNESTO'], ['🔥 Temperatura pasta filata (MOD-03)', 'CCP-STRETCH'], ['🍶 Ricotta: affioramento (MOD-04)', 'CCP-RIC'],
+    ['❄ Cella 1 (MOD-05)', 'CCP-COLD-1'], ['❄ Cella 2 (MOD-05)', 'CCP-COLD-2'], ['🧽 Sanificazione fine turno (MOD-06)', 'PRP-CLEAN'], ['🧂 Salamoia (MOD-17)', 'PRP-BRINE']];
+  function stepPaperMenu() {
+    $('form').innerHTML = ''; current = { code: 'PAPER:' };
+    const n = document.createElement('div'); n.className = 'limit'; n.textContent = 'Una riga del foglio alla volta: scegli il controllo, poi scrivi data, ora e valore come sul foglio.'; $('form').append(n);
+    PAPER_CPS.forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode('PAPER:' + c); $('form').append(b); });
+    openForm('Ricopia da foglio di carta', 'Registrazioni fatte sul foglio quando il tablet o la rete non c\'erano', async () => {}); $('btn-form-save').style.display = 'none';
+  }
+  const romeIso = (ymd, hm) => {   // the sheet's date + time in Agropoli → ISO with the right offset for that day
+    const probe = new Date(`${ymd}T${hm}:00Z`);
+    const off = (new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Rome', timeZoneName: 'longOffset' }).formatToParts(probe).find(x => x.type === 'timeZoneName') || {}).value || 'GMT+01:00';
+    const m = off.match(/GMT([+-]\d{2}):?(\d{2})?/); return `${ymd}T${hm}:00${m ? m[1] + ':' + (m[2] || '00') : '+01:00'}`;
+  };
+  async function stepPaper(cpCode) {
+    const { data: cp } = await cached('cp_' + cpCode, () => sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).maybeSingle());
+    if (!cp) throw new Error('Punto di controllo sconosciuto: ' + cpCode);
+    const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
+    const d = field('pday', 'Data scritta sul foglio', 'date'); d.value = today(); d.max = today(); d.min = addDays(today(), -7);
+    field('ptime', 'Ora scritta sul foglio', 'time');
+    const w = field('pwho', 'Chi l\'ha scritto (firma sul foglio)', 'text'); w.value = staff.full_name;
+    if (needsLot) field('lot', 'Lotto (come sul foglio, es. L20261012-A)', 'text');
+    if (cp.code === 'CCP-MILK-ABX') field('v', 'Esito test rapido', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']] });
+    else if (cp.unit === 'esito') field('v', 'Esito della verifica', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']] });
+    else if (cp.code === 'PRP-CLEAN') field('v', 'Sanificazione', 'select', { options: [['0', 'Fatta']] });
+    else {
+      const lim = [cp.min_value != null ? `≥ ${Number(cp.min_value)}` : null, cp.max_value != null ? `≤ ${Number(cp.max_value)}` : null].filter(Boolean).join(' e ');
+      field('v', `${cp.name} (${cp.unit || ''})`, 'number', { limit: lim ? `limite ${lim} ${cp.unit || ''}`.trim() : '' });
+    }
+    field('action', 'Note / azione scritta sul foglio (se fuori limite)', 'text', { required: false });
+    openForm(`📝 ${cp.ccp_no || ''} ${cp.name}`.trim(), 'Ricopia dal foglio di carta', async () => {
+      const day = val('pday'), hm = val('ptime'), value = val('v') === '' || val('v') == null ? null : Number(val('v'));
+      if (!day || !hm) { toast('Scrivi data e ora come sul foglio', 'err'); throw new Error('data'); }
+      if (day > today() || day < addDays(today(), -7)) { toast('Si ricopiano solo fogli degli ultimi 7 giorni', 'err'); throw new Error('data'); }
+      if (value == null || Number.isNaN(value)) { toast('Inserisci il valore', 'err'); throw new Error('valore'); }
+      const lot = needsLot ? (val('lot') || '').trim().toUpperCase() : null;
+      if (needsLot && !lot) { toast('Scrivi il lotto', 'err'); throw new Error('lotto'); }
+      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_logged_at: romeIso(day, hm), p_staff_id: staff.id, p_batch_lot: lot, p_action: val('action'),
+                                          p_source: 'paper', p_equipment_code: needsLot ? 'TERM-02' : null, p_written_by: (val('pwho') || '').trim() || staff.full_name });
+      try { await save([{ rpc: 'close_open_task', args: { p_day: day, p_code: null, p_equipment_id: null, p_control_point_id: cp.id, p_staff_id: staff.id, p_scan_event_id: null } }]); } catch (e) { console.warn('closeTask', e); }
+      if (!r) toast('Salvato offline: parte appena c\'è rete');
+      else if (r.result === 'non_conformity') toast(`NON CONFORMITÀ${r.lot_on_hold ? ' · lotto ' + lot + ' BLOCCATO' : ''}. ${r.corrective_it || ''}`, 'err');
+      else toast(`Ricopiato ✓ ${fmtDay(day)} ${hm}`);
+      stepPaperMenu(); return 'stay';   // next line of the same sheet
     });
   }
   // CAL:<code> or EQ:<thermometer|pH|scale> — internal verification against a reference

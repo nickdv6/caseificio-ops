@@ -26,4 +26,7 @@ every migration: the tests still run, after adding one milk supplier
 8. `python3 device_e2e.py` (v0.74) — the tablet checks in with its label and app version, a refused offline save reaches
    `fabula.tablet_rejects` and the bell once, the pending line says it was reported, an older app shows "Aggiorna ora".
 
-Last run 05/10/2026 (v0.74): SQL tests as expected, e2e 22/22, prod_e2e 13/13, pack_e2e 14/14 (fresh DB), device_e2e 8/8.
+9. `python3 paper_e2e.py` (v0.77) — 🛡 → Ricopia da foglio di carta: sheet time kept (Agropoli), source paper, who wrote it;
+   offline it queues and keeps the sheet time; out of limit opens the NC; older than 7 days refused.
+
+Last run 05/10/2026 (v0.77): pack_e2e 14/14 (fresh DB, first), e2e 22/22, prod_e2e 13/13, device_e2e 8/8, paper_e2e 9/9.

@@ -52,6 +52,21 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Trial week, paper back-up, recall drill in the console (v0.77)
+- **Trial week:** set `trial.start` (Configurazione → Parametri) to day 1. `fabula.trial_check(day)` lists the 12 daily steps
+  (milk + temperature, antibiotics, pasteuriser check, pasteurisation, batches closed, stretching per lot, cold rooms ×2,
+  cleaning, out-of-limit with action, open tasks, tablets, bot errors) plus that day's extra steps (1 stock count + tablet,
+  2 ricotta + CCP 4, 3 packed order with DDT + sales, 4 paper copy + MOZ-DOP sample, 5 recall drill + registers verified).
+  pg_cron `fabula_trial_report` (20:35 Rome) posts it as Zia Carmela (agent `prova`) during the `trial.days` (5). The
+  script is the Claude Doc "Settimana di prova".
+- **Paper back-up:** 🛡 → "Ricopia da foglio di carta" on the tablet: pick the check, write the sheet's date and time (up
+  to 7 days back), who wrote it, the value. `fabula.log_ccp(..., p_logged_at, ..., p_written_by)` (new overload) keeps that
+  time for `p_source = 'paper'`, notes who copied it and when, applies the same limits, NCs and lot holds; any other
+  source still records now(). The old signature calls the new one. Offline it queues like any check. The Manuale console
+  marks paper rows "📝 carta".
+- **Recall drill:** console → Manuale → Lotti bloccati e NC → Prova di richiamo (calls `fabula.recall_drill(lot)`).
+- Tests: `tools/go-live/drill/prod-test/test_trial_paper.sql` (16), `tools/go-live/drill/tablet-test/paper_e2e.py` (9).
+
 ## Lease at the agreed rent (v0.76)
 `opex.lease_eur_year` = 12600 (€1,050/month, 2027), `opex.lease_eur_year_step` = 13200 (€1,100/month) from
 `opex.lease_step_from` = 2028-01-01. `fabula.lease_eur_year(day)` picks the year; `weekly_brief()` uses it, so the brief

@@ -163,6 +163,20 @@
       fail(await sb.rpc('release_lot_hold', { p_lot: b.dataset.release, p_staff_id: staff.id, p_note: note }), 'Sblocco'); toast('Lotto sbloccato'); load();
     });
   }
+  // v0.77: recall drill from the console (MOD-14) — writes a recall_drills row, shows the trace
+  $('rc-run').onclick = async () => {
+    const lot = $('rc-lot').value.trim().toUpperCase() || null; $('rc-run').disabled = true;
+    try {
+      const r = fail(await sb.rpc('recall_drill', { p_lot: lot }), 'Prova di richiamo');
+      if (!r || r.result === 'no_lots') { $('rc-out').innerHTML = '<div class="empty">Nessun lotto venduto negli ultimi 30 giorni: scrivi un lotto.</div>'; return; }
+      const res = { ok: pill('tracciato', 'ok'), manca_latte_a_monte: pill('manca il latte a monte', 'ko'), kg_non_giustificati: pill('kg non giustificati', 'ko') };
+      $('rc-out').innerHTML = `<div style="margin:6px 0">${res[r.result] || esc(r.result)} <b>${esc(r.lot)}</b> · ${esc(r.sku)} del ${fmtD(r.batch_date)} · in ${num(r.elapsed_ms / 1000, 1)} s</div>
+        <div>Prodotti ${num(r.produced_kg)} kg · venduti ${num(r.sold_kg)} · scartati ${num(r.wasted_kg)} · in giacenza ${num(r.on_hand_kg)} · <span class="${Math.abs(r.unaccounted_kg) > 0.5 ? 'ko' : ''}">non giustificati ${num(r.unaccounted_kg)} kg</span></div>
+        <details open><summary>Latte a monte</summary>${(r.milk_lots || []).map(m => `<div>• ${fmtD(m.date)} · ${esc(m.supplier || '?')} · lotto ${esc(m.milk_lot || '?')} · ${num(m.kg)} kg${m.ddt ? ' · DDT ' + esc(m.ddt) : ''}</div>`).join('') || '<div class="ko">Nessun latte collegato al lotto.</div>'}</details>
+        <details open><summary>A chi è andato</summary>${(r.destinations || []).map(d => `<div>• ${fmtD(d.date)} · ${esc(d.channel || '')} · ${esc(d.customer || 'banco')} · ${num(d.kg)} kg</div>`).join('') || '<div>Nessuna uscita: tutto in giacenza.</div>'}</details>`;
+      toast('Prova di richiamo registrata');
+    } finally { $('rc-run').disabled = false; }
+  };
   function renderNcs(rows) {
     if (!rows.length) { $('ncs').innerHTML = '<div class="empty">Nessuna non conformità aperta.</div>'; return; }
     const sev = { critical: ['critica', 'ko'], major: ['maggiore', 'warn'], minor: ['minore', ''] };
@@ -184,7 +198,7 @@
     $('logs').innerHTML = `<table><tr><th>Quando</th><th>Punto</th><th>Modulo</th><th class="num">Valore</th><th>Esito</th><th>Lotto</th><th>Chi</th><th>Azione</th></tr>${rows.map(l => `
       <tr><td class="nw">${fmtDT(l.logged_at)}</td><td>${esc(l.haccp_control_points?.ccp_no || '')} ${esc(l.haccp_control_points?.name || '')}</td><td class="nw">${modChip(l.haccp_control_points?.form_code)}</td>
       <td class="num">${l.measured_value == null ? '—' : l.haccp_control_points?.unit === 'esito' ? (Number(l.measured_value) === 0 ? 'ok' : 'NON OK') : num(l.measured_value, 2) + ' ' + esc(l.haccp_control_points?.unit || '')}</td><td>${res[l.result] || esc(l.result)}</td>
-      <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}</td><td>${esc(l.corrective_action || '')}</td></tr>`).join('')}</table>`;
+      <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}${l.source === 'paper' ? ' <small title="Ricopiata dal foglio di carta">📝 carta</small>' : ''}</td><td>${esc(l.corrective_action || '')}</td></tr>`).join('')}</table>`;
   }
 
   // ---------- Piano ----------
