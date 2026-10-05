@@ -52,6 +52,16 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Go-live checklist review (v0.75)
+The checklist covered the software and the data but not the gates to open legally or the dry run. It now has 35 items in
+four groups (board order): **gates** (purchase deed, lease, CE approval/SCIA in Masseria's name, RINA/Consorzio, HACCP
+training, Manuale, e-invoicing, RT printer) · **setup** (opening date, stock count, real names, doses, Fortino capacity,
+deadline and calibration dates, Shopify catalog, labels) · **dry run** (tablet check-in, first milk, first batch, MOZ-DOP
+moisture test, first packed order, paper sheets) · **system** (green). New automatic checks in `ops_dashboard()`:
+`ce_approval` (`food.ce_approval_no` set), `haccp_training` (`v_training_matrix`, nothing missing or expired),
+`opening_date` (`mkt.store_opening_date`), `tablet_checkin` (`fabula.devices`), `first_milk`, `moisture_test` (a
+`MOZ-DOP` lab sample `conforme`), `first_shipment`. Manual ones are ticked on the board ("Mark done").
+
 ## Reliability: tablet check-in, refused saves, pg_cron watched (v0.74)
 - Every tablet/browser running the app calls `fabula.device_checkin()` at start, after each send and every 5 min: device id
   (kept in `localStorage` `perla_device_uid`), label, app version (`sw.js` CACHE), records waiting and since when, and the
