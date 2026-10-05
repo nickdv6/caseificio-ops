@@ -128,12 +128,12 @@
         title = `${esc(prod.name || p.sku || '')} · lotto ${esc(p.lot || '')}`;
         facts = fact('A rischio', `${kgf(p.at_risk_kg)} <small>kg</small>`, 'ko') + fact('Giacenza', `${kgf(p.on_hand_kg)} <small>kg</small>`) +
           fact('Scade', days == null ? fmtD(p.expiry) : days <= 0 ? 'oggi' : days === 1 ? 'domani' : fmtD(p.expiry), days != null && days <= 1 ? 'ko' : '') +
-          fact('Prezzo', `<s style="color:var(--muted);font-weight:400">€ ${num(p.list_price_eur_kg, 2)}</s> → € ${num(p.promo_price_eur_kg, 2)} <small>/kg</small>`) + fact('Sconto', `−${p.promo_pct} %`) + fact('Azione', esc(act));
+          fact('Prezzo', `<s style="color:var(--muted);font-weight:400">€ ${num(p.list_price_eur_kg, 2)}</s> → € ${num(p.promo_price_eur_kg, 2)} <small>/kg</small>`) + fact('Sconto', `−${esc(p.promo_pct)} %`) + fact('Azione', esc(act));
         break;
       }
       case 'recipe_update':
         title = `Ricetta ${esc(prod.name || p.finished_sku || '')} · ${esc((PRODUCTS[p.component_sku] || {}).name || p.component_sku || '')}`;
-        facts = fact('Dose attuale', `${p.from} <small>${esc(p.unit || '')}</small>`) + fact('Dose proposta', `${p.to} <small>${esc(p.unit || '')}</small>`) + fact('Scostamento', `${p.deviation_pct > 0 ? '+' : ''}${num(p.deviation_pct)} %`) + fact('Lotti osservati', p.batches ?? '—');
+        facts = fact('Dose attuale', `${esc(p.from)} <small>${esc(p.unit || '')}</small>`) + fact('Dose proposta', `${esc(p.to)} <small>${esc(p.unit || '')}</small>`) + fact('Scostamento', `${p.deviation_pct > 0 ? '+' : ''}${num(p.deviation_pct)} %`) + fact('Lotti osservati', esc(p.batches ?? '—'));
         break;
       case 'content_post': {
         const cl = p.claims || [], blk = cl.filter(c => c.severity === 'block').length;
@@ -151,7 +151,7 @@
       }
       case 'dop_declaration':
         title = `Dichiarazione Consorzio ${esc(p.month || '')}`;
-        facts = fact('Latte lavorato', `${num(p.milk_processed_kg, 0)} <small>kg</small>`) + fact('Mozzarella DOP', `${num(p.mozzarella_dop_kg, 0)} <small>kg</small>`) + fact('Lotti', p.batches ?? '—') + fact('Etichette', num(p.labels_printed, 0)) + fact('Venduto', `${num(p.sold_kg, 0)} <small>kg</small>`);
+        facts = fact('Latte lavorato', `${num(p.milk_processed_kg, 0)} <small>kg</small>`) + fact('Mozzarella DOP', `${num(p.mozzarella_dop_kg, 0)} <small>kg</small>`) + fact('Lotti', esc(p.batches ?? '—')) + fact('Etichette', num(p.labels_printed, 0)) + fact('Venduto', `${num(p.sold_kg, 0)} <small>kg</small>`);
         break;
     }
     const [klabel, kcls] = KIND[type] || KIND.other;

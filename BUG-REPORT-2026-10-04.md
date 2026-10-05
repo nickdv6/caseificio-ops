@@ -22,6 +22,15 @@
 | 7 · "Salvato" when the database refused the change | every page's updates now ask for the changed rows back; 0 rows → "Non salvato: il tuo profilo non può modificare questi dati…" (perm.js `PERM.changed`, ui.js, admin, console, HACCP, marketing, vendite) — **needs redeploy**. Note: the Marketing profile still can't change `mkt.*` settings (sistema level 0) — it now sees the error instead of a false "Salvato"; grant it in the DB if Marketing should own those settings |
 | 10 (tablet) · resume uses wrong preset | `preset_id` added to the resume query (app.js) — **needs a redeploy of `fabula-tablet`** |
 
+## Fixed (5 Oct, v0.59)
+
+| Item | Fix |
+|---|---|
+| 6 · stored XSS in 3 places | Tablet "Da spedire" (Shopify customer name, address, lines) and the other tablet lists now escape every database value; console approval cards escape `payload.from/to/batches/promo_pct` and dates (`fmtD` escapes); Vendite escapes `fit_note`/`size_hint` and only links `http(s)` URLs (`javascript:`/`data:` dropped) — **needs redeploy** |
+| 9 · offline start locked the user out | `perm.js` keeps the last profile per user on the device and uses it when the database can't be reached; startup calls time out after a few seconds (offline, supabase-js retried an expired login for ~50 s and every query waited behind it); a stored login counts as signed in when offline. Tested in Chromium: offline with saved profile → home in 0.8 s (8 s when Wi-Fi is up but the internet is down); first login offline → clear message; logged out → login screen — **needs redeploy** |
+| 8 / L2 / L3 / L5 · migrations didn't match live | v044c/d files renamed to their live versions; v044/v044b recorded as applied; new `20261001033000_v000_platform_extensions` (pg_cron, pg_net, pgcrypto, uuid-ossp), `20261002201700_v040a_bot_messages_table` (table, indexes, RLS + 5 policies from live), `demand_7d()` + `v_demand_7d` restored into their file, the 2 hand-scheduled pg_cron jobs in `v059a`. Repo 76 files = live 76 versions. Replay of all migrations on clean Postgres 16 matches live on functions, views, tables, constraints, indexes, policies, triggers, enums, cron jobs and buckets; the 26 function bodies that differ do so only in comments |
+| monthly review closed the running month | `monthly_review()` falls back to the previous month when given a date in the current or a future month (v059b) |
+
 ## Live database (Caseificio, eu-central-1)
 
 | # | Finding |

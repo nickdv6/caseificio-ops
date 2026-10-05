@@ -4,6 +4,8 @@
   const CFG = window.FABULA_CONFIG;
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
+  // every value from the database or Shopify goes through esc() before it lands in innerHTML
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   // Mouse wheel over a focused number field must never change its value (keyboard only).
   document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
   let staff = null, scanner = null, current = null;
@@ -99,15 +101,20 @@
 
   // ---------- Auth ----------
   async function init() {
-    const { data: { session } } = await sb.auth.getSession();
-    if (!session) return show('login');
+    const session = await PERM.session(sb);
+    // offline with an expired login: supabase keeps the stored session when the refresh fails for lack of network,
+    // so a stored user means "logged in, just offline" (a real logout or revoked login clears it)
+    const user = (session && session.user) || PERM.storedUser();
+    if (!user) return show('login');
     const P = await PERM.load(sb);
-    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(session.user.email));
+    if (!P && PERM.offline) return PERM.deny(sb, PERM.offlineFirstLogin());
+    if (!P || !P.staff_id) return PERM.deny(sb, PERM.notLinked(user.email));
     if (!PERM.page('tablet')) return PERM.deny(sb, PERM.notForProfile());
-    const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
+    const { data } = PERM.offline ? { data: null } : await PERM.timeout(sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle().then(x => x, () => ({ data: null })));
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name;
     show('home'); loadTasks(); setQueue(queue()); flush();
+    if (PERM.offline) toast('Offline: profilo salvato su questo tablet. Le registrazioni vanno in coda e partono al ritorno della rete.');
   }
   $('btn-login').onclick = async () => {
     const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value });
@@ -125,7 +132,7 @@
       const d = document.createElement('div'); d.className = 'task' + (r.days_left < 0 ? ' overdue' : '');
       const when = r.days_left < 0 ? 'SCADUTO · ritirare' : r.days_left === 0 ? 'scade oggi' : 'scade domani';
       const promo = r.promo_status === 'approved' ? ` · PROMO -${r.promo_pct}% → € ${Number(r.promo_price_eur_kg).toLocaleString('it-IT', { minimumFractionDigits: 2 })}/kg` : r.promo_status === 'pending' ? ' · promo in attesa di ok' : '';
-      d.innerHTML = `<div><div>${r.name} · ${Number(r.kg).toLocaleString('it-IT')} kg</div><div class="code">${r.lot_number} · ${when}${promo}</div></div>`;
+      d.innerHTML = `<div><div>${esc(r.name)} · ${Number(r.kg).toLocaleString('it-IT')} kg</div><div class="code">${esc(r.lot_number)} · ${when}${promo}</div></div>`;
       box.append(d);
     });
   }
@@ -136,7 +143,7 @@
     wrap.style.display = ''; wrap.innerHTML = '';
     data.forEach(n => {
       const d = document.createElement('div'); d.className = 'notice ' + n.severity;
-      d.innerHTML = `<div class="nt">${n.title_it}</div>`;
+      d.innerHTML = `<div class="nt">${esc(n.title_it)}</div>`;
       (n.items || []).forEach(it => { const b = document.createElement('button'); b.className = 'nitem'; b.textContent = it.label_it + ' ›'; b.onclick = () => handleCode(it.scan); d.append(b); });
       wrap.append(d);
     });
@@ -154,7 +161,7 @@
     if (!data.length) { box.textContent = 'Tutto fatto ✓'; return; }
     data.forEach(t => {
       const d = document.createElement('div'); d.className = 'task ' + t.status;
-      d.innerHTML = `<div><div>${t.title_it}</div><div class="code">${t.equipment_code || t.code}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
+      d.innerHTML = `<div><div>${esc(t.title_it)}</div><div class="code">${esc(t.equipment_code || t.code)}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
       d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : t.code === 'T-COUNT' ? stepStockCount() : t.code === 'T-CLEAN' ? handleCode('CLEAN:')
         : t.code === 'T-CL' ? handleCode('CCP:PRP-WATER-CL') : t.code === 'T-PEST' ? handleCode('PEST:')
         : t.control_point_code ? handleCode('CCP:' + t.control_point_code) : startScan();   // v0.57: valvola deviatrice, salamoia…
@@ -198,7 +205,7 @@
     data.forEach(po => {
       const d = document.createElement('div'); d.className = 'task';
       const items = po.lines.map(l => `${l.name} ${Number(l.remaining).toLocaleString('it-IT')} ${l.unit}`).join(' · ');
-      d.innerHTML = `<div><div>${po.po_number} · ${po.supplier}</div><div class="code">${items}${po.status === 'partially_received' ? ' · parziale' : ''}</div></div><time>${po.expected_date ? po.expected_date.slice(8, 10) + '/' + po.expected_date.slice(5, 7) : ''}</time>`;
+      d.innerHTML = `<div><div>${esc(po.po_number)} · ${esc(po.supplier)}</div><div class="code">${items}${po.status === 'partially_received' ? ' · parziale' : ''}</div></div><time>${po.expected_date ? po.expected_date.slice(8, 10) + '/' + po.expected_date.slice(5, 7) : ''}</time>`;
       d.onclick = () => { $('form').innerHTML = ''; current = { code: 'PO:' + po.po_number }; stepReceive(po.po_number).catch(e => { toast(e.message, 'err'); show('home'); }); };
       $('form').append(d);
     });
@@ -432,7 +439,7 @@
     const { data: prod } = await sb.from('products').select('*').eq('id', b.product_id).single();
     const { data: custs } = await sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name');
     const d = document.createElement('div'); d.className = 'card';
-    d.innerHTML = `<div class="scan">${prod.name}</div><div class="status">Spedizione diretta senza ordine. Le vendite al banco si battono su Shopify POS; gli ordini online e ingrosso si preparano da 🚚 Da spedire.</div>`;
+    d.innerHTML = `<div class="scan">${esc(prod.name)}</div><div class="status">Spedizione diretta senza ordine. Le vendite al banco si battono su Shopify POS; gli ordini online e ingrosso si preparano da 🚚 Da spedire.</div>`;
     $('form').append(d);
     field('kg', 'kg', 'number', { step: '0.01' });
     field('cust', 'Cliente', 'select', { options: [['', '—'], ...custs.map(x => [x.id, x.legal_name])] });
@@ -455,7 +462,7 @@
     $('form').innerHTML = '';
     po.lines.forEach((l, i) => {
       const h = document.createElement('div'); h.className = 'card'; h.style.marginTop = '14px';
-      h.innerHTML = `<div class="scan">${l.name}</div><div>ordinati ${Number(l.qty_ordered).toLocaleString('it-IT')} ${l.unit}${Number(l.qty_received) > 0 ? ` · già ricevuti ${Number(l.qty_received).toLocaleString('it-IT')}` : ''} · listino € ${Number(l.unit_price_eur).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/${l.unit}</div>`;
+      h.innerHTML = `<div class="scan">${esc(l.name)}</div><div>ordinati ${Number(l.qty_ordered).toLocaleString('it-IT')} ${esc(l.unit)}${Number(l.qty_received) > 0 ? ` · già ricevuti ${Number(l.qty_received).toLocaleString('it-IT')}` : ''} · listino € ${Number(l.unit_price_eur).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/${esc(l.unit)}</div>`;
       $('form').append(h);
       const q = field('q' + i, `Ricevuti (${l.unit})`, 'number', { step: l.unit === 'pz' ? '1' : '0.01' }); q.value = l.remaining;
       field('lot' + i, 'Lotto fornitore', 'text', { required: false });
@@ -553,9 +560,9 @@
     if (!data || !data.length) { toast('Niente da spedire'); return; }
     data.forEach(o => {
       const d = document.createElement('div'); d.className = 'task';
-      const items = (o.lines || []).map(l => `${fmtKg(l.qty)} ${l.unit} ${l.name}`).join(' · ');
+      const items = (o.lines || []).map(l => `${fmtKg(l.qty)} ${esc(l.unit)} ${esc(l.name)}`).join(' · ');
       const addr = o.ship_address ? [o.ship_address.city, o.ship_address.zip].filter(Boolean).join(' ') : (o.ship_city || '');
-      d.innerHTML = `<div><div>${o.channel === 'shopify' ? '🛒 ' : '🏬 '}${o.order_number} · ${o.customer || (o.ship_address && o.ship_address.name) || 'cliente online'}${addr ? ' · ' + addr : ''}</div><div class="code">${items || 'nessuna riga collegata al magazzino'}${o.unmapped ? ' · ⚠ ' + o.unmapped + ' righe non collegate' : ''}</div></div><time>${fmtDay(o.due_date)}</time>`;
+      d.innerHTML = `<div><div>${o.channel === 'shopify' ? '🛒 ' : '🏬 '}${esc(o.order_number)} · ${esc(o.customer || (o.ship_address && o.ship_address.name) || 'cliente online')}${addr ? ' · ' + esc(addr) : ''}</div><div class="code">${items || 'nessuna riga collegata al magazzino'}${o.unmapped ? ' · ⚠ ' + esc(o.unmapped) + ' righe non collegate' : ''}</div></div><time>${esc(fmtDay(o.due_date))}</time>`;
       d.onclick = () => stepPack(o).catch(e => { toast(e.message, 'err'); show('home'); });
       $('form').append(d);
     });
@@ -571,7 +578,7 @@
     o.lines.forEach((l, i) => {
       const card = document.createElement('div'); card.className = 'card'; card.style.marginTop = '14px';
       const sug = (l.suggested || [])[0];
-      card.innerHTML = `<div class="scan">${l.name}</div><div>ordinati <b>${fmtKg(l.qty)} ${l.unit}</b>${sug ? ` · lotto consigliato <b>${sug.lot}</b> (scade ${fmtDay(sug.expiry)}, ${fmtKg(sug.on_hand)} ${l.unit} in giacenza)` : ' · <span style="color:var(--warn)">nessun lotto in giacenza</span>'}</div>`;
+      card.innerHTML = `<div class="scan">${esc(l.name)}</div><div>ordinati <b>${fmtKg(l.qty)} ${esc(l.unit)}</b>${sug ? ` · lotto consigliato <b>${esc(sug.lot)}</b> (scade ${fmtDay(sug.expiry)}, ${fmtKg(sug.on_hand)} ${esc(l.unit)} in giacenza)` : ' · <span style="color:var(--warn)">nessun lotto in giacenza</span>'}</div>`;
       $('form').append(card);
       const lot = field('lot' + i, 'Lotto (scansiona l\'etichetta o conferma quello consigliato)', 'select', { options: (l.suggested || []).map(x => [x.lot, `${x.lot} · scade ${fmtDay(x.expiry)} · ${fmtKg(x.on_hand)} ${l.unit}`]) });
       const scanBtn = document.createElement('button'); scanBtn.type = 'button'; scanBtn.className = 'btn secondary'; scanBtn.textContent = '📷 Scansiona lotto'; scanBtn.style.marginTop = '6px';
@@ -597,7 +604,7 @@
       // done: show the print buttons instead of going home
       $('form').innerHTML = ''; $('btn-form-save').style.display = 'none';
       const c = document.createElement('div'); c.className = 'card';
-      c.innerHTML = `<div class="scan">✓ ${data.ddt_number}</div><div>${o.order_number} · ${fmtKg(data.packed_kg)} kg in ${data.lines} righe · ${data.carrier}${data.needs_shopify_fulfilment ? '<br>Shopify verrà aggiornato dal bot (cliente avvisato con il tracking).' : '<br>Ordine ingrosso chiuso.'}</div>`;
+      c.innerHTML = `<div class="scan">✓ ${esc(data.ddt_number)}</div><div>${esc(o.order_number)} · ${fmtKg(data.packed_kg)} kg in ${esc(data.lines)} righe · ${esc(data.carrier)}${data.needs_shopify_fulfilment ? '<br>Shopify verrà aggiornato dal bot (cliente avvisato con il tracking).' : '<br>Ordine ingrosso chiuso.'}</div>`;
       const pr = document.createElement('a'); pr.className = 'btn'; pr.style.cssText = 'display:block;text-align:center;text-decoration:none;margin-top:12px'; pr.target = '_blank'; pr.href = 'spedizione.html?id=' + data.shipment_id; pr.textContent = o.channel === 'wholesale' ? '🖨 Stampa DDT' : '🖨 Stampa packing list';
       const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn secondary'; ok.style.cssText = 'display:block;width:100%;margin-top:8px'; ok.textContent = 'Fatto'; ok.onclick = () => { show('home'); loadTasks(); };
       $('form').append(c, pr, ok); toast('Spedizione registrata ✓');

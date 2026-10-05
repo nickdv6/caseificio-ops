@@ -1,4 +1,4 @@
-<title>Go-Live Board · Selezionati da Masseria Cilentana</title>
+<title>Go-Live Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -81,11 +81,17 @@ ul.checks li:first-child{border-top:0}
 table{width:100%;border-collapse:collapse;font-size:.92rem;min-width:640px}
 th{font:600 .72rem var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1.5px solid var(--line)}
 td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
-td.area{font-weight:600}
+td.area{font-weight:600;min-width:220px}
 .meter{display:flex;align-items:center;gap:8px;min-width:120px}
 .meter .bar{flex:1}
-.meter span{width:34px;text-align:right;font-variant-numeric:tabular-nums;font-size:.85rem}
+.meter span{width:58px;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums;font-size:.85rem}
 .next{font-size:.85rem;color:var(--muted);max-width:32ch}
+.why{font-weight:400;font-size:.8rem;color:var(--muted);max-width:40ch;margin-top:3px;line-height:1.35}
+.delta{font:600 .7rem var(--body);margin-left:3px}
+.delta.up{color:var(--ok)}
+.delta.down{color:var(--bad)}
+.delta.new{color:var(--gold)}
+.audit{font-size:.82rem;color:var(--muted)}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.8rem;color:var(--muted)}
 .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .bots{display:grid;gap:0}
@@ -106,7 +112,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
 <div class="wrap">
   <header>
     <div class="title">
-      <span class="eyebrow">Selezionati da Masseria Cilentana · Ops system</span>
+      <span class="eyebrow" id="brand">Ops system</span>
       <h1>Go-live board</h1>
     </div>
     <div class="status">
@@ -135,13 +141,13 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
       <div class="label"><span>Built</span><span class="tag est">Estimate</span></div>
       <div class="big num" id="g-built">–</div>
       <div class="bar" id="g-built-bar"></div>
-      <div class="muted" style="font-size:.85rem">Planned features live</div>
+      <div class="muted" style="font-size:.85rem">Planned features live<span id="d-built"></span></div>
     </div>
     <div class="gauge">
       <div class="label"><span>Reliable</span><span class="tag est">Estimate</span></div>
       <div class="big num" id="g-rel">–</div>
       <div class="bar" id="g-rel-bar"></div>
-      <div class="muted" style="font-size:.85rem">Safe to run unattended</div>
+      <div class="muted" style="font-size:.85rem">Safe to run unattended<span id="d-rel"></span></div>
     </div>
     <div class="gauge">
       <div class="label"><span>Automated · human</span><span class="tag est">Estimate</span></div>
@@ -157,7 +163,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
         <h2 id="h-checks">Go-live checklist</h2>
         <span class="muted num" id="checks-count"></span>
       </div>
-      <ul class="checks" id="checks"><li class="skeleton" style="display:block">The 14 go-live checks appear here once the database answers. Automatic checks tick themselves; manual ones have a button.</li></ul>
+      <ul class="checks" id="checks"><li class="skeleton" style="display:block">The go-live checks appear here once the database answers. Automatic checks tick themselves; manual ones have a button.</li></ul>
     </section>
 
     <section class="panel" aria-labelledby="h-floor">
@@ -181,7 +187,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
 
   <section class="panel" aria-labelledby="h-areas">
     <div class="panel-head">
-      <h2 id="h-areas">By area</h2>
+      <div><h2 id="h-areas">By area</h2><div class="audit" id="audit"></div></div>
       <div class="legend">
         <span><b style="background:var(--navy)"></b>Built</span>
         <span><b style="background:var(--ok)"></b>Reliable</span>
@@ -191,8 +197,8 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Area</th><th>Built</th><th>Reliable</th><th>Automated · human</th><th>Next step</th></tr></thead>
-        <tbody id="areas"><tr><td colspan="5" class="skeleton">Twelve areas of the ops system, each scored for build, reliability and automation.</td></tr></tbody>
+        <thead><tr><th>Area · evidence</th><th>Built</th><th>Reliable</th><th>Automated · human</th><th>Next step</th></tr></thead>
+        <tbody id="areas"><tr><td colspan="5" class="skeleton">Each area of the ops system, scored for build, reliability and automation, with the evidence behind the score.</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -325,6 +331,13 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
   function render() {
     if (!data) return;
     const s = data.scores || {}, checks = data.checks || [], h = data.bot_health || {}, o = data.ops || {};
+    if (data.company) { $("brand").textContent = data.company + " · Ops system"; document.title = "Go-Live Board · " + data.company; }
+    const pv = s.prev || null;
+    const dl = (now, before) => {
+      if (before == null || now == null) return "";
+      const d = Math.round(now - before);
+      return d === 0 ? ` <span class="delta">±0</span>` : ` <span class="delta ${d > 0 ? "up" : "down"}">${d > 0 ? "▲" : "▼"}${Math.abs(d)}</span>`;
+    };
     const done = checks.filter(c => c.done).length;
     const pct = checks.length ? Math.round(done / checks.length * 100) : 0;
     $("g-ready").innerHTML = `${pct}%<small>${done} of ${checks.length}</small>`;
@@ -332,14 +345,22 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     const hp = h.expected ? Math.round(h.ok / h.expected * 100) : null;
     $("g-bots").innerHTML = hp === null ? "–" : `${hp}%<small>${h.ok} of ${h.expected}</small>`;
     $("g-bots-bar").innerHTML = bar([[hp || 0, hp >= 95 ? "var(--ok)" : hp >= 80 ? "var(--warn)" : "var(--bad)"]]);
-    $("g-bots-sub").textContent = h.from ? `Scheduled runs that succeeded, ${fmtDay(h.from)} – ${fmtDay(h.to)}` : "Scheduled runs that succeeded";
-    $("g-built").innerHTML = `${s.built}%`;
+    const notStarted = (h.not_started || []).map(a => ((data.bots || []).find(b => b.agent === a) || { name: a }).name.split(" · ").pop());
+    $("g-bots-sub").textContent = (h.from ? `Scheduled runs that succeeded, ${fmtDay(h.from)} – ${fmtDay(h.to)}` : "Scheduled runs that succeeded")
+      + (notStarted.length ? ` · not run yet: ${notStarted.join(", ")}` : "");
+    $("g-built").innerHTML = `${s.built}%${pv ? dl(s.built, pv.built) : ""}`;
     $("g-built-bar").innerHTML = bar([[s.built, "var(--navy)"]]);
-    $("g-rel").innerHTML = `${s.reliable}%`;
+    $("g-rel").innerHTML = `${s.reliable}%${pv ? dl(s.reliable, pv.reliable) : ""}`;
     $("g-rel-bar").innerHTML = bar([[s.reliable, "var(--ok)"]]);
-    $("g-auto").innerHTML = `${s.automated}<small>/ ${100 - s.automated}</small>`;
+    $("g-auto").innerHTML = `${s.automated}<small>/ ${100 - s.automated}</small>${pv ? dl(s.automated, pv.automated) : ""}`;
     $("g-auto-bar").innerHTML = bar([[s.automated, "var(--gold)"], [100 - s.automated, "var(--human)"]]);
     $("g-auto-sub").textContent = `${s.automated}% done by the system, ${100 - s.automated}% by people`;
+    const auditDay = (iso) => new Date(iso).toLocaleDateString("en-GB", { timeZone: "Europe/Rome", day: "numeric", month: "short" });
+    $("d-built").textContent = pv ? ` · was ${pv.built}% on ${auditDay(pv.at)}` : "";
+    $("d-rel").textContent = pv ? ` · was ${pv.reliable}% on ${auditDay(pv.at)}` : "";
+    $("audit").textContent = s.areas_updated_at
+      ? `Audited ${auditDay(s.areas_updated_at)} · ${s.areas} areas` + (pv ? ` · arrows compare with the ${auditDay(pv.at)} audit (${pv.areas} areas)` : "")
+      : "";
     $("areas-updated").textContent = s.areas_updated_at ? "estimates last updated " + new Date(s.areas_updated_at).toLocaleString("en-GB", { timeZone: "Europe/Rome", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " Agropoli time." : "";
 
     $("checks-count").textContent = `${done} of ${checks.length} done`;
@@ -362,14 +383,18 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     $("floor").innerHTML = cells.map(([v, k]) => `<div class="cell"><span class="v num">${esc(v ?? "–")}</span><span class="k">${k}</span></div>`).join("");
     $("alerts").innerHTML = (o.alerts || []).map(a => `<div class="alert alert-${esc(a.severity)}"><strong>Console notice:</strong> ${esc(a.title)}</div>`).join("");
 
-    $("areas").innerHTML = (data.areas || []).map(a => `
+    $("areas").innerHTML = (data.areas || []).map(a => {
+      const p = a.prev || null;
+      const d = (k) => p ? dl(a[k], p[k]) : "";
+      return `
       <tr>
-        <td class="area">${esc(a.area)}</td>
-        <td><div class="meter"><div class="bar">${bar([[a.built, "var(--navy)"]])}</div><span>${a.built}</span></div></td>
-        <td><div class="meter"><div class="bar">${bar([[a.reliable, "var(--ok)"]])}</div><span>${a.reliable}</span></div></td>
-        <td><div class="meter"><div class="bar">${bar([[a.automated, "var(--gold)"], [100 - a.automated, "var(--human)"]])}</div><span>${a.automated}/${100 - a.automated}</span></div></td>
+        <td class="area">${esc(a.area)}${p ? "" : ` <span class="delta new">NEW</span>`}${a.evidence ? `<div class="why">${esc(a.evidence)}</div>` : ""}</td>
+        <td><div class="meter"><div class="bar">${bar([[a.built, "var(--navy)"]])}</div><span>${a.built}${d("built")}</span></div></td>
+        <td><div class="meter"><div class="bar">${bar([[a.reliable, "var(--ok)"]])}</div><span>${a.reliable}${d("reliable")}</span></div></td>
+        <td><div class="meter"><div class="bar">${bar([[a.automated, "var(--gold)"], [100 - a.automated, "var(--human)"]])}</div><span>${a.automated}/${100 - a.automated}${d("automated")}</span></div></td>
         <td class="next">${esc(a.next_step)}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
 
     const now = romeParts(new Date());
     const dow = ISO_DOW[now.weekday], dayNum = +now.day, nowMin = (+now.hour) * 60 + (+now.minute);

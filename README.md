@@ -3,8 +3,12 @@
 Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 - `supabase/migrations/` — database schema. File names are `<14-digit version>_<name>.sql` and match
-  `supabase_migrations.schema_migrations` on the live project (history repaired in v0.39), so
-  `supabase db push` / `supabase migration list` work. New changes: always as a new migration file
+  `supabase_migrations.schema_migrations` on the live project (history repaired in v0.39 and again in v0.59: 76 files =
+  76 live versions), so `supabase db push` / `supabase migration list` work. v0.59 also checked that the repo rebuilds the
+  live schema: all migrations replayed on a clean Postgres give the same functions, views, tables, constraints, indexes,
+  RLS policies, triggers, enums, pg_cron jobs and storage buckets as live (26 function bodies differ only in comments).
+  Never run SQL on live outside a migration file (that is how v044/v044b, bot_messages and demand_7d went missing).
+  New changes: always as a new migration file
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
@@ -14,7 +18,7 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
 ## Operating decisions encoded in the database (v0.39)
-- Milk price: setting `milk.price_eur_kg` (1.70). Every intake without a price takes it; all cost reports read it.
+- Milk price: setting `milk.price_eur_kg` (1.70, confirmed by Nick 05/10 after a stray edit to 1.6). Every intake without a price takes it; all cost reports read it.
 - Milk is **pasteurised** (`food.milk_process` = pastorizzato): CCP 2 is required on every mozzarella lot.
 - Website and Shopify POS sell even at zero stock ("continue selling"); `shopify.push_inventory` = 0.
   Paid web orders not yet shipped count as demand for the next production day (`v_preorder_demand`).

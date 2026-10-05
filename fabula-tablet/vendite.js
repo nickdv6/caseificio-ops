@@ -9,7 +9,9 @@
   const toast = (m, cls = '') => { const t = $('toast'); t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3200); };
   const eur = (n, d = 0) => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: d, minimumFractionDigits: d }).format(n);
   const num = (n, d = 0) => n == null ? '–' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d });
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // only http(s) links from lead data; 'www.x.it' gets https://, anything else (javascript:, data:…) is dropped
+  const safeUrl = u => { const s = String(u ?? '').trim(); if (!s) return ''; const v = /^https?:\/\//i.test(s) ? s : /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s) ? 'https://' + s : ''; try { return v && /^https?:$/.test(new URL(v).protocol) ? v : ''; } catch { return ''; } };
   const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
   const dShort = s => s ? new Date(s + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
   const must = ({ data, error }) => { if (error) throw error; return data; };
@@ -103,7 +105,7 @@
     cur = id ? leads.find(l => l.id === id) || must(await sb.from('sales_leads').select('*').eq('id', id).single()) : null;
     $('ld-title').textContent = cur ? cur.name : 'Nuovo locale';
     for (const [k, el] of Object.entries(F)) $(el).value = cur ? (cur[k] ?? '') : (k === 'stage' ? 'nuovo' : k === 'priority' ? '2' : k === 'segment' ? 'pizzeria' : '');
-    $('ld-why').innerHTML = cur ? [cur.fit_note, cur.size_hint, cur.website ? `<a href="${esc(cur.website)}" target="_blank" rel="noopener">sito</a>` : '', cur.source_url ? `<a href="${esc(cur.source_url)}" target="_blank" rel="noopener">fonte</a>` : ''].filter(Boolean).join(' · ') : '';
+    $('ld-why').innerHTML = cur ? [esc(cur.fit_note), esc(cur.size_hint), safeUrl(cur.website) ? `<a href="${esc(safeUrl(cur.website))}" target="_blank" rel="noopener">sito</a>` : '', safeUrl(cur.source_url) ? `<a href="${esc(safeUrl(cur.source_url))}" target="_blank" rel="noopener">fonte</a>` : ''].filter(Boolean).join(' · ') : '';
     $('ld-log-box').hidden = !cur; $('ld-msg').innerHTML = '';
     $('ld-save').hidden = !canWrite; $('la-save').disabled = !canWrite;
     $('la-kind').value = 'whatsapp'; $('la-out').value = ''; $('la-next').value = ''; $('la-nextd').value = ''; $('la-note').value = '';

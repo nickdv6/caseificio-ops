@@ -2,6 +2,8 @@
 
 Static PWA (no build step). Vanilla JS + supabase-js + html5-qrcode, both vendored in `vendor/` and cached by the service worker, so the app also starts with no internet.
 
+Offline start (v0.59): the last profile seen on each device is saved per user, so the tablet opens with no network (even with an expired login); the first login on a device still needs internet. Startup calls give up after a few seconds instead of waiting ~50 s for supabase-js to retry the login.
+
 Offline queue (v0.39): writes queue in the browser and flush when the network is back (and every minute). Every insert carries an id generated on the tablet, so a re-send after a lost reply never duplicates a record. Records the database refuses are set aside ("N rifiutate dal database" — tap the line to see the first error, tap again within 5 s to discard them) instead of retrying forever. Expired logins are refreshed before re-sending.
 
 Several tablets: open the app once with `?device=tablet-2` (remembered on that device) so scans show which tablet recorded them.
@@ -19,7 +21,7 @@ Several tablets: open the app once with `?device=tablet-2` (remembered on that d
 
 ## Setup (once)
 1. **Create the Supabase project** (eu-central / Frankfurt is closest to Agropoli).
-2. **Apply the migrations** in order: `../supabase/migrations/20261001_fabula_core_schema.sql`, then `20261002_fabula_sop_capture.sql` (SQL editor, or `supabase db push`).
+2. **Apply the migrations**: `supabase link --project-ref <ref>` then `supabase db push` from the repo root (all files in `../supabase/migrations`, in version order; the first one switches on pg_cron, pg_net, pgcrypto and uuid-ossp).
 3. **Expose the schema to the API**: Project Settings → API → *Exposed schemas* → add `fabula`.
 4. **Storage**: create a private bucket named `documents` (DDT and Z-report photos go there).
 5. **Users**: Authentication → add one email/password user per partner/operator. Then insert a `fabula.staff` row per user with `auth_user_id` = that user's id, e.g.
