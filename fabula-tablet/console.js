@@ -18,7 +18,7 @@
   async function loadOggi() {
     const [b, appr, prods, nick, farm] = await Promise.all([
       getBrief(),
-      sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table').eq('status', 'pending').order('requested_at'),
+      sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table, auto_approve_at, auto_rule').eq('status', 'pending').order('requested_at'),
       sb.from('products').select('sku, name, unit'),
       sb.from('bot_nicknames').select('agent, nickname, title_it'),
       sb.rpc('farm_order_link').then(r => r, () => ({ data: null }))]);   // v0.64: the Masseria's order page
@@ -85,6 +85,7 @@
       <div class="appr" data-id="${a.id}">
         <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><div class="t">${v.title}</div><div class="by">proposto da ${esc(proposer(a))} · ${age(a) === 0 ? 'oggi' : age(a) === 1 ? 'ieri' : age(a) + ' giorni fa'}</div></div><div class="amt">${v.amount}</div></div>
         ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
+        ${a.auto_approve_at ? `<div class="status" style="margin-top:8px">⏱ Si approva da sola alle <b>${new Date(a.auto_approve_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })}</b> se nessuno decide prima · ${esc(a.auto_rule || '')}</div>` : ''}
         ${PERM.can(PERM.approvalArea(a), 3) ? `<div class="row nodirty"><input type="text" placeholder="${v.type === 'recall_assessment' ? 'Nota (obbligatoria se rifiuti)' : 'Nota (facoltativa)'}" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>` : `<div class="status" style="margin-top:8px">Solo lettura: decide chi ha "gestisce" in quest'area.</div>`}
       </div>`; }).join('');
     box.querySelectorAll('button[data-act]').forEach(btn => btn.onclick = async () => {

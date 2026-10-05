@@ -52,6 +52,19 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Auto-approval rules and rota autocopy (v0.73)
+- A new approval is checked by `fabula.auto_approve_rule()`; if routine it gets `auto_approve_at` (now + `approve.auto_delay_min`,
+  60 min, never after it expires) and `auto_rule`. The console card shows "⏱ Si approva da sola alle HH:MM · <rule>"; a person
+  can still approve or reject. pg_cron `fabula_auto_approve` (every 10 min) re-checks and approves the due ones with the same
+  status update as the console (milk plan / PO / promo triggers run as usual) and posts "Approvato da solo" from Zia Rosa
+  (agent `auto_approve`, own card in Configurazione → Bot). If the rule no longer holds, the timer is removed.
+- Rules: milk plan (`approve.auto_milk_plan`, ±`approve.milk_tolerance_pct` 15 % of the milk worked on the last 4 same weekdays,
+  real history, no capacity / minimum batch / farm limit); purchase order (`approve.auto_po_max_eur` 150, real supplier, item
+  already received from them at a price within 10 %); counter sell-down promo (`approve.auto_promo`, standard discount,
+  ≤ `approve.promo_max_kg` 20 kg). Everything else (DOP, recipes, recalls, posts) always needs a person.
+- pg_cron `fabula_rota_autocopy` (Saturday): next week's rota is copied from this week when still empty.
+- Test: `tools/go-live/drill/prod-test/test_auto_approve.sql` (14).
+
 ## Placeholder customers and routine messages (v0.72)
 - `confirm_standing_orders` (wholesale bot and its database stand-in) does not book the standing orders of a placeholder customer
   (`fabula.is_placeholder_party`: parties.notes/source = 'placeholder', i.e. "Cliente 1/2" not yet renamed); their unshipped
