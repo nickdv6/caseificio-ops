@@ -173,7 +173,7 @@
     data.forEach(r => {
       const d = document.createElement('div'); d.className = 'task' + (r.days_left < 0 ? ' overdue' : '');
       const when = r.days_left < 0 ? 'SCADUTO · ritirare' : r.days_left === 0 ? 'scade oggi' : 'scade domani';
-      const promo = r.promo_status === 'approved' ? ` · PROMO -${r.promo_pct}% → € ${Number(r.promo_price_eur_kg).toLocaleString('it-IT', { minimumFractionDigits: 2 })}/kg` : r.promo_status === 'pending' ? ' · promo in attesa di ok' : '';
+      const promo = r.promo_status === 'approved' ? ` · PROMO -${r.promo_pct}% → € ${Number(r.promo_price_eur_kg).toLocaleString('it-IT', { minimumFractionDigits: 2 })}/kg${r.promo_code ? ' · codice cassa ' + r.promo_code : ''}` : r.promo_status === 'pending' ? ' · promo in attesa di ok' : '';
       d.innerHTML = `<div><div>${esc(r.name)} · ${Number(r.kg).toLocaleString('it-IT')} kg</div><div class="code">${esc(r.lot_number)} · ${when}${promo}</div></div>`;
       box.append(d);
     });

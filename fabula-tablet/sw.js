@@ -1,4 +1,4 @@
-const CACHE = 'perla-v36';
+const CACHE = 'perla-v37';
 const SHELL = ['./', './index.html', './app.js', './config.js', './brand.js', './perm.js', './ui.js', './ui.css', './manifest.json', './icon.svg', './labels.html',
   './vendor/supabase.js', './vendor/html5-qrcode.min.js', './vendor/qrcode.min.js'];
 // v0.48b: a new version takes over at once (skipWaiting + clients.claim) instead of waiting for every app tab to close,

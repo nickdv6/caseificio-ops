@@ -5,7 +5,7 @@
    parameters, machines, bots and users in admin.html. */
 (() => {
   const { sb, $, esc, eur, num, fmtD, dateIt, daysAgo, nOrNull, toast, badge, upd, saveBtn } = UI;
-  let staff = null, PRODUCTS = {}, NICK = {}, APPR = [], briefP = null;
+  let staff = null, PRODUCTS = {}, NICK = {}, APPR = [], briefP = null, FARM_LINK = null;
 
   // ---------- daily brief: fetched once per refresh, shared by Oggi, Operazioni and Andamento ----------
   const getBrief = () => briefP || (briefP = sb.rpc('daily_brief').then(({ data, error }) => {
@@ -16,15 +16,18 @@
 
   // ---------- Oggi ----------
   async function loadOggi() {
-    const [b, appr, prods, nick] = await Promise.all([
+    const [b, appr, prods, nick, farm] = await Promise.all([
       getBrief(),
       sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table').eq('status', 'pending').order('requested_at'),
       sb.from('products').select('sku, name, unit'),
-      sb.from('bot_nicknames').select('agent, nickname, title_it')]);
+      sb.from('bot_nicknames').select('agent, nickname, title_it'),
+      sb.rpc('farm_order_link').then(r => r, () => ({ data: null }))]);   // v0.64: the Masseria's order page
+    FARM_LINK = farm && farm.data ? new URL(farm.data, location.href).href : null;
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
     NICK = Object.fromEntries((nick.data || []).map(n => [n.agent, n]));
     APPR = appr.data || [];
     const issues = complianceItems(b);
+    renderFarm();
     const td = UI.romeISO(); renderTiles(b, issues); renderApprovals(td); renderHaccp(b, issues); renderStock(b.stock_finished, td);   // v0.60: days left count from today, not from the brief date (yesterday)
   }
 
@@ -121,7 +124,8 @@
         title = `Latte per ${dShort(p.plan_date)}`;
         facts = fact('Latte', `${num(p.milk_kg, 0)} <small>kg</small>`) + fact('Mozzarella prevista', `≈ ${kgf(p.planned_output_kg)} <small>kg</small>`) +
           fact('Costo stimato', eur(p.est_cost_eur)) + fact('Decidere entro', a.expires_at ? new Date(a.expires_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) + ' <small>ora italiana</small>' : '—');
-        more = p.rationale ? `<details><summary>Come è stato calcolato</summary>${esc(p.rationale)}</details>` : '';
+        more = (p.rationale ? `<details><summary>Come è stato calcolato</summary>${esc(p.rationale)}</details>` : '')
+          + (FARM_LINK ? `<div class="status">Approvando, l'ordine compare subito sulla pagina della Masseria (<a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina ordini latte</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a>); lì segnano "Visto".</div>` : '');
         break;
       case 'sell_down': case 'price_change': {
         const act = { promo_banco: 'promo al banco', offerta_ingrosso_e_promo: 'promo al banco + offerta ai clienti ingrosso', ritirare: 'ritirare dalla vendita', spingere_al_banco: 'spingere al banco' }[p.action] || p.action || '';
@@ -129,7 +133,9 @@
         title = `${esc(prod.name || p.sku || '')} · lotto ${esc(p.lot || '')}`;
         facts = fact('A rischio', `${kgf(p.at_risk_kg)} <small>kg</small>`, 'ko') + fact('Giacenza', `${kgf(p.on_hand_kg)} <small>kg</small>`) +
           fact('Scade', days == null ? fmtD(p.expiry) : days <= 0 ? 'oggi' : days === 1 ? 'domani' : fmtD(p.expiry), days != null && days <= 1 ? 'ko' : '') +
-          fact('Prezzo', `<s style="color:var(--muted);font-weight:400">€ ${num(p.list_price_eur_kg, 2)}</s> → € ${num(p.promo_price_eur_kg, 2)} <small>/kg</small>`) + fact('Sconto', `−${esc(p.promo_pct)} %`) + fact('Azione', esc(act));
+          fact('Prezzo', `<s style="color:var(--muted);font-weight:400">€ ${num(p.list_price_eur_kg, 2)}</s> → € ${num(p.promo_price_eur_kg, 2)} <small>/kg</small>`) + fact('Sconto', `−${esc(p.promo_pct)} %`) + fact('Azione', esc(act))
+          + fact('Codice Shopify', p.shopify_code ? esc(p.shopify_code) : 'in preparazione', p.shopify_code ? '' : 'ko');
+        more = `<div class="status">Approvando: il codice ${p.shopify_code ? esc(p.shopify_code) : '(lo crea il bot vendere prima)'} compare sul tablet per la cassa e vengono scritti due post già approvati, WhatsApp "oggi al banco" e storia Instagram (Marketing → Contenuti). Il codice scade alle 20:00.</div>`;
         break;
       }
       case 'recipe_update':
@@ -171,6 +177,15 @@
     }
     const [klabel, kcls] = KIND[type] || KIND.other;
     return { type, title, facts, more, amount, klabel, kcls };
+  }
+  // v0.64: the next approved milk order and whether the Masseria has seen it on its order page
+  async function renderFarm() {
+    const box = $('approvals'); if (!box) return;
+    let el = $('farm-status'); if (!el) { el = document.createElement('div'); el.id = 'farm-status'; el.className = 'status'; el.style.margin = '0 0 10px'; box.parentNode.insertBefore(el, box); }
+    const { data } = await sb.from('milk_plans').select('plan_date, milk_kg, farm_seen_at').eq('status', 'approved').gte('plan_date', UI.romeISO()).order('plan_date').limit(1);
+    const m = data && data[0];
+    el.innerHTML = !m ? '' : `🥛 Latte ${esc(dShort(m.plan_date))}: ${num(m.milk_kg, 0)} kg · Masseria: ${m.farm_seen_at ? 'visto ' + new Date(m.farm_seen_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '<b class="ko">non ancora visto</b>'}`
+      + (FARM_LINK ? ` · <a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina ordini</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a>` : '');
   }
   function renderHaccp(b, items) {
     const h = b.haccp || {};
@@ -446,6 +461,7 @@
   $('rota-copy').onclick = async () => { if (!leaveRota()) return; const prev = new Date(rotaMon); prev.setDate(prev.getDate() - 7); const { data, error } = await sb.rpc('copy_rota_week', { p_from: isoDay(prev), p_to: isoDay(rotaMon) }); if (error) return toast(error.message, 'err'); toast(`${data} turni copiati (le celle già compilate restano)`); loadRota(); };
   // ---------- Tier 2: send POs, wholesale confirmations ----------
   const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Copiato'); } catch { toast('Copia non riuscita', 'err'); } };
+  document.addEventListener('click', e => { const a = e.target.closest && e.target.closest('[data-copy]'); if (a) { e.preventDefault(); copyText(a.dataset.copy); } });   // v0.64
   const waLink = (phone, text) => 'https://wa.me/' + UI.waNumber(phone) + '?text=' + encodeURIComponent(text);   // v0.60: local numbers get 39 (they opened French numbers)
   async function renderPoSend() {
     const box = $('po-send');

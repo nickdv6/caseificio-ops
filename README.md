@@ -24,6 +24,11 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   report-only until the opening stock count is posted, then the Giacenze bot updates Shopify by itself (`fabula.shopify_push_enabled()`).
   The mozzarella pool is split across the 16 variants: 80 % by kg sold in the last 28 days, 20 % equal (`shopify.mix_weight`),
   equal split while nothing has sold; the pieces offered never add up to more than the pool (`v_shopify_inventory_push`).
+- Milk order to the Masseria (v0.64): approved milk plans appear on the farm's private page `latte.html?t=<milk.farm_token>`
+  (edge function `farm-order`, no login; change the setting to switch an old link off). The farm taps "Visto"; the Console
+  shows the next order and whether it was seen, with the link to copy.
+- Sell-down promos (v0.64): the sell-down bot pre-creates a random Shopify code per promo it proposes (ends 20:00); the tablet
+  shows it only once Nick approves; approving writes two approved posts (WhatsApp "oggi al banco", Instagram story).
 - Consorzio DOP declaration (v0.63): pg_cron runs `consorzio_declaration()` on the 1st (05:30 UTC); it lands in Console → Oggi
   with the disciplinare checks (60 h, fat/protein, DOP suppliers, traceability) and a fee estimate (`dop.consorzio_eur_kg`, estimate).
   Approving it closes the month's T-DOP task. Sending it to the Consorzio stays manual until the official format is known.

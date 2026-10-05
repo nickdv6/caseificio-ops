@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Ordine latte</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* v0.64 · Milk order page for the Masseria: no login, private link latte.html?t=<token> (setting milk.farm_token).
+   Shows the approved milk orders and the ones still waiting for approval; "Visto" tells the dairy the farm saw it. */
+:root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--ok:#1f6b3a;--warn:#b3261e;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.5 var(--body)}
+.box{max-width:520px;margin:0 auto;padding:24px 16px 48px}
+.rule{height:3px;width:48px;background:var(--gold);border-radius:2px;margin-bottom:12px}
+h1{font-family:var(--display);font-weight:600;font-size:1.6rem;margin:0}
+.sub{color:var(--muted);margin:2px 0 18px}
+h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:16px;margin-bottom:10px;display:flex;align-items:center;gap:14px}
+.card.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.when{flex:1}
+.day{font-weight:600}
+.kg{font-family:var(--display);font-size:1.9rem;font-weight:600;line-height:1}
+.kg small{font-size:.9rem;font-family:var(--body);color:var(--muted);font-weight:400}
+.meta{color:var(--muted);font-size:.9rem}
+.btn{border:0;border-radius:6px;padding:10px 14px;font:600 .95rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer;white-space:nowrap}
+.btn:disabled{opacity:.5}
+.seen{color:var(--ok);font-weight:600;font-size:.9rem;white-space:nowrap}
+.pending{border-style:dashed}
+.pending .kg{color:var(--muted)}
+.empty{color:var(--muted);padding:6px 2px}
+.err{color:var(--warn);margin-top:14px}
+footer{color:var(--muted);font-size:.85rem;margin-top:26px}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="rule"></div>
+  <h1 id="co">Ordine latte</h1>
+  <div class="sub" id="sub">Un momento…</div>
+  <div id="main" hidden>
+    <h2>Confermati</h2><div id="orders"></div>
+    <h2>Da confermare</h2><div id="pending"></div>
+    <footer id="foot"></footer>
+  </div>
+  <div class="err" id="err"></div>
+</div>
+<script src="config.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const token = new URLSearchParams(location.search).get('t') || '';
+  const FN = window.FABULA_CONFIG.supabaseUrl + '/functions/v1/farm-order';
+  const KEY = window.FABULA_CONFIG.supabaseKey;
+  const kg = n => Number(n).toLocaleString('it-IT', { maximumFractionDigits: 0 });
+  const dayName = (d, today) => {
+    const diff = Math.round((new Date(d + 'T12:00:00Z') - new Date(today + 'T12:00:00Z')) / 864e5);
+    const label = new Date(d + 'T12:00:00Z').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+    return (diff === 0 ? 'Oggi · ' : diff === 1 ? 'Domani · ' : diff === -1 ? 'Ieri · ' : '') + label;
+  };
+  async function seen(d, btn) {
+    btn.disabled = true;
+    try {
+      const r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body: JSON.stringify({ t: token, plan_date: d }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'non salvato');
+      btn.replaceWith(Object.assign(document.createElement('span'), { className: 'seen', textContent: '✓ Visto' }));
+    } catch (e) { btn.disabled = false; $('err').textContent = 'Non salvato: ' + e.message + '. Riprova.'; }
+  }
+  async function load() {
+    if (!/^[0-9a-f]{16,64}$/i.test(token)) { $('sub').textContent = ''; $('err').textContent = 'Link non valido: chiedi al caseificio il link aggiornato.'; return; }
+    try {
+      const r = await fetch(FN + '?t=' + encodeURIComponent(token), { headers: { apikey: KEY } });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'errore');
+      $('co').textContent = 'Ordine latte · ' + (d.company || '');
+      document.title = 'Ordine latte · ' + (d.company || '');
+      $('sub').textContent = 'Aggiornato ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ' · la pagina si aggiorna da sola';
+      const o = $('orders'); o.innerHTML = '';
+      (d.orders || []).forEach(x => {
+        const c = document.createElement('div'); c.className = 'card' + (x.plan_date === d.today ? ' today' : '');
+        c.innerHTML = `<div class="when"><div class="day">${esc(dayName(x.plan_date, d.today))}</div><div class="kg">${kg(x.milk_kg)} <small>kg di latte</small></div></div>`;
+        if (x.seen_at) c.append(Object.assign(document.createElement('span'), { className: 'seen', textContent: '✓ Visto' }));
+        else if (x.plan_date >= d.today) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Visto'; b.onclick = () => seen(x.plan_date, b); c.append(b); }
+        o.append(c);
+      });
+      if (!(d.orders || []).length) o.innerHTML = '<div class="empty">Nessun ordine confermato per i prossimi giorni.</div>';
+      const p = $('pending'); p.innerHTML = '';
+      (d.pending || []).forEach(x => {
+        const c = document.createElement('div'); c.className = 'card pending';
+        const by = x.decide_by ? ' · conferma entro ' + new Date(x.decide_by).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '';
+        c.innerHTML = `<div class="when"><div class="day">${esc(dayName(x.plan_date, d.today))}</div><div class="kg">≈ ${kg(x.milk_kg)} <small>kg previsti</small></div><div class="meta">Non ancora confermato${esc(by)}</div></div>`;
+        p.append(c);
+      });
+      if (!(d.pending || []).length) p.innerHTML = '<div class="empty">Niente in attesa.</div>';
+      $('foot').textContent = d.receiving_hours ? 'Orari di ricevimento latte: ' + d.receiving_hours : '';
+      $('main').hidden = false; $('err').textContent = '';
+    } catch (e) { $('err').textContent = 'Pagina non disponibile: ' + e.message + '.'; }
+  }
+  load(); setInterval(load, 5 * 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>
