@@ -52,6 +52,20 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Self-healing bots (v0.69)
+- pg_cron `fabula_bot_fallback` (every 5 min) runs `fabula.bot_fallback()`: when a bot in `fabula.bot_fallback_agents()` has not
+  started 45 min (`bot_schedule.grace_min`) after its due time, and up to 6 h after it, the database runs that bot's own function
+  once: `plan_milk` (Piano latte), `propose_purchase_orders` (Acquisti), `confirm_standing_orders` (Ordini ingrosso),
+  `haccp_evening_status` (tablet banner), `ops_health_check` (+ `infra_checks`), `sell_down_signals` (no Shopify code: counter
+  only), and re-sends the nightly backup. All of them skip work already done, so a late bot is harmless.
+- Each stand-in run: one row in `fabula.bot_fallback_runs` (agent, slot), an `agent_runs` row with `details.via = 'db_fallback'`
+  (not for the backup, which logs itself), and a message "Sostituito dal database · …" in Configurazione → Bot. A failure is an
+  `agent_runs` error, so the alarm bot reports it. `bot_watchdog` waits 20 extra minutes for these bots.
+- Not covered (they need Shopify or write text): Shopify sync, briefs, marketing, sales, deadlines — the heartbeat/alarm stay.
+- Switch off: setting `bots.db_fallback` = 0. Nightly backup: `fabula_backup_nightly` fires 19:15 and 20:15 UTC and
+  `backup_nightly_rome()` only sends at 21:xx Rome, so it stays at 21:15 after the clocks change.
+- Test: `tools/go-live/drill/infra-test/test_bot_fallback.sql` (22 checks).
+
 ## Infra & security autopilot (v0.68)
 - **Hourly monitor** (pg_cron `fabula_infra_probe` :40 → `fabula_infra_collect` :43 UTC): reads GitHub main of the public repo
   (`infra.github_repo`: migration list, `fabula-tablet/sw.js`, last commit), the Netlify site (`infra.site_url` → `/sw.js`) and
