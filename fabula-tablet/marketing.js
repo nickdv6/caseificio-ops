@@ -122,7 +122,7 @@
   async function loadCal() {
     const from = calStart, to = addDays(calStart, 14);
     $('cal-range').textContent = from.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }) + ' – ' + addDays(to, -1).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' });
-    let q = sb.from('mkt_content').select('*').gte('scheduled_at', iso(from)).lt('scheduled_at', iso(to)).order('scheduled_at');
+    let q = sb.from('mkt_content').select('*').gte('scheduled_at', romeInputToIso(iso(from) + 'T00:00')).lt('scheduled_at', romeInputToIso(iso(to) + 'T00:00')).order('scheduled_at');   // v0.60: window starts at midnight in Agropoli, not UTC
     if ($('cal-filter').value) q = q.eq('status', $('cal-filter').value);
     const [{ data: rows }, { data: undated }, { data: anyRow }] = await Promise.all([q, sb.from('mkt_content').select('*').is('scheduled_at', null).neq('status', 'rejected'), sb.from('mkt_content').select('id').limit(1)]);
     $('cal-seed').innerHTML = (anyRow || []).length ? '' : `Calendario vuoto. <b>Crea il piano di lancio</b>: 4 campagne e 28 post (dal giorno -7 al +27) con i brief già scritti. Data di apertura: <input type="date" id="seed-date" class="fi" style="width:auto"> <button class="btn sm" id="seed-go">Crea piano</button>`;

@@ -15,8 +15,18 @@
   // today / n days ago as YYYY-MM-DD in Agropoli time (the business day), not UTC
   const romeISO = (d = new Date()) => d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
   const daysAgo = n => romeISO(new Date(Date.now() - n * 864e5));
-  const nOrNull = v => v === '' || v == null ? null : Number(String(v).replace(',', '.'));
+  // v0.60: Italian numbers — "1.300" is one thousand three hundred, "1,3" and "1.3" are 1.3, "1.300,5" works; anything else is an error, never NULL/0
+  const parseIt = v => {
+    let t = String(v).trim().replace(/\s|€/g, '');
+    if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.');
+    else if (t.includes(',')) t = t.replace(',', '.');
+    else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    return /^-?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : NaN;
+  };
+  const nOrNull = v => { if (v === '' || v == null) return null; if (typeof v === 'number') return v; const n = parseIt(v); if (!Number.isFinite(n)) throw new Error(`Numero non valido: "${v}"`); return n; };
   const dOrNull = v => v || null;
+  // v0.60: phone → wa.me number. +39 / 0039 kept once; Italian mobiles (3…, including 390–393…) and landlines (0…) get 39
+  const waNumber = p => { let d = String(p || '').replace(/[^\d+]/g, ''); if (d.startsWith('+')) d = d.slice(1); else if (d.startsWith('00')) d = d.slice(2); else if (/^(3\d{8,9}|0\d{5,10})$/.test(d)) d = '39' + d; return d.replace(/\D/g, ''); };
 
   let toastT = null;
   const toast = (m, cls = '') => { const t = $('toast'); if (!t) return; t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', cls === 'err' ? 5000 : 2800); };
@@ -40,9 +50,20 @@
   document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
 
   // Salva button: disables while saving, toasts the result, clears the dirty mark of its row/card on success
+  // v0.60: saving one row used to re-render the whole list and wipe edits typed in other rows. Pages call UI.after(reload):
+  // while other rows are still unsaved the reload waits, and runs once the last of them is saved.
+  let savingScope = null, deferred = false; const pending = new Set();
+  const otherDirty = () => [...document.querySelectorAll('.dirty')].filter(s => !savingScope || (s !== savingScope && !s.contains(savingScope) && !savingScope.contains(s)));
+  const after = fn => { if (otherDirty().length) { pending.add(fn); deferred = true; return; } fn(); };
+  const runPending = () => { if (!pending.size || document.querySelector('.dirty')) return; const fns = [...pending]; pending.clear(); fns.forEach(f => { try { Promise.resolve(f()).catch(e => toast(e.message || String(e), 'err')); } catch (e) { toast(e.message || String(e), 'err'); } }); };
   const saveBtn = (fn, label = 'Salva') => {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'btn sm save'; b.textContent = label;
-    b.onclick = async () => { b.disabled = true; try { await fn(); clean(b); toast('Salvato'); } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; } };
+    b.onclick = async () => {
+      b.disabled = true; savingScope = scopeOf(b) || b.closest(SCOPE); deferred = false;
+      try { await fn(); clean(b); toast(deferred ? 'Salvato · l\'elenco si aggiorna quando salvi anche le altre righe modificate' : 'Salvato'); runPending(); }
+      catch (err) { toast(err.message || String(err), 'err'); }
+      finally { savingScope = null; b.disabled = false; }
+    };
     return b;
   };
   // run an async action from a button with the same disable/toast/error handling
@@ -123,10 +144,15 @@
       // forget what was loaded; reload the pane on screen now, the others when next opened
       async reload() { Object.keys(loaded).forEach(k => delete loaded[k]); if (loaders[api.current]) { loaded[api.current] = true; await loaders[api.current](); } },
       isLoaded: n => !!loaded[n],
-      start() { $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) api.show(t.dataset.tab); }; api.show((location.hash || '#' + def).slice(1).replace(/[^a-z]/g, '') || def, false); }
+      start() {
+        $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) api.show(t.dataset.tab); };
+        api.show((location.hash || '#' + def).slice(1).replace(/[^a-z]/g, '') || def, false);
+        // v0.60: links like admin.html#bots / #account clicked on the same page now switch the tab
+        window.addEventListener('hashchange', () => { const n = location.hash.slice(1).replace(/[^a-z]/g, ''); if (n && n !== api.current) api.show(n, false); });
+      }
     };
     return api;
   }
 
-  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, bellCount, get staff() { return staff; } };
+  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, bellCount, get staff() { return staff; } };
 })();

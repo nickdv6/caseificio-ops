@@ -12,13 +12,21 @@
 
   // ---------- UI helpers ----------
   const show = v => { document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-' + v)); };
-  const toast = (msg, cls = 'ok') => { const t = $('toast'); t.textContent = msg; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2600); };
-  const today = () => new Date().toISOString().slice(0, 10);
+  let lastToastAt = 0;
+  const toast = (msg, cls = 'ok') => { lastToastAt = Date.now(); const t = $('toast'); t.textContent = msg; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2600); };
+  // v0.59: dates are Agropoli dates (Europe/Rome), not UTC: between 00:00 and 02:00 the UTC date was still yesterday
+  const ROME_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const today = () => ROME_DAY.format(new Date());
+  const addDays = (ymd, n) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + Number(n || 0)); return d.toISOString().slice(0, 10); };
+  // start of today in Agropoli as an ISO timestamp (for timestamptz comparisons)
+  const romeDayStartIso = () => { const off = (new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Rome', timeZoneName: 'longOffset' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName') || {}).value || 'GMT+01:00';
+    const m = off.match(/GMT([+-]\d{2}):?(\d{2})?/); return `${today()}T00:00:00${m ? m[1] + ':' + (m[2] || '00') : '+01:00'}`; };
+  const likeSafe = v => String(v).replace(/[\\%_]/g, c => '\\' + c);   // exact, case-insensitive match with ilike
   const field = (id, label, type = 'number', extra = {}) => {
     const l = document.createElement('label'); l.htmlFor = id; l.textContent = label;
     const i = document.createElement(type === 'select' ? 'select' : 'input');
     i.id = id; i.name = id;
-    if (type !== 'select') { i.type = type; if (type === 'number') { i.step = extra.step || '0.1'; i.inputMode = 'decimal'; } }
+    if (type !== 'select') { i.type = type; if (type === 'number') { i.step = 'any'; i.inputMode = 'decimal'; } }   // v0.59: 'any' — a step made reportValidity() refuse real values (96.64 kg)
     if (extra.options) extra.options.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; i.appendChild(o); });
     if (extra.required !== false) i.required = true;
     $('form').append(l, i);
@@ -30,7 +38,7 @@
 
   // ---------- Offline queue (v0.39: idempotent, refused items set aside, auth errors retried) ----------
   const Q = 'fabula_queue', QF = 'fabula_failed';
-  const UUID_TABLES = new Set(['scan_events', 'milk_intake', 'labels', 'production_batches', 'stock_moves', 'haccp_log', 'meter_readings', 'effluent_log', 'shipments', 'waste_log', 'sales_orders', 'batch_step_logs']);
+  const UUID_TABLES = new Set(['scan_events', 'milk_intake', 'labels', 'production_batches', 'stock_moves', 'haccp_log', 'meter_readings', 'effluent_log', 'shipments', 'shipment_lines', 'waste_log', 'sales_orders', 'batch_step_logs']);
   const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; return (c === 'x' ? r : (r & 3) | 8).toString(16); }));
   const readList = k => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch { return []; } };
   const queue = () => readList(Q), failedList = () => readList(QF);
@@ -44,26 +52,31 @@
   const stamp = ops => ops.forEach(op => { if (op.table && !op.update && op.row && !op.row.id && UUID_TABLES.has(op.table)) op.row.id = uuid(); });
   async function save(ops) {                 // ops: [{table, row}] executed in order; later rows may reference earlier via $0.id
     stamp(ops);
-    if (!navigator.onLine) { setQueue([...queue(), { qid: uuid(), at: Date.now(), ops }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
-    try { await run(ops); return true; }
+    const st = { done: 0, out: [] };          // v0.59: progress travels with the queued item, so a re-send skips the steps already saved
+    if (!navigator.onLine) { setQueue([...queue(), { qid: uuid(), at: Date.now(), ops, st }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
+    try { await run(ops, st); return true; }
     catch (e) {
       console.error(e);
-      if (!retryable(e)) { toast(e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
-      setQueue([...queue(), { qid: uuid(), at: Date.now(), ops }]); toast('Rete assente: messo in coda', 'err'); return true;
+      if (!retryable(e)) { toast(st.done ? `Salvato solo in parte (${st.done} di ${ops.length} passi): ${e.message}` : e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
+      setQueue([...queue(), { qid: uuid(), at: Date.now(), ops, st }]); toast('Rete assente: messo in coda', 'err'); return true;
     }
   }
-  async function run(ops) {
-    const out = [];
-    for (const op of ops) {
-      if (op.rpc) { const { data, error } = await sb.rpc(op.rpc, op.args); if (error) throw error; out.push(data); continue; }
-      const row = JSON.parse(JSON.stringify(op.row), (k, v) => typeof v === 'string' && v.startsWith('$') ? out[Number(v.slice(1, v.indexOf('.')))][v.slice(v.indexOf('.') + 1)] : v);
+  const REF = /^\$(\d+)\.(\w+)$/;          // "$1.id" = a field of the row saved by step 1 (v0.59: only this exact shape; "$5" in a note stays text)
+  async function run(ops, st = { done: 0, out: [] }) {
+    const out = st.out || (st.out = []);
+    for (let k = st.done || 0; k < ops.length; k++) {
+      const op = ops[k];
+      if (op.rpc) { const { data, error } = await sb.rpc(op.rpc, op.args); if (error) throw error; out[k] = data; st.done = k + 1; continue; }
+      const row = JSON.parse(JSON.stringify(op.row), (key, v) => { const m = typeof v === 'string' && v.match(REF); return m ? (out[Number(m[1])] || {})[m[2]] : v; });
       let q = op.update ? sb.from(op.table).update(row).match(op.update).select().single()
                         : sb.from(op.table).insert(row).select().single();
       let { data, error } = await q;
       if (error && error.code === '23505' && row.id && !op.update) {   // already saved on an earlier attempt: reuse it
-        ({ data, error } = await sb.from(op.table).select().eq('id', row.id).single());
+        const again = await sb.from(op.table).select().eq('id', row.id).maybeSingle();
+        if (again.data) ({ data, error } = again);
+        else error = { ...error, message: 'Valore già registrato (doppione): ' + (error.details || error.message) };
       }
-      if (error) throw error; out.push(data);
+      if (error) throw error; out[k] = data; st.done = k + 1;
     }
     return out;
   }
@@ -71,6 +84,7 @@
   async function flush() {
     if (flushing) return;
     const q = queue(); if (!q.length || !navigator.onLine) return;
+    if (!staff || !(await PERM.session(sb))) return;            // v0.59: logged out → keep the queue for the next login (it used to fail every item)
     q.forEach(i => { if (!i.qid) i.qid = uuid(); }); setQueue(q);   // v0.56: every item gets an id (same tick as the read, so nothing is lost)
     flushing = true;
     try {
@@ -78,7 +92,7 @@
       const left = [], failed = [];
       for (const item of q) {
         stamp(item.ops);                                      // items queued by older versions get their ids now
-        try { await run(item.ops); }
+        try { await run(item.ops, item.st || (item.st = { done: 0, out: [] })); }
         catch (e) { console.error(e); (retryable(e) ? left : failed).push(retryable(e) ? item : { ...item, error: e.message, code: e.code, failed_at: Date.now() }); }
       }
       const seen = new Set(q.map(i => i.qid));                  // v0.56: keep what save() queued while this flush was sending
@@ -113,14 +127,18 @@
     const { data } = PERM.offline ? { data: null } : await PERM.timeout(sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle().then(x => x, () => ({ data: null })));
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name;
-    show('home'); loadTasks(); setQueue(queue()); flush();
+    show('home'); loadTasks(); setQueue(queue()); flush(); if (!PERM.offline) warmRefs();
     if (PERM.offline) toast('Offline: profilo salvato su questo tablet. Le registrazioni vanno in coda e partono al ritorno della rete.');
   }
   $('btn-login').onclick = async () => {
     const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value });
     if (error) return toast('Accesso negato: ' + error.message, 'err'); init();
   };
-  $('btn-logout').onclick = async () => { await sb.auth.signOut(); staff = null; show('login'); };
+  $('btn-logout').onclick = async () => {
+    const n = queue().length;
+    staff = null; await sb.auth.signOut(); show('login');
+    if (n) toast(`${n} registrazioni restano in coda su questo tablet: partono al prossimo accesso`, 'err');
+  };
 
   // ---------- Tasks ----------
   async function loadSellDown() {          // lots to sell first today (or pull), with any approved promo price
@@ -144,13 +162,18 @@
     data.forEach(n => {
       const d = document.createElement('div'); d.className = 'notice ' + n.severity;
       d.innerHTML = `<div class="nt">${esc(n.title_it)}</div>`;
-      (n.items || []).forEach(it => { const b = document.createElement('button'); b.className = 'nitem'; b.textContent = it.label_it + ' ›'; b.onclick = () => handleCode(it.scan); d.append(b); });
+      (n.items || []).forEach(it => {                 // v0.59: items with no scan (lot guard, heartbeat, watchdog) are text, not a dead button
+        const label = it.label_it || it.label || it.title_it || it.scan || '';
+        if (!label) return;
+        if (!it.scan) { const t = document.createElement('div'); t.className = 'code'; t.textContent = label; d.append(t); return; }
+        const b = document.createElement('button'); b.className = 'nitem'; b.textContent = label + ' ›'; b.onclick = () => handleCode(it.scan); d.append(b); });
       wrap.append(d);
     });
   }
   async function loadShifts() {            // who is clocked in right now
     const el = $('onshift'); if (!el) return;
-    const { data } = await sb.from('v_open_shifts').select('full_name, hours_so_far');
+    let { data, error } = await sb.rpc('floor_open_shifts');   // v0.59: works for floor profiles too (v_open_shifts needs personale ≥ 1)
+    if (error) ({ data } = await sb.from('v_open_shifts').select('full_name, hours_so_far'));
     el.textContent = data && data.length ? 'In turno: ' + data.map(r => `${r.full_name} (${Number(r.hours_so_far).toLocaleString('it-IT')} h)`).join(', ') : 'Nessuno in turno · passa il badge per iniziare';
   }
   async function loadTasks() {
@@ -168,13 +191,32 @@
       box.append(d);
     });
   }
-  async function closeTask(filter, scanEventId) {   // marks today's matching open task done
-    let q = sb.from('task_instances').select('id, task_schedules!inner(code, equipment_id, control_point_id)').in('status', ['due', 'overdue']).gte('due_at', today());
-    if (filter.equipment_id) q = q.eq('task_schedules.equipment_id', filter.equipment_id);
-    if (filter.control_point_id) q = q.eq('task_schedules.control_point_id', filter.control_point_id);
-    if (filter.code) q = q.eq('task_schedules.code', filter.code);
-    const { data } = await q.order('due_at').limit(1);
-    if (data && data[0]) await sb.from('task_instances').update({ status: 'done', completed_at: new Date().toISOString(), completed_by_id: staff.id, scan_event_id: scanEventId || null }).eq('id', data[0].id);
+  async function closeTask(filter, scanEventId) {   // marks today's matching open task done — v0.59: one RPC, queued when offline, for the Agropoli day it was done
+    try {
+      await save([{ rpc: 'close_open_task', args: { p_day: today(), p_code: filter.code || null, p_equipment_id: filter.equipment_id || null, p_control_point_id: filter.control_point_id || null, p_staff_id: staff.id, p_scan_event_id: scanEventId || null } }]);
+    } catch (e) { console.warn('closeTask', e); }
+  }
+  // v0.59: reference data (machines, control points, milk suppliers, pest stations) is kept on the device, so the
+  // temperature, milk-intake, cleaning, CCP and pest forms open with no network (the records then go into the queue)
+  const CK = 'perla_ref_v1';
+  const refStore = () => { try { return JSON.parse(localStorage.getItem(CK) || '{}'); } catch { return {}; } };
+  const putRef = (patch) => { try { localStorage.setItem(CK, JSON.stringify({ ...refStore(), ...patch })); } catch {} };
+  async function cached(key, fn) {
+    let r; try { r = await PERM.timeout(fn(), navigator.onLine ? 8000 : 0); } catch (e) { r = { data: null, error: e }; }
+    if (r && !r.error && r.data != null) { putRef({ [key]: r.data }); return { data: r.data, error: null }; }
+    const st = refStore(); if (key in st) return { data: st[key], error: null, cached: true };
+    return { data: r ? r.data : null, error: (r && r.error) || null };
+  }
+  async function warmRefs() {                       // after login, in the background: one read per list
+    try {
+      const [eq, cps, sup, pest] = await Promise.all([sb.from('equipment').select('*').eq('active', true), sb.from('haccp_control_points').select('*').eq('active', true),
+        sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true), sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code')]);
+      const patch = {};
+      (eq.data || []).forEach(e => { patch['eq_' + e.code] = e; });
+      (cps.data || []).forEach(c => { patch['cp_' + c.code] = c; if (c.equipment_id && c.code !== 'CCP-MILK-TEMP') patch['cp_eq_' + c.equipment_id] = c; });
+      if (sup.data) patch.milk_suppliers = sup.data; if (pest.data) patch.pest_stations = pest.data;
+      putRef(patch);
+    } catch (e) { /* offline: keep what we have */ }
   }
   const scanEvent = (code, action, extra = {}) => ({ table: 'scan_events', row: { code, action, staff_id: staff.id, device: CFG.device, ...extra } });
 
@@ -212,16 +254,22 @@
     openForm('Arrivo merce', 'Tocca l\'ordine che è arrivato', async () => {});
     $('btn-form-save').style.display = 'none';
   };
-  $('btn-scan-cancel').onclick = () => { show('home'); stopScan(); };
-  $('btn-manual').onclick = () => { const code = $('manual').value.trim().toUpperCase(); if (!code) return; stopScan().then(() => handleCode(code)); };
+  $('btn-scan-cancel').onclick = () => { const back = !!scanTarget; scanTarget = null; show(back ? 'form' : 'home'); stopScan(); };   // v0.59: a cancelled lot scan no longer hijacks the next one
+  // v0.59: only the prefix is upper-cased (METER:elec_main, lower-case milk lots stay as typed); a typed lot number is upper-cased
+  const normCode = c => { const i = c.indexOf(':'); if (i < 0) return /^[lr]\d{8}-[a-z]$/i.test(c) ? c.toUpperCase() : c.toUpperCase(); return c.slice(0, i).toUpperCase() + c.slice(i); };
+  $('btn-manual').onclick = () => { const code = normCode($('manual').value.trim()); if (!code) return; stopScan().then(() => handleCode(code)); };
   $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('btn-manual').click(); } });
   const _manual = $('btn-manual').onclick; $('btn-manual').onclick = () => { const code = $('manual').value.trim(); if (scanTarget && code) { const f = scanTarget; scanTarget = null; stopScan().then(() => f(code)); return; } return _manual && _manual(); };
   $('btn-form-cancel').onclick = () => show('home');
 
   // ---------- Route a code to its step ----------
+  // v0.59: what each scan needs (area, level 2 = registra); the database enforces the same, this just stops before a form that can't be saved
+  const NEED = { EQ: 'haccp', CAL: 'haccp', CCP: 'haccp', PEST: 'haccp', SAMPLE: 'haccp', HACCP: 'haccp', CLEAN: 'haccp', DDT: 'produzione', LOT: 'produzione', METER: 'produzione', EFFL: 'produzione', PO: 'magazzino', COUNT: 'magazzino', SHIP: 'spedizioni' };
+  const allowed = kind => { const a = NEED[kind]; if (!a || PERM.can(a, 2)) return true; toast(`Il profilo "${(PERM.data && PERM.data.role_name) || '?'}" non può registrare qui (${a}): chiedi al responsabile`, 'err'); show('home'); return false; };
   async function handleCode(code) {
     $('form').innerHTML = ''; current = { code };
     const [kind, ...rest] = code.split(':'); const ref = rest.join(':');
+    if (!allowed(/^[LR]\d{8}-[A-Z]$/.test(kind) && !rest.length ? 'LOT' : kind)) return;
     try {
       if (kind === 'EQ') return await stepEquipment(ref);
       if (kind === 'DDT') return await stepMilk(ref);
@@ -264,15 +312,24 @@
     $('f-title').textContent = title; $('f-sub').textContent = ''; show('form');
     return 'stay';
   }
-  $('btn-form-save').onclick = async () => { if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true; try { const r = await current.onSave(); if (r !== 'stay') { show('home'); loadTasks(); } } finally { $('btn-form-save').disabled = false; } };
+  $('btn-form-save').onclick = async () => {
+    if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true;
+    try { const r = await current.onSave(); if (r !== 'stay') { show('home'); loadTasks(); } }
+    catch (e) { console.error(e); if (Date.now() - lastToastAt > 500) toast((e && e.message) || 'Non salvato', 'err'); }   // v0.59: no silent failures
+    finally { $('btn-form-save').disabled = false; }
+  };
+  // v0.59: Enter on a one-field screen (meter, temperature, chlorine) saves instead of reloading the page to Home
+  $('form').addEventListener('submit', e => { e.preventDefault(); const b = $('btn-form-save'); if (b.style.display !== 'none' && !b.disabled) b.click(); });
+  // v0.59: changing anything after a "check and press Salva again" warning asks for the confirmation again
+  $('form').addEventListener('input', () => { if (current) { current.force = false; current.overOk = false; current.bigOk = false; } });
 
   // 1/4/7/9 — equipment: cold room, pasteurizer, thermometer → temperature; POS → Z report
   async function stepEquipment(code) {
-    const { data: eq } = await sb.from('equipment').select('*').eq('code', code).single();
-    if (!eq) throw new Error('Macchina sconosciuta: ' + code);
+    const { data: eq, error: eqErr } = await cached('eq_' + code, () => sb.from('equipment').select('*').eq('code', code).maybeSingle());
+    if (!eq) throw new Error(eqErr && !navigator.onLine ? 'Senza rete e macchina non ancora salvata sul tablet: ' + code : 'Macchina sconosciuta: ' + code);
     if (eq.kind === 'pos') return stepZ(eq);
     if (eq.kind === 'thermometer' || eq.kind === 'scale' || eq.code.startsWith('PH-') || current.code.startsWith('CAL:')) return stepCalibration(eq);
-    const { data: cp } = await sb.from('haccp_control_points').select('*').eq('equipment_id', eq.id).eq('active', true).neq('code', 'CCP-MILK-TEMP').maybeSingle();
+    const { data: cp } = await cached('cp_eq_' + eq.id, () => sb.from('haccp_control_points').select('*').eq('equipment_id', eq.id).eq('active', true).neq('code', 'CCP-MILK-TEMP').maybeSingle());
     const lim = cp ? `limite ${cp.min_value ?? ''}${cp.min_value != null && cp.max_value != null ? '–' : ''}${cp.max_value ?? ''} ${cp.unit || ''}`.replace('limite –', 'limite max ') : '';
     const t = field('temp', 'Temperatura °C', 'number', { limit: lim });
     let note = null;
@@ -305,7 +362,8 @@
   }
   // 8 — cleaning checklist
   async function stepClean() {
-    const { data: cp } = await sb.from('haccp_control_points').select('*').eq('code', 'PRP-CLEAN').single();
+    const { data: cp } = await cached('cp_PRP-CLEAN', () => sb.from('haccp_control_points').select('*').eq('code', 'PRP-CLEAN').maybeSingle());
+    if (!cp) throw new Error('Punto di controllo PRP-CLEAN non disponibile: riprova con la rete');
     const items = ['Caldaia / pastorizzatore', 'Filatrice', 'Tavoli e utensili', 'Pavimenti e scarichi', 'Celle frigo'];
     checklist(items);
     openForm('Sanificazione fine turno', 'Spunta tutto prima di salvare', async () => {
@@ -317,10 +375,11 @@
   }
   // 2 — milk arrival (QR on DDT encodes DDT:<number>, or type it)
   async function stepMilk(ddt) {
-    const { data: sup } = await sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true);
+    const { data: sup } = await cached('milk_suppliers', () => sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true));
+    if (!sup || !sup.length) throw new Error(navigator.onLine ? 'Nessun fornitore di latte attivo in anagrafica' : 'Senza rete e fornitori non ancora salvati sul tablet');
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
     const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
-    const { data: cpT } = await sb.from('haccp_control_points').select('max_value, warn_max').eq('code', 'CCP-MILK-TEMP').maybeSingle();
+    const { data: cpT } = await cached('cp_CCP-MILK-TEMP', () => sb.from('haccp_control_points').select('*').eq('code', 'CCP-MILK-TEMP').maybeSingle());
     const tMax = Number(cpT?.max_value ?? 8), tWarn = Number(cpT?.warn_max ?? 6);
     field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
     field('abx', 'Test antibiotici (CCP 1b)', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Test rapido prima dello scarico' });
@@ -332,17 +391,25 @@
     openForm('Arrivo latte', (ddt ? 'DDT ' + ddt : 'Scrivi il numero del DDT') + planTxt, async () => {
       if (val('abx') === '') { toast('Registra l\'esito del test antibiotici', 'err'); throw new Error('abx'); }
       const ddtNo = String(val('ddtn') || '').trim().toUpperCase();
+      // v0.59: lot labels are unique — a tank id used before (T1) gets the date (T1-0510, then T1-0510-2…) so intake never breaks
+      let lotIn = String(val('lot') || '').trim();
+      if (navigator.onLine && lotIn) {
+        const base = lotIn; let k = 0;
+        while (k < 9) { const { count, error } = await sb.from('labels').select('id', { count: 'exact', head: true }).ilike('code', likeSafe('LOT:' + lotIn)); if (error || !count) break;
+          k++; lotIn = base + '-' + today().slice(8, 10) + today().slice(5, 7) + (k > 1 ? '-' + k : ''); }
+        if (lotIn !== base) { $('lot').value = lotIn; toast(`Lotto ${base} già usato: registrato come ${lotIn}`, 'err'); }
+      }
       const hot = val('temp') > tMax, abxPos = val('abx') === '1', accepted = !hot && !abxPos;
       const why = [hot ? `temperatura > ${tMax} °C` : null, abxPos ? 'test antibiotici positivo' : null].filter(Boolean).join(' · ');
       const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')) } }),
-        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: val('lot'), qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
-        { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + val('lot'), lot_number: val('lot'), milk_intake_id: '$1.id', printed_by_id: staff.id } },
+        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
+        { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + lotIn, lot_number: lotIn, milk_intake_id: '$1.id', printed_by_id: staff.id } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: staff.id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: staff.id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
       await save(ops);
       const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${ddtNo.replace(/[^A-Z0-9-]/g, '_')}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
       toast(accepted ? (val('temp') > tWarn ? `Latte accettato · ${val('temp')} °C: iniziare la lavorazione entro 2 ore` : 'Latte registrato ✓') : 'Latte RIFIUTATO: ' + why, accepted && val('temp') <= tWarn ? 'ok' : 'err');
-      const lotv = val('lot'), kgv = val('kg'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
+      const lotv = lotIn, kgv = val('kg'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
       if (!accepted) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, why, 'Isola il latte e avvisa la Masseria e il responsabile.'], []);
       return showDone('✓ Latte registrato', [`Lotto ${lotv} · ${kgv} kg · ${sup}`, 'Attacca l\'etichetta al tank: la scansioni per avviare la caldaia.'],
         [['🖨 Stampa etichetta lotto latte', labelUrl(lotv, 'Latte di bufala · ' + sup, 'arrivo ' + ddmm(today()), 1)]]);
@@ -350,8 +417,10 @@
   }
   // 3/5/6 — a lot label: milk lot → start/end batch; batch lot → sale or shipment
   async function stepLot(lot) {
-    const { data: milk } = await sb.from('milk_intake').select('id, qty_kg, intake_date, accepted, rejection_reason').eq('milk_lot', lot).order('intake_date', { ascending: false }).limit(1).maybeSingle();
-    const { data: batch } = await sb.from('production_batches').select('*').eq('batch_lot', lot).maybeSingle();
+    const { data: milk } = await sb.from('milk_intake').select('id, milk_lot, qty_kg, intake_date, accepted, rejection_reason').ilike('milk_lot', likeSafe(lot)).order('intake_date', { ascending: false }).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const { data: batch } = await sb.from('production_batches').select('*').ilike('batch_lot', likeSafe(lot)).maybeSingle();
+    if (milk && !batch) lot = milk.milk_lot;            // the stored spelling, for the stock move
+    if (!milk && !batch && !navigator.onLine) throw new Error('Senza rete i lotti non si possono leggere: riprova quando torna la connessione');
     if (batch) return batch.output_kg == null ? stepBatchWork(batch) : stepPick(batch);   // open batch → working steps, then close
     if (!milk) throw new Error('Lotto sconosciuto: ' + lot);
     if (milk.accepted === false) throw new Error(`Latte respinto (${milk.rejection_reason || 'non conforme'}): non si può usare in produzione`);   // v0.55
@@ -373,8 +442,13 @@
   }
   async function stepBatchStart(milk, lot) {
     const { data: prods } = await sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true);
-    const { count } = await sb.from('production_batches').select('*', { count: 'exact', head: true }).eq('batch_date', today());
-    const batchLot = 'L' + today().replace(/-/g, '') + '-' + String.fromCharCode(65 + (count || 0));
+    // v0.59: next free letter among today's L-lots (ricotta R-lots and old simulation rows no longer shift it); re-read at save time
+    const nextLot = async () => { const pre = 'L' + today().replace(/-/g, '') + '-';
+      const { data: ls } = await sb.from('production_batches').select('batch_lot').like('batch_lot', pre + '%');
+      const used = new Set((ls || []).map(x => x.batch_lot.slice(pre.length)));
+      for (let c = 65; c <= 90; c++) if (!used.has(String.fromCharCode(c))) return pre + String.fromCharCode(c);
+      return pre + 'Z' + Date.now().toString().slice(-3); };
+    let batchLot = await nextLot();
     const prodSel = field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) });
     const presets = await loadPresets();
     const preSel = field('preset', 'Impostazioni di processo', 'select', { options: [['', '—']], required: false });
@@ -385,6 +459,7 @@
     openForm('Inizio lotto ' + batchLot, `latte ${lot} · disponibili ${milk.qty_kg} kg`, async () => {
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
       const product = val('product'), preset = val('preset') || null;
+      if (navigator.onLine) batchLot = await nextLot();      // another tablet may have opened a lot meanwhile
       await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset } }),
         { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
         { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
@@ -402,8 +477,7 @@
     if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
       const out = val('out'), ph = val('ph'), n = val('n'), whey = byp ? (val('whey') || 0) : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
-      const exp = new Date(); exp.setDate(exp.getDate() + (prod?.shelf_life_days || 5));
-      const code = current.code, expS = exp.toISOString().slice(0, 10);
+      const expS = addDays(today(), prod?.shelf_life_days || 5), code = current.code;
       const lotLink = [`🖨 Stampa ${n || 1} etichett${(n || 1) === 1 ? 'a' : 'e'} lotto ${b.batch_lot}`, labelUrl(b.batch_lot, prod?.name, 'scad. ' + ddmm(expS), n || 1)];
       const startRicotta = async () => {
         const ricLot = 'R' + b.batch_lot.slice(1);
@@ -419,7 +493,7 @@
       const close = async () => {
         const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
           { table: 'production_batches', update: { id: b.id }, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
-          { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: exp.toISOString().slice(0, 10), qty: out, move_type: 'production_out', batch_id: b.id, source: 'tablet' } }];
+          { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: b.id, source: 'tablet' } }];
         if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)
           ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: b.id, qty_printed: n || 1, printed_by_id: staff.id } });
         await save(ops);
@@ -467,7 +541,7 @@
       const q = field('q' + i, `Ricevuti (${l.unit})`, 'number', { step: l.unit === 'pz' ? '1' : '0.01' }); q.value = l.remaining;
       field('lot' + i, 'Lotto fornitore', 'text', { required: false });
       const e = field('exp' + i, 'Scadenza (se stampata)', 'date', { required: false });
-      if (l.shelf_life_days) { const d = new Date(); d.setDate(d.getDate() + l.shelf_life_days); e.value = d.toISOString().slice(0, 10); }
+      if (l.shelf_life_days) e.value = addDays(today(), l.shelf_life_days);
       field('pr' + i, `Prezzo sul DDT €/${l.unit} (solo se diverso)`, 'number', { step: '0.0001', required: false });
     });
     field('ddt', 'Numero DDT', 'text', { required: false }); field('photo', 'Foto DDT', 'file', { required: false });
@@ -585,7 +659,7 @@
       scanBtn.onclick = () => { scanTarget = code => { const v = code.replace(/^LOT:/i, '').trim(); const ok = [...lot.options].some(op => op.value === v); if (!ok) { const op = document.createElement('option'); op.value = v; op.textContent = v + ' · non tra i consigliati'; lot.append(op); } lot.value = v; lot.style.borderColor = ok ? 'var(--ok)' : 'var(--warn)'; show('form'); toast(ok ? 'Lotto confermato ✓' : 'Lotto diverso da quelli consigliati: controlla la scadenza', ok ? '' : 'err'); }; startScan(); };
       $('form').append(scanBtn);
       const q = field('q' + i, `Peso effettivo (${l.unit})`, 'number', { step: '0.01' }); q.value = Number(l.qty); q.dataset.weighed = '0';
-      q.oninput = () => { q.dataset.weighed = '0'; };
+      q.oninput = () => { q.dataset.weighed = '0'; current.force = false; };
       const w = scaleButton(q, 'net');
       $('form').append(w);
       rows.push({ l, lot, q });
@@ -707,7 +781,14 @@
       $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-warn').textContent = '';
       btns.forEach(b => b.disabled = false); show('dose');
     };
-    const finish = async () => { $('d-bar').style.width = '100%'; const r = await onDone(); if (r !== 'stay') { show('home'); loadTasks(); } };   // 'stay' = next sequence took over
+    const finish = async () => {                      // 'stay' = next sequence took over
+      $('d-bar').style.width = '100%';
+      try { const r = await onDone(); if (r !== 'stay') { show('home'); loadTasks(); } }
+      catch (e) {                                      // v0.59: the close failed — stay here, ✓ tries the close again (it used to freeze on steps[k])
+        console.error(e); if (Date.now() - lastToastAt > 500) toast((e && e.message) || 'Chiusura non salvata', 'err');
+        $('d-prog').textContent = 'Passi registrati · chiusura non salvata'; $('d-ok').textContent = '↻ Riprova a chiudere'; btns.forEach(b => b.disabled = false); show('dose');
+      }
+    };
     const next = async q => {
       const s = steps[k]; btns.forEach(b => b.disabled = true);
       try {
@@ -717,11 +798,12 @@
       k++; if (k < steps.length) return render();
       return finish();
     };
-    $('d-ok').onclick = () => { const s = steps[k]; next(s.kind === 'process' ? s.target : s.qty); };
+    $('d-ok').onclick = () => { if (k >= steps.length) return finish(); const s = steps[k]; next(s.kind === 'process' ? s.target : s.qty); };
     $('d-diff').onclick = () => { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); };
     $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona di nuovo il lotto per continuare'); show('home'); loadTasks(); };
     $('d-skip').onclick = () => { k++; if (k < steps.length) return render(); if (opts.onSkipAll && steps.every(st => st.kind === 'process')) { $('form').innerHTML = ''; return opts.onSkipAll(); } return finish(); };
     $('d-alt-ok').onclick = () => {
+      if (k >= steps.length) return finish();
       const s = steps[k], raw = $('d-alt-in').value;
       if (raw === '' || isNaN(Number(raw))) return toast(s.kind === 'process' ? 'Scrivi il valore misurato' : 'Scrivi la quantità usata', 'err');
       if (s.kind === 'process') {
@@ -739,9 +821,11 @@
 
 
   // ---------- Sicurezza alimentare (v0.28) ----------
-  const rpcNow = async (fn, args) => {          // online: run now and return the answer · offline: queue it
+  const rpcNow = async (fn, args) => {          // online: run now and return the answer · offline (or network error): queue it
     if (!navigator.onLine) { await save([{ rpc: fn, args }]); return null; }
-    const { data, error } = await sb.rpc(fn, args); if (error) throw error; return data;
+    const { data, error } = await sb.rpc(fn, args);
+    if (error && retryable(error)) { await save([{ rpc: fn, args }]); return null; }   // v0.59: Wi-Fi up but no internet → queued, not lost
+    if (error) throw error; return data;
   };
   function stepHaccpMenu() {
     $('form').innerHTML = ''; current = { code: 'HACCP:' };
@@ -754,11 +838,11 @@
   }
   // CCP:<code>[:<lot>] — one measurement against the HACCP plan; the server opens the NC and blocks the lot when out of limit
   async function stepCcp(cpCode, lot) {
-    const { data: cp } = await sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).single();
+    const { data: cp } = await cached('cp_' + cpCode, () => sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).maybeSingle());
     if (!cp) throw new Error('Punto di controllo sconosciuto: ' + cpCode);
     const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
     if (needsLot && !lot) {
-      const { data: bs } = await sb.from('production_batches').select('batch_lot, input_kind').eq('batch_date', today()).order('batch_lot');
+      const { data: bs } = await cached('batches_today_' + today(), () => sb.from('production_batches').select('batch_lot, input_kind').eq('batch_date', today()).order('batch_lot'));
       const mine = (bs || []).filter(b => cp.code === 'CCP-RIC' ? b.input_kind === 'whey' : b.input_kind !== 'whey');
       field('lot', 'Lotto', 'select', { options: [['', '— scegli —'], ...mine.map(b => [b.batch_lot, b.batch_lot])] });
     }
@@ -815,7 +899,7 @@
   }
   // PEST: — weekly internal round of the stations
   async function stepPest() {
-    const { data: st } = await sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code');
+    const { data: st } = await cached('pest_stations', () => sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code'));
     if (!st || !st.length) throw new Error('Nessuna postazione registrata');
     const opts = [['ok', 'OK'], ['consumo', 'Esca consumata'], ['cattura', 'Cattura'], ['insetti', 'Insetti'], ['tracce', 'Tracce / escrementi'], ['danneggiata', 'Danneggiata'], ['mancante', 'Mancante']];
     st.forEach((x, k) => field('st' + k, `${x.code} · ${x.location_it}`, 'select', { options: opts }));

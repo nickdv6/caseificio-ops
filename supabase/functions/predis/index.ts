@@ -25,8 +25,10 @@ Deno.serve(async (req) => {
   const { data: { user } } = await userClient.auth.getUser();
   if (!user) return json({ error: "non autenticato" }, 401);
   const db = createClient(url, service, { db: { schema: "fabula" } });
-  const { data: staff } = await db.from("staff").select("full_name, role").eq("auth_user_id", user.id).maybeSingle();
+  const { data: staff } = await db.from("staff").select("full_name, role").eq("auth_user_id", user.id).eq("active", true).maybeSingle();
   if (!staff) return json({ error: "utente non abilitato" }, 403);
+  // v0.60: generating spends Predis credits — only profiles that can register marketing content (marketing ≥ 2), checked with the caller's own rights
+  const { data: lvl } = await userClient.rpc("perm_level", { p_area: "marketing" });
 
   const key = Deno.env.get("PREDIS_API_KEY") ?? "";
   const { data: setBrand } = await db.from("settings").select("value").eq("key", "mkt.predis_brand_id").maybeSingle();
@@ -35,7 +37,8 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* empty */ }
   const action = String(body.action ?? "status");
 
-  if (action === "status") return json({ configured: !!key && !!brand, has_key: !!key, has_brand: !!brand });
+  if (action === "status") return json({ configured: !!key && !!brand, has_key: !!key, has_brand: !!brand, can_generate: Number(lvl ?? 0) >= 2 });
+  if (Number(lvl ?? 0) < 2) return json({ error: "Il tuo profilo non può generare contenuti (serve Marketing: registra)" }, 403);
   if (!key || !brand) return json({ error: "Predis.ai non configurato: aggiungi il segreto PREDIS_API_KEY e il brand_id (Configurazione → Marketing).", configured: false }, 412);
 
   if (action === "generate") {
@@ -55,13 +58,17 @@ Deno.serve(async (req) => {
     fd.append("output_language", String(reqBody.output_language ?? "italian"));
     fd.append("color_palette_type", "brand");
     fd.append("model_version", "4");
-    const r = await fetch(`${PREDIS}/create_content/`, { method: "POST", headers: { Authorization: key }, body: fd });
-    const out = await r.json().catch(() => ({}));
-    const ids: string[] = Array.isArray(out.post_ids) ? out.post_ids.map(String) : [];
-    if (!r.ok || ids.length === 0) {
+    // v0.60: a network error (or timeout) used to leave the post stuck in "generating" forever
+    let r: Response | null = null; let out: Record<string, unknown> = {};
+    try {
+      r = await fetch(`${PREDIS}/create_content/`, { method: "POST", headers: { Authorization: key }, body: fd, signal: AbortSignal.timeout(30000) });
+      out = await r.json().catch(() => ({}));
+    } catch (e) { out = { network_error: String(e) }; }
+    const ids: string[] = Array.isArray(out.post_ids) ? (out.post_ids as unknown[]).map(String) : [];
+    if (!r || !r.ok || ids.length === 0) {
       await db.from("mkt_ai_jobs").update({ status: "error", error: JSON.stringify(out).slice(0, 2000), response: out, completed_at: new Date().toISOString() }).eq("id", jobId);
       await db.from("mkt_content").update({ status: "idea" }).eq("id", contentId).eq("status", "generating");
-      return json({ error: "Predis.ai ha rifiutato la richiesta", detail: out, http: r.status }, 502);
+      return json({ error: r ? "Predis.ai ha rifiutato la richiesta" : "Predis.ai non raggiungibile: riprova più tardi", detail: out, http: r?.status ?? 0 }, 502);
     }
     await db.from("mkt_ai_jobs").update({ status: "in_progress", external_ids: ids, response: out }).eq("id", jobId);
     return json({ ok: true, job_id: jobId, post_ids: ids, status: out.post_status ?? "inProgress" });
@@ -73,8 +80,11 @@ Deno.serve(async (req) => {
     for (const media of ["single_image", "carousel", "video"]) {
       const wanted = (jobs ?? []).filter((j) => (j.request?.media_type ?? "single_image") === media);
       if (!wanted.length) continue;
-      const r = await fetch(`${PREDIS}/get_posts/?brand_id=${encodeURIComponent(brand)}&media_type=${media}&page_n=1&items_n=20`, { headers: { Authorization: key } });
-      const out = await r.json().catch(() => ({}));
+      let out: Record<string, unknown> = {};
+      try {
+        const r = await fetch(`${PREDIS}/get_posts/?brand_id=${encodeURIComponent(brand)}&media_type=${media}&page_n=1&items_n=20`, { headers: { Authorization: key }, signal: AbortSignal.timeout(30000) });
+        out = await r.json().catch(() => ({}));
+      } catch { continue; }
       for (const p of (out.posts ?? []) as Array<{ post_id: string; urls: string[]; caption: string }>) {
         if (!wanted.some((j) => (j.external_ids ?? []).includes(String(p.post_id)))) continue;
         if (!p.urls?.length) continue;

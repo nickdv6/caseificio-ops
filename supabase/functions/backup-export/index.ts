@@ -41,13 +41,18 @@ Deno.serve(async (req: Request) => {
   try {
     const { data: tables, error: tErr } = await fab.rpc("backup_table_list");
     if (tErr) throw new Error("table list: " + tErr.message);
+    // v0.60: pages are read in a stable order (primary key, or every column when a table has none) so no row is missed or doubled
+    const { data: keys } = await fab.rpc("backup_table_keys");
+    const orderOf = (t: string): string[] => ((keys ?? {}) as Record<string, string[]>)[t] ?? [];
 
     const out: Record<string, unknown[]> = {};
     const counts: Record<string, number> = {};
     for (const t of tables as string[]) {
       const rows: unknown[] = [];
       for (let from = 0; ; from += PAGE) {
-        const { data, error } = await fab.from(t).select("*").range(from, from + PAGE - 1);
+        let q = fab.from(t).select("*");
+        for (const c of orderOf(t)) q = q.order(c, { ascending: true, nullsFirst: true });
+        const { data, error } = await q.range(from, from + PAGE - 1);
         if (error) throw new Error(`${t}: ${error.message}`);
         rows.push(...(data ?? []));
         if (!data || data.length < PAGE) break;

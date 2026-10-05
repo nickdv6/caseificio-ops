@@ -31,6 +31,60 @@
 | 8 / L2 / L3 / L5 · migrations didn't match live | v044c/d files renamed to their live versions; v044/v044b recorded as applied; new `20261001033000_v000_platform_extensions` (pg_cron, pg_net, pgcrypto, uuid-ossp), `20261002201700_v040a_bot_messages_table` (table, indexes, RLS + 5 policies from live), `demand_7d()` + `v_demand_7d` restored into their file, the 2 hand-scheduled pg_cron jobs in `v059a`. Repo 76 files = live 76 versions. Replay of all migrations on clean Postgres 16 matches live on functions, views, tables, constraints, indexes, policies, triggers, enums, cron jobs and buckets; the 26 function bodies that differ do so only in comments |
 | monthly review closed the running month | `monthly_review()` falls back to the previous month when given a date in the current or a future month (v059b) |
 
+## Fixed (5 Oct, v0.60 — app sw perla-v34, DB v060a/v060b, edge functions predis v2, invite-user v2, backup-export v2)
+
+All items below are deployed. Tested: clean replay of all migrations + v060 on Postgres 16 (role checks run as a Produzione user), every page loaded in headless Chromium with no errors, the tablet driven offline (meter with Enter, temperature from cached machine data), and a live backup run with the new ordering (93 tables, 1,015 rows).
+
+| Item | Fix |
+|---|---|
+| 10 · forms refuse values / Enter reloads | number fields no longer validate a step (96.64 kg saves); Enter on a one-field screen saves instead of reloading |
+| 11 · pack always says SIMULAZIONE | `[hidden]` now wins over `.badge`; default month computed from the Agropoli date (31st bug gone); "11/2026" accepted |
+| Tablet · reused tank id breaks intake | a lot id already used gets the date (T1 → T1-0510, then -2…) and the tablet says so; a real duplicate now gives a clear "già registrato" message |
+| Tablet · re-sends duplicate or fail | each queued record keeps which steps already went through, so a re-send never repeats an RPC (receive, CCP) or re-inserts batch milk inputs; `shipment_lines` gets a tablet id |
+| Tablet · multi-step saves not atomic (partly) | a refused step now says "Salvato solo in parte (N di M passi)"; a re-send continues from the failed step. Full atomicity needs server-side RPCs (still open) |
+| Tablet · no permission check | each scan checks the profile first (HACCP / produzione / magazzino / spedizioni ≥ registra) and says why it can't continue |
+| Tablet · notices without scan | shown as text, no more "undefined ›" button |
+| Tablet · "In turno" empty for floor profiles | new `floor_open_shifts()` (names + hours only) |
+| Tablet · forms don't work offline | machines, control points, milk suppliers and pest stations are kept on the device (refreshed after each login): temperature, milk intake, cleaning, CCP and pest forms open offline; tasks are closed by a queued `close_open_task()` for the Agropoli day; lot screens say clearly that they need the network |
+| Tablet · HACCP saves fail silently | network errors queue the record; any other error is always shown |
+| Tablet · cancelled scan hijacks the next | Annulla clears the pending lot scan and returns to the form |
+| Tablet · codes upper-cased | only the prefix is upper-cased; lot look-ups ignore case |
+| Tablet · logout loses the queue | the queue waits for the next login (nothing is sent without a session) and the tablet says how many records are waiting |
+| Tablet · last dosing step freezes | a failed close stays on screen with "Riprova a chiudere" |
+| Tablet · UTC dates | dates, lot codes and expiry use the Agropoli date |
+| Tablet · "$5" treated as a reference | only "$<n>.<field>" is a reference |
+| Tablet · batch letter from a count | next free letter among today's L-lots, re-read just before saving |
+| Tablet · weight confirmation stays on | any change after a "check and press Salva again" warning asks again |
+| Console · saving a row wipes other edits | the list reloads only after the last edited row is saved (`UI.after`) |
+| Console · preset step edits not guarded | both lines of a step are one unsaved-change scope |
+| Console · sell-down / scorte off by one | days counted from today in Agropoli |
+| Config · titolare can demote himself | DB guard: there must always be one active person who manages users |
+| Config · "1.300" saves as 1.3; invalid numbers save as NULL/0 | Italian number parsing; invalid numbers stop the save with a message (standing orders no longer switch a day off) |
+| Console · fast ◀ on the rota | only the latest requested week renders |
+| Config · #bots / #account links | hash changes switch the tab |
+| Console · yield chart drops to 0 % | open batches left out |
+| Recipes · instruction can't be cleared; old dose after midnight | empty instruction clears it; recipe editor uses the Agropoli date |
+| Console · "lunì" | accented weekday names abbreviated correctly |
+| Console / Vendite · WhatsApp prefix | one rule everywhere: +39/0039 kept once, local mobiles (incl. 390–393…) and landlines get 39 |
+| Console · "Nessuna vendita POS ieri" never shows | shown when the brief has no POS day |
+| Config · cancelling Disattiva clears the unsaved mark | only Salva clears it |
+| Config · month typed as 11/2026 | saved as 2026-11-01 |
+| Config / console · browser time | audit log and last-sync time in Agropoli time |
+| HACCP · pest visit fails for level 2 | `complete_deadline()` runs as definer with HACCP ≥ 2 |
+| HACCP · release lot / close NC only restricted in the UI | DB: release needs HACCP 3 and is signed by the logged-in person; closing or reopening an NC needs HACCP 3 (trigger) |
+| Marketing · edited approved post stays approved | goes back to review when the new text fails the claims check or the editor can't approve |
+| Marketing · Marketing profile can't save mkt.* | mkt.* settings writable with Marketing ≥ 2 |
+| Marketing · preorders double-counted | orders counted once |
+| Marketing · calendar window in UTC | starts at midnight in Agropoli |
+| Marketing · draft media duplicated | `mkt_ai_complete()` is idempotent |
+| Sales · new leads always "nuovo" | the chosen stage is kept |
+| predis · any staff can spend credits; stuck in "generating" | needs Marketing ≥ 2; network errors/timeouts put the post back to "idea" |
+| backup-export · pagination without ORDER BY | pages ordered by primary key (or all columns) |
+| invite-user · ilike e-mail match | exact match |
+| Advisors · mutable search_path (5) | pinned |
+
+**Still open:** multi-step tablet saves are not fully atomic (needs a server-side RPC per flow); batch start/close and lot scans still need the network.
+
 ## Live database (Caseificio, eu-central-1)
 
 | # | Finding |

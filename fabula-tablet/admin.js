@@ -58,6 +58,8 @@
     filterParams(); saveState();
     if (pendingSection && $('sec-' + pendingSection)) { const s = pendingSection; pendingSection = null; setTimeout(() => $('sec-' + s).scrollIntoView({ block: 'start' }), 50); }
   }
+  // v0.60: month settings typed as MM/AAAA (browsers without a month picker) become AAAA-MM-01, not "11/2026-01"
+  const monthVal = v => { const t = String(v || '').trim(); if (!t) return ''; let m = t.match(/^(\d{4})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}-01`; m = t.match(/^(\d{1,2})[\/.-](\d{4})$/); return m ? `${m[2]}-${m[1].padStart(2, '0')}-01` : t; };
   function paramRow(r, edit) {
     const k = kindOf(r), row = document.createElement('div'); row.className = 'set-row' + (k === 'text' ? ' text' : ''); row.dataset.key = r.key;
     row.innerHTML = `<div class="lbl">${esc(r.description || r.key)}<small>${esc(r.key)}</small><span class="was" hidden></span></div>`;
@@ -68,7 +70,7 @@
       if (k === 'number') { inp.inputMode = 'decimal'; inp.style.textAlign = 'right'; }
       if (k === 'text') { inp.className = 'wide'; inp.placeholder = '—'; } }
     inp.disabled = !edit; inp.setAttribute('aria-label', r.description || r.key);
-    const val = () => k === 'month' ? (inp.value ? inp.value + '-01' : '') : k === 'number' ? inp.value.trim().replace(',', '.') : inp.value.trim();
+    const val = () => k === 'month' ? monthVal(inp.value) : k === 'number' ? (inp.value.trim() === '' ? '' : String(UI.parseIt(inp.value))) : inp.value.trim();   // v0.60: 1.300 = 1300; "11/2026" = 2026-11
     const sync = () => { r.value = val(); const dirty = String(r.value) !== String(r.orig) && !(k === 'number' && r.value !== '' && Number(r.value) === Number(r.orig));
       row.classList.toggle('dirty', dirty); const w = row.querySelector('.was'); w.hidden = !dirty; w.textContent = 'prima: ' + shown(r, r.orig); saveState(); };
     inp.oninput = sync; inp.onchange = sync;
@@ -88,7 +90,7 @@
     for (const r of dirty) {
       const k = kindOf(r);
       if (k === 'number' && (r.value === '' || isNaN(Number(r.value)))) { focusRow(r.key); throw new Error(`"${r.description || r.key}": inserisci un numero`); }
-      if (k === 'date' && r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": data non valida`); }
+      if ((k === 'date' || k === 'month') && r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": data non valida`); }
     }
     const res = await Promise.all(dirty.map(r => { const v = kindOf(r) === 'number' ? String(Number(r.value)) : r.value; return sb.from('settings').update({ value: v }).eq('key', r.key).select('key').then(x => ({ r, v, ...x })); }));
     const bad = res.filter(x => x.error || !(x.data || []).length);
@@ -339,10 +341,10 @@
         a.title = 'Stampa il badge QR da passare sul tablet'; a.href = 'labels.html?' + new URLSearchParams({ l: badgeLine(p) }); tda.append(a); }
       if (admin) {
         const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'btn sm ' + cls; x.textContent = label; x.style.marginRight = '4px';
-          x.onclick = async () => { x.disabled = true; try { await fn(); UI.clean(x); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
+          x.onclick = async () => { x.disabled = true; try { const res = await fn(); if (cls === 'save' && res !== false) UI.clean(x); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
         b('Salva', 'save', async () => { PERM.changed(await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id).select('id')); toast('Salvato'); loadUsers(); });
         if (p.active && p.email && p.id !== staff.id) b(p.auth_user_id ? 'Reinvia link' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role }); toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : 'Invito inviato'); loadUsers(); });
-        if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
+        if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return false; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
       }
       tr.append(tda); tbl.append(tr);
     });
@@ -403,7 +405,7 @@
     const label = r => { const d = r.new_data || r.old_data || {}; return r.table_name === 'settings' ? r.row_key : d.summary || d.full_name || d.name || d.name_it || d.code || d.subject_it || d.po_number || d.work_date || (r.row_key || '').slice(0, 8); };
     box.innerHTML = `<table><tr><th>Quando</th><th>Chi</th><th>Dove</th><th>Cosa</th><th>Modifica</th></tr>${rows.map(r => {
       const diff = r.action === 'update' ? (r.changed || []).map(c => `<b>${esc(c)}</b>: ${esc(short(r.old_data?.[c]))} → ${esc(short(r.new_data?.[c]))}`).join('<br>') : esc(AUD_A[r.action]);
-      return `<tr><td class="nw">${new Date(r.at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(r.actor)}</td><td>${esc(AUD_T[r.table_name] || r.table_name)}</td><td>${esc(label(r))}</td><td><small>${diff}</small></td></tr>`; }).join('')}</table>`;
+      return `<tr><td class="nw">${new Date(r.at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })}</td><td>${esc(r.actor)}</td><td>${esc(AUD_T[r.table_name] || r.table_name)}</td><td>${esc(label(r))}</td><td><small>${diff}</small></td></tr>`; }).join('')}</table>`;
   }
   // the table filter asks the database again; the text filter works on what is already loaded, as you type
   let audRows = [], audT = null;
@@ -427,7 +429,7 @@
       const td3 = document.createElement('td'); td3.append(sel); const td4 = document.createElement('td'); td4.className = 'num'; td4.append(kg);
       const td5 = document.createElement('td'); td5.append(saveBtn(async () => {
         const pid = sel.value || null, k = pid ? Number(kg.value) : null; if (pid && !(k > 0)) throw new Error('Inserisci i kg per pezzo');
-        await upd('shopify_variant_map', { variant_id: r.variant_id }, { product_id: pid, kg_per_unit: k, auto_mapped: false, updated_at: new Date().toISOString() }); loadVariantMap();
+        await upd('shopify_variant_map', { variant_id: r.variant_id }, { product_id: pid, kg_per_unit: k, auto_mapped: false, updated_at: new Date().toISOString() }); UI.after(loadVariantMap);
       }));
       tr.append(td3, td4, td5); tbl.append(tr);
     });
@@ -451,7 +453,7 @@
       const row = document.createElement('div'); row.className = 'row';
       row.append(saveBtn(async () => {
         const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
-        await upd('equipment', { id: r.id }, v); loadMaint();
+        await upd('equipment', { id: r.id }, v); UI.after(loadMaint);
       }));
       c.append(row); box.append(c);
     });
@@ -470,7 +472,7 @@
           <div style="grid-column:1/-1"><label>Note</label><input type="text" data-k="notes" value="${esc(r.notes || '')}"></div>
         </div>`;
       const row = document.createElement('div'); row.className = 'row';
-      row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); loadMaint(); }));
+      row.append(saveBtn(async () => { const v = {}; c.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'date' ? dOrNull(i.value) : i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); }); await upd('compliance_deadlines', { id: r.id }, v); UI.after(loadMaint); }));
       const done = document.createElement('button'); done.className = 'btn sm sec'; done.textContent = 'Fatto oggi';
       done.onclick = async () => { if (!confirm(`Segnare "${r.subject_it}" come fatta oggi?${r.interval_days ? ' Si apre la prossima scadenza.' : ''}`)) return; done.disabled = true; const { error } = await sb.rpc('complete_deadline', { p_id: r.id }); if (error) { toast(error.message, 'err'); done.disabled = false; return; } toast(r.interval_days ? 'Chiusa · prossima aperta' : 'Chiusa'); loadMaint(); };
       row.append(done); c.append(row); box.append(c);

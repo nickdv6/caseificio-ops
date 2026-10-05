@@ -9,6 +9,8 @@
   const toast = (m, cls = '') => { const t = $('toast'); t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3200); };
   const eur = (n, d = 0) => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: d, minimumFractionDigits: d }).format(n);
   const num = (n, d = 0) => n == null ? '–' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d });
+  // v0.60: phone → wa.me number (same rule as the console): +39/0039 kept once; Italian mobiles incl. 390–393… and landlines get 39
+  const waNumber = p => { let d = String(p || '').replace(/[^\d+]/g, ''); if (d.startsWith('+')) d = d.slice(1); else if (d.startsWith('00')) d = d.slice(2); else if (/^(3\d{8,9}|0\d{5,10})$/.test(d)) d = '39' + d; return d.replace(/\D/g, ''); };
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   // only http(s) links from lead data; 'www.x.it' gets https://, anything else (javascript:, data:…) is dropped
   const safeUrl = u => { const s = String(u ?? '').trim(); if (!s) return ''; const v = /^https?:\/\//i.test(s) ? s : /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s) ? 'https://' + s : ''; try { return v && /^https?:$/.test(new URL(v).protocol) ? v : ''; } catch { return ''; } };
@@ -76,7 +78,7 @@
     $('o-due').innerHTML = ad.length ? ad.map(a => `<div class="act"><div class="hd"><b>${esc(a.name)}</b><span>${pill(a.stage)} ${a.overdue_days > 0 ? `<span class="pill review">${a.overdue_days} gg di ritardo</span>` : ''}</span></div>
         <div class="status">${esc(a.segment)} · ${esc(a.town || '')}${a.phone ? ' · ' + esc(a.phone) : ''} · ≈ ${num(a.est_kg_week)} kg/sett.</div>
         <div>${esc(a.next_action || '')} · ${dShort(a.due)}</div>
-        <div class="row"><button class="btn sm" data-open="${a.id}">Apri</button>${a.phone ? `<a class="btn sec sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/${esc(String(a.phone).replace(/\D/g, '').replace(/^(?!39)/, '39'))}">WhatsApp</a>` : ''}</div></div>`).join('')
+        <div class="row"><button class="btn sm" data-open="${a.id}">Apri</button>${a.phone ? `<a class="btn sec sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/${esc(waNumber(a.phone))}">WhatsApp</a>` : ''}</div></div>`).join('')
       : '<div class="empty">Nessun contatto in scadenza.</div>';
     $('o-tast').innerHTML = list(S.tastings_next_7d, r => `${dShort(r.date)} · <b>${esc(r.name)}</b> ${esc(r.town || '')}`, 'Nessuna degustazione in programma.');
     $('o-stale').innerHTML = list(S.stale, r => `<a href="#" data-open="${r.id}">${esc(r.name)}</a> · ${esc(r.stage)} · ${r.days_since_contact == null ? 'mai contattato' : r.days_since_contact + ' gg senza contatto'}`, 'Nessuna trattativa ferma.');
@@ -130,7 +132,7 @@
   }, 'Contatto registrato');
   document.querySelectorAll('[data-msg]').forEach(b => b.onclick = () => run(async () => {
     const m = must(await sb.rpc('sales_lead_message', { p_lead: cur.id, p_kind: b.dataset.msg }));
-    const ph = cur.phone ? String(cur.phone).replace(/\D/g, '').replace(/^(?!39)/, '39') : null;
+    const ph = cur.phone ? waNumber(cur.phone) : null;
     $('ld-msg').innerHTML = `<div class="msg" id="ld-msg-t">${esc(m)}</div><div class="row"><button class="btn sec sm" type="button" id="ld-copy">Copia</button>${ph ? `<a class="btn sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/${ph}?text=${encodeURIComponent(m)}">Apri in WhatsApp</a>` : ''}</div>`;
     $('ld-copy').onclick = () => navigator.clipboard.writeText(m).then(() => toast('Copiato'));
   }));

@@ -25,7 +25,7 @@
     NICK = Object.fromEntries((nick.data || []).map(n => [n.agent, n]));
     APPR = appr.data || [];
     const issues = complianceItems(b);
-    renderTiles(b, issues); renderApprovals(b.date); renderHaccp(b, issues); renderStock(b.stock_finished, b.date);
+    const td = UI.romeISO(); renderTiles(b, issues); renderApprovals(td); renderHaccp(b, issues); renderStock(b.stock_finished, td);   // v0.60: days left count from today, not from the brief date (yesterday)
   }
 
   // one list of compliance issues: the tile counts exactly the red lines the card shows
@@ -41,7 +41,8 @@
     (t.calibration_due || []).forEach(c => items.push(['ko', `Taratura ${esc(c.code)} entro ${fmtD(c.due)}`]));
     (t.training_expiring || []).forEach(s => items.push(['ko', `Formazione HACCP ${esc(s.name)} scade ${fmtD(s.expires)}`]));
     const pc = b.pos_close || {};
-    if (pc.missing) items.push(['status', 'Nessuna vendita di cassa sincronizzata per ieri (normale se il negozio era chiuso)']);
+    if (b.pos_close == null || pc.missing) items.push(['status',   // v0.60: the brief sends null (not {missing:true}) when there was no POS day
+      'Nessuna vendita di cassa sincronizzata per ieri (normale se il negozio era chiuso)']);
     else if (pc.variance_eur && Math.abs(pc.variance_eur) > 0.5) items.push(['ko', `Cassa: scostamento ${eur(pc.variance_eur)} tra scontrino Z e registrato`]);
     const e = b.energy || {};
     if (e.yesterday_kwh_per_kg && e.avg_30d_kwh_per_kg && e.yesterday_kwh_per_kg > e.avg_30d_kwh_per_kg * 1.15) items.push(['ko', `Energia ${num(e.yesterday_kwh_per_kg, 2)} kWh/kg vs media ${num(e.avg_30d_kwh_per_kg, 2)}`]);
@@ -254,7 +255,7 @@
       const h = document.createElement('input'); h.type = 'number'; h.step = '0.5'; h.min = '0'; h.style.width = '64px'; h.value = r.contract_hours_week ?? ''; h.placeholder = String(defH); h.disabled = !edit; h.title = `Vuoto = ${defH} h (valore aziendale)`;
       hl.append('Ore/sett.', h); right.append(hl);
       const boxes = DESIG.map(([k, l]) => { const lab = document.createElement('label'); lab.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:.85rem'; const c = document.createElement('input'); c.type = 'checkbox'; c.value = k; c.checked = (r.designations || []).includes(k); c.disabled = !edit; lab.append(c, l); right.append(lab); return c; });
-      if (edit) right.append(saveBtn(async () => { await upd('staff', { id: r.id }, { contract_hours_week: nOrNull(h.value), designations: boxes.filter(c => c.checked).map(c => c.value) }); loadStaffCard(); if (rotaDirty()) loadHours(isoDay(rotaMon)); else loadRota(); refreshBadges(); }));
+      if (edit) right.append(saveBtn(async () => { await upd('staff', { id: r.id }, { contract_hours_week: nOrNull(h.value), designations: boxes.filter(c => c.checked).map(c => c.value) }); UI.after(() => { loadStaffCard(); if (rotaDirty()) loadHours(isoDay(rotaMon)); else loadRota(); }); refreshBadges(); }));
       row.append(right); box.append(row);
     });
   }
@@ -311,7 +312,7 @@
       c(r.last_paid_eur != null ? `${num(r.last_paid_eur, 3)}<br><small>${fmtD(r.last_paid_on)}</small>` : '–', 'num' + (r.list_price_eur && r.last_paid_eur && Number(r.last_paid_eur) > Number(r.list_price_eur) ? ' ko' : ''));
       c(trend == null ? '–' : `${trend > 0 ? '+' : ''}${num(trend, 1)}%`, 'num' + (trend > 5 ? ' ko' : ''));
       const td = document.createElement('td'); td.style.whiteSpace = 'nowrap';
-      td.append(saveBtn(async () => { await upd('supplier_products', { supplier_id: r.supplier_id, product_id: r.product_id }, { lead_time_days: nOrNull(lead.value), min_order_qty: nOrNull(mn.value), order_multiple: nOrNull(mul.value), payment_terms: pay.value.trim() || null, updated_at: new Date().toISOString() }); loadTerms(); }));
+      td.append(saveBtn(async () => { await upd('supplier_products', { supplier_id: r.supplier_id, product_id: r.product_id }, { lead_time_days: nOrNull(lead.value), min_order_qty: nOrNull(mn.value), order_multiple: nOrNull(mul.value), payment_terms: pay.value.trim() || null, updated_at: new Date().toISOString() }); UI.after(loadTerms); }));
       const h = document.createElement('button'); h.className = 'btn sm sec'; h.textContent = '↗'; h.title = 'Storico prezzi'; h.style.marginLeft = '4px';
       h.onclick = () => togglePriceHist(r, tr, h); td.append(h); tr.append(td);
       tbl.append(tr);
@@ -346,7 +347,9 @@
     return { kind: 'lavoro', start_time: t(m[1], m[2]), end_time: t(m[3], m[4]), break_min: m[5] ? +m[5] : 0, area: m[6] ? m[6].trim() : null };
   }
   const cellHours = c => { if (!c || c.kind !== 'lavoro') return 0; const [a, b] = [c.start_time, c.end_time].map(x => +x.slice(0, 2) + +x.slice(3, 5) / 60); return Math.max(0, (b > a ? b - a : b + 24 - a) - c.break_min / 60); };
+  let rotaReq = 0;   // v0.60: fast ◀ ▶ clicks — only the latest week renders, so a late answer can't put last week's rota under this week's dates
   async function loadRota() {
+    const myReq = ++rotaReq;
     const mon = isoDay(rotaMon), sunD = new Date(rotaMon); sunD.setDate(sunD.getDate() + 6); const sun = isoDay(sunD);
     $('rota-week').textContent = `${rotaMon.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – ${sunD.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })}`;
     const box = $('rota-grid'); box.innerHTML = '<div class="status">Carico…</div>'; UI.clean(box.closest('[data-scope]'));
@@ -354,6 +357,7 @@
       sb.from('staff').select('id, full_name, role, contract_hours_week').eq('active', true).order('full_name'),
       sb.from('rota_entries').select('*').gte('work_date', mon).lte('work_date', sun),
       sb.from('settings').select('value').eq('key', 'labor.contract_hours_week').maybeSingle()]);
+    if (myReq !== rotaReq) return;
     if (e1 || e2) { box.innerHTML = `<div class="empty">${esc((e1 || e2).message)}</div>`; return; }
     const defH = Number(cfg?.value || 40);
     const days = [...Array(7)].map((_, i) => { const d = new Date(rotaMon); d.setDate(d.getDate() + i); return d; });
@@ -428,7 +432,7 @@
   $('rota-copy').onclick = async () => { if (!leaveRota()) return; const prev = new Date(rotaMon); prev.setDate(prev.getDate() - 7); const { data, error } = await sb.rpc('copy_rota_week', { p_from: isoDay(prev), p_to: isoDay(rotaMon) }); if (error) return toast(error.message, 'err'); toast(`${data} turni copiati (le celle già compilate restano)`); loadRota(); };
   // ---------- Tier 2: send POs, wholesale confirmations ----------
   const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Copiato'); } catch { toast('Copia non riuscita', 'err'); } };
-  const waLink = (phone, text) => 'https://wa.me/' + String(phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent(text);
+  const waLink = (phone, text) => 'https://wa.me/' + UI.waNumber(phone) + '?text=' + encodeURIComponent(text);   // v0.60: local numbers get 39 (they opened French numbers)
   async function renderPoSend() {
     const box = $('po-send');
     const { data, error } = await sb.from('v_pos_to_send').select('*');
@@ -456,7 +460,7 @@
     const { data, error } = await sb.from('v_wholesale_tomorrow').select('*').limit(12);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessuna consegna ingrosso prenotata. Il bot "Ordini ingrosso" prenota ogni giorno alle 18:20 per il giorno dopo.</div>'; return; }
-    box.innerHTML = '<table class="nw2"><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${dShort(o.order_date).replace(/^(\w{3})\w*/, '$1').slice(0, -5)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, ${BRAND.name} conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
+    box.innerHTML = '<table class="nw2"><tr><th>Giorno</th><th>Cliente</th><th>Cosa</th><th class="num">€</th><th></th></tr>' + data.map(o => `<tr><td>${dShort(o.order_date).replace(/^(\p{L}{3})\p{L}*/u, '$1').slice(0, -5)}</td><td>${esc(o.customer)}</td><td>${esc(o.lines_txt)}</td><td class="num">${eur(o.total_eur)}</td><td>${o.phone ? `<a class="btn sm sec" style="text-decoration:none" target="_blank" href="${waLink(o.phone, `Buongiorno, ${BRAND.name} conferma per ${fmtD(o.order_date)}: ${o.lines_txt}. Consegna in mattinata. Grazie!`)}">💬</a>` : ''}</td></tr>`).join('') + '</table>';
   }
     // ---------- parties: one compact editable table, sub-tabs Fornitori | Clienti ----------
   let partyType = 'supplier', PARTIES = [];
@@ -472,7 +476,7 @@
     const box = $('set-parties'); box.innerHTML = '';
     const last = PARTIES.filter(p => p.type === 'customer' && p.last_synced_at).map(p => p.last_synced_at).sort().pop();
     $('party-hint').innerHTML = partyType === 'customer'
-      ? `I clienti si creano e si modificano su <b>Shopify → Clienti</b>; il bot "Clienti Shopify" li copia qui ogni mattina (ultima sincronizzazione: ${last ? new Date(last).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'mai'}). Tag <b>ingrosso</b> su Shopify = cliente all'ingrosso qui. Un segnaposto con la stessa e-mail viene adottato automaticamente. Qui si modificano solo i giorni di pagamento.`
+      ? `I clienti si creano e si modificano su <b>Shopify → Clienti</b>; il bot "Clienti Shopify" li copia qui ogni mattina (ultima sincronizzazione: ${last ? new Date(last).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' , timeZone: 'Europe/Rome' }) : 'mai'}). Tag <b>ingrosso</b> su Shopify = cliente all'ingrosso qui. Un segnaposto con la stessa e-mail viene adottato automaticamente. Qui si modificano solo i giorni di pagamento.`
       : '"Fornitore 1" e simili sono segnaposto: scrivi il nome vero, email e telefono e i bot li usano subito. Modifica nella riga e premi Salva (o Invio).';
     const rows = PARTIES.filter(p => p.type === partyType);
     if (!rows.length) { box.innerHTML = `<div class="empty">Nessun ${partyType === 'supplier' ? 'fornitore' : 'cliente'}.</div>`; return; }
@@ -495,7 +499,7 @@
         const t7 = document.createElement('td'); t7.className = 'num'; t7.append(days);
         const t8 = document.createElement('td'); t8.className = 'status'; t8.textContent = p.standing_orders ? p.standing_orders + ' giorni' : '—';
         const t9 = document.createElement('td'); t9.style.whiteSpace = 'nowrap';
-        t9.append(saveBtn(async () => { await upd('parties', { id: p.id }, { payment_terms_days: nOrNull(days.value) }); loadParties(); }));
+        t9.append(saveBtn(async () => { await upd('parties', { id: p.id }, { payment_terms_days: nOrNull(days.value) }); UI.after(loadParties); }));
         if (fromShopify && p.shopify_customer_id) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.cssText = 'text-decoration:none;margin-left:6px'; a.target = '_blank'; a.textContent = 'Shopify ↗'; a.href = 'https://admin.shopify.com/store/pxssjd-cq/customers/' + p.shopify_customer_id.split('/').pop(); t9.append(a); }
         tr.append(t1, t2, t3, t4, t5, t6, t7, t8, t9); tbl.append(tr); return;
       }
@@ -508,7 +512,7 @@
         const v = {}; tr.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
         if (!v.legal_name) throw new Error('Il nome è obbligatorio');
         if (p.is_placeholder && !/^(Fornitore|Cliente) \d/.test(v.legal_name)) { v.notes = null; v.source = 'manual'; }   // renamed → no longer a placeholder
-        await upd('parties', { id: p.id }, v); loadParties(); refreshBadges();
+        await upd('parties', { id: p.id }, v); UI.after(loadParties); refreshBadges();
       }));
       tr.append(t1, t2, t3, t4, t5, t6); tbl.append(tr);
     });
@@ -544,13 +548,15 @@
       });
       const td = document.createElement('td');
       td.append(saveBtn(async () => {
-        for (const inp of tr.querySelectorAll('input[data-wd]')) {
-          const wd = Number(inp.dataset.wd), q = inp.value === '' ? 0 : Number(inp.value);
+        const vals = [...tr.querySelectorAll('input[data-wd]')].map(inp => ({ inp, q: nOrNull(inp.value) ?? 0 }));   // v0.60: an invalid number stops the save (it used to switch that day off)
+        if (vals.some(v => v.q < 0)) throw new Error('I kg non possono essere negativi');
+        for (const { inp, q } of vals) {
+          const wd = Number(inp.dataset.wd);
           const cur = (so || []).find(s => s.customer_id === cu.id && s.product_id === moz.id && s.weekday === wd);
           if (q > 0) { const { error } = await sb.from('standing_orders').upsert({ customer_id: cu.id, product_id: moz.id, weekday: wd, qty_kg: q, active: true, notes: null }, { onConflict: 'customer_id,product_id,weekday' }); if (error) throw error; }
           else if (cur) { await upd('standing_orders', { id: cur.id }, { active: false }); }
         }
-        loadStanding();
+        UI.after(loadStanding);
       }));
       tr.append(td); tbl.append(tr);
     });
@@ -640,7 +646,7 @@
         grid.append(Object.assign(document.createElement('span'), { textContent: 'Altro' }), ex, Object.assign(document.createElement('span'), { textContent: 'Istruzione' }), ins, Object.assign(document.createElement('span'), { textContent: 'Il tablet registra' }), met, tdB);
         sTd.append(grid); sub.append(sTd);
         if (st) {
-          tdB.append(saveBtn(async () => { const p = payload(); if (!p.name_it) throw new Error('Dai un nome al passo'); await upd('process_steps', { id: st.step_id }, p); loadPresets(); }));
+          tdB.append(saveBtn(async () => { const p = payload(); if (!p.name_it) throw new Error('Dai un nome al passo'); await upd('process_steps', { id: st.step_id }, p); UI.after(loadPresets); }));
           const rm = document.createElement('button'); rm.className = 'btn sm sec'; rm.textContent = 'Togli'; rm.style.marginLeft = '6px'; rm.title = 'Il passo non compare più sul tablet';
           rm.onclick = async () => { rm.disabled = true; try { await upd('process_steps', { id: st.step_id }, { active: false, updated_at: new Date().toISOString() }); toast('Passo tolto'); loadPresets(); } catch (e) { toast(e.message, 'err'); rm.disabled = false; } };
           tdB.append(rm);
@@ -649,7 +655,7 @@
           add.onclick = async () => { const p = payload(); if (!p.name_it) return toast('Dai un nome al passo', 'err'); add.disabled = true; const { error } = await sb.from('process_steps').insert(p); add.disabled = false; if (error) return toast(error.message, 'err'); toast('Passo aggiunto'); loadPresets(); };
           tdB.append(add);
         }
-        const frag = document.createDocumentFragment(); frag.append(tr, sub); return frag;
+        const grp = document.createElement('tbody'); grp.dataset.scope = 'step'; grp.append(tr, sub); return grp;   // v0.60: both lines of a step are one unsaved-change scope (Salva sits in the second)
       };
       mine.forEach(st => tbl.append(row(st))); tbl.append(row(null));
       const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(tbl); card.append(wrap); box.append(card);
@@ -678,7 +684,7 @@
         const tdR = document.createElement('td'); const ru = document.createElement('input'); ru.type = 'checkbox'; ru.checked = !!r.round_up; ru.title = 'Arrotonda per eccesso (pezzi)'; tdR.append(ru);
         const tdI = document.createElement('td'); const ins = document.createElement('input'); ins.type = 'text'; ins.value = r.instruction_it || ''; ins.placeholder = 'es. Pesa il caglio e aggiungilo al latte'; tdI.append(ins);
         const tdB = document.createElement('td'); tdB.style.whiteSpace = 'nowrap';
-        tdB.append(saveBtn(async () => { const { error } = await sb.rpc('update_recipe_dose', { p_recipe_id: r.recipe_id, p_qty: Number(q.value), p_round_up: ru.checked, p_instruction: ins.value.trim() || null }); if (error) throw error; loadRecipes(); }));
+        tdB.append(saveBtn(async () => { const { error } = await sb.rpc('update_recipe_dose', { p_recipe_id: r.recipe_id, p_qty: Number(q.value), p_round_up: ru.checked, p_instruction: ins.value.trim() }); if (error) throw error; UI.after(loadRecipes); }));
         const end = document.createElement('button'); end.className = 'btn sm sec'; end.textContent = 'Togli'; end.style.marginLeft = '6px'; end.title = 'Il componente non viene più dosato da domani';
         end.onclick = async () => { end.disabled = true; const { error } = await sb.rpc('end_recipe_component', { p_recipe_id: r.recipe_id }); if (error) { toast(error.message, 'err'); end.disabled = false; return; } toast('Componente tolto dalla ricetta'); loadRecipes(); };
         tdB.append(end); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr);
@@ -729,6 +735,7 @@
   const shortDate = s => s.slice(8, 10) + '/' + s.slice(5, 7);
 
   function yieldChart(rows, y) {
+    rows = rows.filter(r => r.yield_pct != null);   // v0.60: open batches have no yield yet (they pulled the line to 0 %)
     const box = $('chart-yield'); if (!rows.length) { box.innerHTML = '<div class="empty">Nessuna produzione negli ultimi 30 giorni.</div>'; return; }
     const vals = rows.map(r => Number(r.yield_pct)); const lo = Math.floor(Math.min(...vals, y.avg_30d || 99) - 1), hi = Math.ceil(Math.max(...vals, y.avg_30d || 0) + 1);
     const sy = v => P.t + (H - P.t - P.b) * (1 - (v - lo) / (hi - lo));

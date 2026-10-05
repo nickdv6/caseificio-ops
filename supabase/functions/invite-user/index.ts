@@ -58,7 +58,8 @@ Deno.serve(async (req) => {
       const job_role = String(body.job_role || JOB_FOR[app_role] || "operaio");
 
       // staff row: reuse by e-mail, else create
-      let { data: staff } = await admin.from("staff").select("id, auth_user_id").ilike("email", email).maybeSingle();
+      // v0.60: exact match (staff.email is stored lower-case); ilike treated "_" and "%" in an address as wildcards
+      let { data: staff } = await admin.from("staff").select("id, auth_user_id").eq("email", email).maybeSingle();
       if (staff) {
         const { error } = await admin.from("staff").update({ full_name, app_role, role: job_role, active: true }).eq("id", staff.id);
         if (error) throw error;
