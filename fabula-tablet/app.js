@@ -52,17 +52,33 @@
   const stamp = ops => ops.forEach(op => { if (op.table && !op.update && op.row && !op.row.id && UUID_TABLES.has(op.table)) op.row.id = uuid(); });
   async function save(ops) {                 // ops: [{table, row}] executed in order; later rows may reference earlier via $0.id
     stamp(ops);
+    const qid = uuid();                       // v0.62: one id per save — the server writes it once, however many times it is sent
     const st = { done: 0, out: [] };          // v0.59: progress travels with the queued item, so a re-send skips the steps already saved
-    if (!navigator.onLine) { setQueue([...queue(), { qid: uuid(), at: Date.now(), ops, st }]); toast('Salvato offline, invio appena c\'è rete'); return true; }
-    try { await run(ops, st); return true; }
+    const enqueue = () => setQueue([...queue(), { qid, at: Date.now(), ops, st }]);
+    if (!navigator.onLine) { enqueue(); toast('Salvato offline, invio appena c\'è rete'); return true; }
+    if (queue().length) await flush();        // v0.62: records saved offline go first (a batch start needs its milk intake on the server)
+    if (queue().length) { enqueue(); toast('In coda dietro le registrazioni offline: partono insieme', 'err'); setTimeout(flush, 1000); return true; }
+    try { await run(ops, st, qid); lotsChanged(); return true; }
     catch (e) {
       console.error(e);
       if (!retryable(e)) { toast(st.done ? `Salvato solo in parte (${st.done} di ${ops.length} passi): ${e.message}` : e.message, 'err'); throw e; }   // refused by the database: show it, don't queue it
-      setQueue([...queue(), { qid: uuid(), at: Date.now(), ops, st }]); toast('Rete assente: messo in coda', 'err'); return true;
+      enqueue(); toast('Rete assente: messo in coda', 'err'); return true;
     }
   }
   const REF = /^\$(\d+)\.(\w+)$/;          // "$1.id" = a field of the row saved by step 1 (v0.59: only this exact shape; "$5" in a note stays text)
-  async function run(ops, st = { done: 0, out: [] }) {
+  // v0.62: a save with several steps runs on the server in ONE transaction (fabula.save_ops): all steps are written or none,
+  // and the queue id makes a re-send after a lost reply return the first result instead of writing again.
+  // Items half-sent by an older version (st.done > 0) finish step by step as before.
+  // single RPCs that write (dosing, steps, CCP, receipts) go the same way, so a lost reply never records them twice
+  const ONCE_RPCS = new Set(['log_ccp', 'receive_purchase_order', 'record_receipt_check', 'close_open_task', 'start_byproduct_batch', 'log_batch_step', 'record_batch_consumable']);
+  let atomicOk = true;
+  async function run(ops, st = { done: 0, out: [] }, qid = null) {
+    if ((ops.length > 1 || (qid && ops[0] && ONCE_RPCS.has(ops[0].rpc))) && !(st.done > 0) && atomicOk) {
+      const { data, error } = await sb.rpc('save_ops', { p_ops: ops, p_qid: qid });
+      if (!error) { st.out = data; st.done = ops.length; return data; }
+      if (error.code !== 'PGRST202') throw error;              // PGRST202 = server without save_ops yet: old way
+      atomicOk = false;
+    }
     const out = st.out || (st.out = []);
     for (let k = st.done || 0; k < ops.length; k++) {
       const op = ops[k];
@@ -90,16 +106,24 @@
     try {
       try { await sb.auth.getSession(); } catch {}           // refreshes an expired login before re-sending
       const left = [], failed = [];
-      for (const item of q) {
+      for (let i = 0; i < q.length; i++) {
+        const item = q[i];
         stamp(item.ops);                                      // items queued by older versions get their ids now
-        try { await run(item.ops, item.st || (item.st = { done: 0, out: [] })); }
-        catch (e) { console.error(e); (retryable(e) ? left : failed).push(retryable(e) ? item : { ...item, error: e.message, code: e.code, failed_at: Date.now() }); }
+        try { await run(item.ops, item.st || (item.st = { done: 0, out: [] }), item.qid); }
+        catch (e) {
+          console.error(e);
+          // v0.62: strictly in order — when the network drops, stop here (a batch's steps must never arrive before the batch)
+          if (retryable(e)) { left.push(...q.slice(i)); break; }
+          failed.push({ ...item, error: e.message, code: e.code, failed_at: Date.now() });
+        }
       }
       const seen = new Set(q.map(i => i.qid));                  // v0.56: keep what save() queued while this flush was sending
-      setQueue([...left, ...queue().filter(i => !seen.has(i.qid))]);
+      const added = queue().filter(i => !seen.has(i.qid));
+      setQueue([...left, ...added]);
+      if (added.length && !left.length) setTimeout(flush, 500);  // v0.62: send those now instead of at the next minute
       if (failed.length) { setFailed([...failedList(), ...failed]); toast(`${failed.length} registrazioni rifiutate dal database: tocca la riga in basso`, 'err'); }
       const sent = q.length - left.length - failed.length;
-      if (sent > 0) { toast(`Inviate ${sent} registrazioni`); loadTasks(); }
+      if (sent > 0) { toast(`Inviate ${sent} registrazioni`); loadTasks(); warmLots(); }
     } finally { flushing = false; }
   }
   window.addEventListener('online', flush);
@@ -127,7 +151,7 @@
     const { data } = PERM.offline ? { data: null } : await PERM.timeout(sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle().then(x => x, () => ({ data: null })));
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name;
-    show('home'); loadTasks(); setQueue(queue()); flush(); if (!PERM.offline) warmRefs();
+    show('home'); loadTasks(); setQueue(queue()); flush(); if (!PERM.offline) { warmRefs(); warmLots(); }
     if (PERM.offline) toast('Offline: profilo salvato su questo tablet. Le registrazioni vanno in coda e partono al ritorno della rete.');
   }
   $('btn-login').onclick = async () => {
@@ -218,6 +242,61 @@
       putRef(patch);
     } catch (e) { /* offline: keep what we have */ }
   }
+  // ---------- Lots on the device (v0.62) ----------
+  // Recent milk lots, open and recent batches, their milk inputs and done steps, and the products are kept on the tablet
+  // (refreshed after login, after each online save that touches them, after a flush and every 5 minutes). What is still
+  // waiting in the offline queue is laid over that copy, so a lot received offline can start a batch offline, and a
+  // batch started offline can run its steps and close offline. Everything then reaches the database in order.
+  const LK = 'perla_lots_v1', LOT_DAYS = 10;
+  const lotStore = () => { try { return JSON.parse(localStorage.getItem(LK) || 'null') || {}; } catch { return {}; } };
+  const lotEq = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+  let warmLotsT = null;
+  const lotsChanged = () => { if (!navigator.onLine) return; clearTimeout(warmLotsT); warmLotsT = setTimeout(warmLots, 1500); };
+  // a read that gives up quickly: offline → no wait; Wi-Fi up but no internet → 8 s
+  const live = (q, ms = 8000) => PERM.timeout(Promise.resolve(q).then(x => x, e => ({ data: null, error: e })), navigator.onLine ? ms : 0);
+  const unreachable = e => !!e && (PERM.isNetworkError(e) || e.name === 'Timeout' || retryable(e));
+  async function warmLots() {
+    if (!navigator.onLine || !staff) return;
+    try {
+      const since = addDays(today(), -LOT_DAYS);
+      loadRecipes(); loadPresets();                  // both keep their own copy on the device (dosing and process steps offline)
+      const [milk, open, recent, prods] = await Promise.all([
+        live(sb.from('milk_intake').select('id, milk_lot, qty_kg, intake_date, accepted, rejection_reason, created_at').gte('intake_date', since).order('intake_date', { ascending: false }).order('created_at', { ascending: false }).limit(500)),
+        live(sb.from('production_batches').select('*').is('output_kg', null).limit(200)),
+        live(sb.from('production_batches').select('*').gte('batch_date', since).limit(500)),
+        live(sb.from('products').select('id, name, sku, kind, active, shelf_life_days, byproduct_product_id'))]);
+      if ([milk, open, recent, prods].some(r => r.error || !r.data)) return;      // keep the previous copy
+      const byId = new Map(); [...recent.data, ...open.data].forEach(b => byId.set(b.id, b));
+      const openIds = open.data.map(b => b.id), lotOf = id => (byId.get(id) || {}).batch_lot;
+      const [inp, stp] = openIds.length ? await Promise.all([live(sb.from('batch_milk_inputs').select('batch_id, milk_intake_id, qty_kg').in('batch_id', openIds)),
+                                                            live(sb.from('batch_step_logs').select('batch_id, step_id').in('batch_id', openIds))]) : [{ data: [] }, { data: [] }];
+      if (inp.error || stp.error) return;
+      localStorage.setItem(LK, JSON.stringify({ at: Date.now(), milk: milk.data, batches: [...byId.values()], inputs: inp.data, steps: (stp.data || []).map(x => ({ ...x, batch_lot: lotOf(x.batch_id) })), products: prods.data }));
+    } catch (e) { console.warn('warmLots', e); }
+  }
+  setInterval(() => { if (navigator.onLine && staff) warmLots(); }, 5 * 60000);
+  function lotView() {                              // the device copy + everything still waiting in the queue
+    const c = lotStore();
+    const v = { at: c.at || 0, milk: [...(c.milk || [])], batches: (c.batches || []).map(b => ({ ...b })), inputs: [...(c.inputs || [])], steps: [...(c.steps || [])], products: c.products || [] };
+    for (const item of queue()) {
+      const ops = item.ops || [];
+      const ref = x => { const m = typeof x === 'string' && x.match(REF); return m ? ((ops[Number(m[1])] || {}).row || {})[m[2]] : x; };
+      const rowOf = op => Object.fromEntries(Object.entries(op.row || {}).map(([k, x]) => [k, ref(x)]));
+      for (const op of ops) {
+        if (op.table === 'milk_intake' && !op.update) v.milk.unshift({ ...rowOf(op), pending: true });
+        else if (op.table === 'production_batches' && !op.update) v.batches.push({ output_kg: null, input_kind: 'milk', ...rowOf(op), pending: true });
+        else if (op.table === 'production_batches') { const b = v.batches.find(x => Object.entries(op.update).every(([k, y]) => x[k] === ref(y))); if (b) Object.assign(b, rowOf(op)); }
+        else if (op.table === 'batch_milk_inputs') v.inputs.push(rowOf(op));
+        else if (op.rpc === 'log_batch_step') v.steps.push({ batch_lot: op.args.p_batch_lot, step_id: op.args.p_step_id });
+        else if (op.rpc === 'start_byproduct_batch') {
+          const parent = v.batches.find(x => lotEq(x.batch_lot, op.args.p_parent_lot)), prod = parent && v.products.find(p => p.id === parent.product_id);
+          v.batches.push({ id: null, batch_lot: 'R' + String(op.args.p_parent_lot).slice(1), product_id: prod ? prod.byproduct_product_id : null, milk_in_kg: op.args.p_whey_kg, input_kind: 'whey', output_kg: null, batch_date: today(), pending: true });
+        }
+      }
+    }
+    return v;
+  }
+  const cachedProduct = id => (lotView().products || []).find(p => p.id === id) || null;
   const scanEvent = (code, action, extra = {}) => ({ table: 'scan_events', row: { code, action, staff_id: staff.id, device: CFG.device, ...extra } });
 
   // ---------- Scanner ----------
@@ -393,9 +472,11 @@
       const ddtNo = String(val('ddtn') || '').trim().toUpperCase();
       // v0.59: lot labels are unique — a tank id used before (T1) gets the date (T1-0510, then T1-0510-2…) so intake never breaks
       let lotIn = String(val('lot') || '').trim();
-      if (navigator.onLine && lotIn) {
-        const base = lotIn; let k = 0;
-        while (k < 9) { const { count, error } = await sb.from('labels').select('id', { count: 'exact', head: true }).ilike('code', likeSafe('LOT:' + lotIn)); if (error || !count) break;
+      if (lotIn) {
+        const base = lotIn; let k = 0; const known = lotView().milk;
+        while (k < 9) { const { count, error } = await live(sb.from('labels').select('id', { count: 'exact', head: true }).ilike('code', likeSafe('LOT:' + lotIn)));
+          const taken = error ? known.some(x => lotEq(x.milk_lot, lotIn)) : !!count;   // offline: lots on the tablet
+          if (!taken) break;
           k++; lotIn = base + '-' + today().slice(8, 10) + today().slice(5, 7) + (k > 1 ? '-' + k : ''); }
         if (lotIn !== base) { $('lot').value = lotIn; toast(`Lotto ${base} già usato: registrato come ${lotIn}`, 'err'); }
       }
@@ -417,15 +498,34 @@
   }
   // 3/5/6 — a lot label: milk lot → start/end batch; batch lot → sale or shipment
   async function stepLot(lot) {
-    const { data: milk } = await sb.from('milk_intake').select('id, milk_lot, qty_kg, intake_date, accepted, rejection_reason').ilike('milk_lot', likeSafe(lot)).order('intake_date', { ascending: false }).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const { data: batch } = await sb.from('production_batches').select('*').ilike('batch_lot', likeSafe(lot)).maybeSingle();
+    if (navigator.onLine && queue().length) await flush();   // v0.62: send what was saved offline first, so the database knows those lots
+    let milk = null, batch = null, off = false, view = null;
+    const [m, b] = await Promise.all([
+      live(sb.from('milk_intake').select('id, milk_lot, qty_kg, intake_date, accepted, rejection_reason').ilike('milk_lot', likeSafe(lot)).order('intake_date', { ascending: false }).order('created_at', { ascending: false }).limit(1).maybeSingle()),
+      live(sb.from('production_batches').select('*').ilike('batch_lot', likeSafe(lot)).maybeSingle())]);
+    if (m.error || b.error) {
+      const e = m.error || b.error; if (!unreachable(e)) throw e;
+      off = true; view = lotView();                  // no network: the tablet's copy + the queue
+      if (!view.at && !queue().length) throw new Error('Senza rete e lotti non ancora salvati sul tablet: riprova quando torna la connessione');
+      batch = view.batches.find(x => lotEq(x.batch_lot, lot)) || null;
+      milk = view.milk.find(x => lotEq(x.milk_lot, lot)) || null;
+    } else { milk = m.data; batch = b.data; }
     if (milk && !batch) lot = milk.milk_lot;            // the stored spelling, for the stock move
-    if (!milk && !batch && !navigator.onLine) throw new Error('Senza rete i lotti non si possono leggere: riprova quando torna la connessione');
-    if (batch) return batch.output_kg == null ? stepBatchWork(batch) : stepPick(batch);   // open batch → working steps, then close
-    if (!milk) throw new Error('Lotto sconosciuto: ' + lot);
+    if (batch) {
+      if (batch.output_kg == null) return stepBatchWork(batch);   // open batch → working steps, then close
+      if (off) throw new Error(`Lotto ${batch.batch_lot} chiuso: la spedizione diretta richiede la rete`);
+      return stepPick(batch);
+    }
+    if (!milk) throw new Error('Lotto sconosciuto: ' + lot + (off ? ` (senza rete il tablet conosce i lotti degli ultimi ${LOT_DAYS} giorni)` : ''));
     if (milk.accepted === false) throw new Error(`Latte respinto (${milk.rejection_reason || 'non conforme'}): non si può usare in produzione`);   // v0.55
-    const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, preset_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
-    if (open && open[0]) return stepBatchWork(open[0].production_batches);
+    if (off) {
+      const ids = new Set(view.inputs.filter(i => i.milk_intake_id === milk.id).map(i => i.batch_id));
+      const openB = view.batches.find(x => ids.has(x.id) && x.output_kg == null);
+      if (openB) return stepBatchWork(openB);
+    } else {
+      const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, preset_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
+      if (open && open[0]) return stepBatchWork(open[0].production_batches);
+    }
     return stepBatchStart(milk, lot);
   }
   // 5b — the 'make' steps of the preset (maturazione, filatura, formatura…): run once per batch, then the lot closes
@@ -434,18 +534,23 @@
     const preset = b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id;
     const make = processSteps(presets, preset, 'make');
     if (!make.length) return stepBatchEnd(b);
-    const { data: done } = await sb.from('batch_step_logs').select('step_id').eq('batch_id', b.id);
+    let { data: done, error: de } = b.id ? await live(sb.from('batch_step_logs').select('step_id').eq('batch_id', b.id)) : { data: null, error: { name: 'Timeout' } };
+    if (de || !done) done = lotView().steps.filter(x => lotEq(x.batch_lot, b.batch_lot));   // offline: copy + queued steps
+    else done = [...done, ...lotView().steps.filter(x => lotEq(x.batch_lot, b.batch_lot))];
     const doneIds = new Set((done || []).map(d => d.step_id));
     const left = make.filter(st => !doneIds.has(st.step_id));
     if (!left.length) return stepBatchEnd(b);
     runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo l\'etichetta sul tank'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
   async function stepBatchStart(milk, lot) {
-    const { data: prods } = await sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true);
+    let { data: prods, error: pe } = await live(sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true));
+    if (pe || !prods) prods = lotView().products.filter(p => p.kind === 'finished_good' && p.active);   // offline
+    if (!prods.length) throw new Error('Nessun prodotto disponibile (senza rete e prodotti non ancora salvati sul tablet)');
     // v0.59: next free letter among today's L-lots (ricotta R-lots and old simulation rows no longer shift it); re-read at save time
     const nextLot = async () => { const pre = 'L' + today().replace(/-/g, '') + '-';
-      const { data: ls } = await sb.from('production_batches').select('batch_lot').like('batch_lot', pre + '%');
-      const used = new Set((ls || []).map(x => x.batch_lot.slice(pre.length)));
+      let { data: ls, error: le } = await live(sb.from('production_batches').select('batch_lot').like('batch_lot', pre + '%'));
+      ls = [...((le || !ls) ? [] : ls), ...lotView().batches.filter(x => String(x.batch_lot || '').startsWith(pre))];   // + the device copy and the queue
+      const used = new Set(ls.map(x => x.batch_lot.slice(pre.length)));
       for (let c = 65; c <= 90; c++) if (!used.has(String.fromCharCode(c))) return pre + String.fromCharCode(c);
       return pre + 'Z' + Date.now().toString().slice(-3); };
     let batchLot = await nextLot();
@@ -459,7 +564,7 @@
     openForm('Inizio lotto ' + batchLot, `latte ${lot} · disponibili ${milk.qty_kg} kg`, async () => {
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
       const product = val('product'), preset = val('preset') || null;
-      if (navigator.onLine) batchLot = await nextLot();      // another tablet may have opened a lot meanwhile
+      batchLot = await nextLot();                            // another tablet may have opened a lot meanwhile (offline: the device copy)
       await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset } }),
         { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
         { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
@@ -471,7 +576,9 @@
     });
   }
   async function stepBatchEnd(b) {
-    const { data: prod } = await sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single();
+    if (!b.id) throw new Error(`Ricotta ${b.batch_lot} avviata offline: si chiude quando torna la rete`);
+    let { data: prod, error: pre } = await live(sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single());
+    if (pre || !prod) prod = cachedProduct(b.product_id);
     const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
     field('out', 'kg prodotto', 'number', { step: '0.1' }); field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
     if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
@@ -928,7 +1035,11 @@
   }
   window.__haccp = () => handleCode('HACCP:');
 
-  let _rawId; async function rawMilkId() { if (!_rawId) { const { data } = await sb.from('products').select('id').eq('sku', 'RAW-MILK').single(); _rawId = data.id; } return _rawId; }
+  let _rawId; async function rawMilkId() {
+    if (!_rawId) { const { data } = await live(sb.from('products').select('id').eq('sku', 'RAW-MILK').single());
+      _rawId = data ? data.id : (lotView().products.find(p => p.sku === 'RAW-MILK') || {}).id; }
+    if (!_rawId) throw new Error('Prodotto latte crudo non trovato (senza rete e prodotti non ancora salvati sul tablet)');
+    return _rawId; }
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   init();

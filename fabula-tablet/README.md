@@ -6,6 +6,10 @@ Offline start (v0.59): the last profile seen on each device is saved per user, s
 
 Offline queue (v0.39): writes queue in the browser and flush when the network is back (and every minute). Every insert carries an id generated on the tablet, so a re-send after a lost reply never duplicates a record. Records the database refuses are set aside ("N rifiutate dal database" — tap the line to see the first error, tap again within 5 s to discard them) instead of retrying forever. Expired logins are refreshed before re-sending.
 
+Atomic saves (v0.62): a save with several steps (scan event + rows + RPCs: milk intake, batch start/close, shipment, goods receipt, effluent…) runs on the server in one transaction through `fabula.save_ops(p_ops, p_qid)`: every step is written or none ("Passo 3 di 4 (stock_moves): …" says which one was refused). The queue id travels with the save, so a re-send after a lost reply returns the first result instead of writing again (also for single dosing/step/CCP RPCs). The queue is sent strictly in order and stops at the first network failure, so a batch's steps never reach the database before the batch. A save made online while older records are still queued waits behind them.
+
+Offline lots (v0.62): recent milk lots (10 days), open and recent batches, their milk inputs and done steps, products, recipes and process presets are kept on the device (after login, after online saves, after each flush, every 5 minutes); whatever is still in the queue is laid over that copy. So with no network, or Wi-Fi without internet, a milk lot received offline can start a batch, run its dosing and process steps and close it; all of it is sent in order when the network is back. Still online-only: direct shipment from a closed lot, closing a ricotta started offline, stock count, packing orders.
+
 Several tablets: open the app once with `?device=tablet-2` (remembered on that device) so scans show which tablet recorded them.
 
 ## Files

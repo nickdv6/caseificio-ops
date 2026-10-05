@@ -83,7 +83,7 @@ All items below are deployed. Tested: clean replay of all migrations + v060 on P
 | invite-user · ilike e-mail match | exact match |
 | Advisors · mutable search_path (5) | pinned |
 
-**Still open:** multi-step tablet saves are not fully atomic (needs a server-side RPC per flow); batch start/close and lot scans still need the network.
+**Fixed 05/10 (v0.62):** multi-step tablet saves are atomic and exactly-once (`fabula.save_ops`), the queue is sent strictly in order, and lot scans, batch start, dosing/process steps and batch close work offline from the tablet's copy plus the queue. Tested end to end against a database built from the migrations (local PostgREST, real role policies): online, lost reply, a full offline production day, and Wi-Fi without internet.
 
 ## Live database (Caseificio, eu-central-1)
 
