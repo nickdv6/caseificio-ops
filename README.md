@@ -52,6 +52,11 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Lease at the agreed rent (v0.76)
+`opex.lease_eur_year` = 12600 (€1,050/month, 2027), `opex.lease_eur_year_step` = 13200 (€1,100/month) from
+`opex.lease_step_from` = 2028-01-01. `fabula.lease_eur_year(day)` picks the year; `weekly_brief()` uses it, so the brief
+steps up by itself in January 2028. `benchmark.annual_profit_eur` = 150900 (v49 base + lease saving, ≈ €2,902/week).
+
 ## Go-live checklist review (v0.75)
 The checklist covered the software and the data but not the gates to open legally or the dry run. It now has 35 items in
 four groups (board order): **gates** (purchase deed, lease, CE approval/SCIA in Masseria's name, RINA/Consorzio, HACCP
