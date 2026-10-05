@@ -70,5 +70,15 @@ significant digits would be rounded — none exist in the data today.
 5. Re-invite users, re-upload any needed files, re-add the Vault secret, run `select fabula.backup_export_call('latest');`
    and confirm a new `backup_export` run with status ok.
 
-The drill was run against a local Postgres 16 built from the migrations (the same check can be repeated on a Supabase branch).
-Repeat it after big schema changes, and at least every 3 months.
+## Repeating the drill (every 3 months — scheduled 5 Jan / Apr / Jul / Oct)
+Everything needed is in `tools/go-live/drill/`:
+1. Fetch the latest backup as in step 1 above (`backup_fetch_call` → `net._http_response`), decode `b64` to
+   `latest.json.gz` and check its SHA-256.
+2. Run the `CHECKSUM_SQL` from `restore_backup.py` on the live database right after, and save the result as `live_checksums.json`.
+3. `tools/go-live/drill/run_drill.sh latest.json.gz live_checksums.json` (local Postgres 16, run as root). It builds an
+   empty database from every migration (stubbed Supabase platform: `drill/bootstrap.sql`), restores the backup, checks row
+   counts and checksums against live, checks every foreign key for orphan rows and runs `ops_dashboard()` on the copy.
+   Expected: 0 migration failures, row counts equal, a handful of tables differing only as explained above, 0 orphans.
+4. Update the "Restore drill" table above with the date and numbers, and the go-live board check `restore_tested`.
+
+Repeat it also after big schema changes. The same check can be run on a Supabase branch instead of a local Postgres.
