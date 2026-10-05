@@ -21,4 +21,9 @@ every migration: the tests still run, after adding one milk supplier
 7. `python3 pack_e2e.py` (v0.71) — Da spedire: pick list, packing order, late/short flags; the pack form opens with the lots
    allocated (two rows for a split line); scanning a held lot is refused; a short order asks to confirm with the reason.
 
-Last run 05/10/2026 (v0.71): SQL tests as expected, e2e 22/22, prod_e2e 13/13, pack_e2e 14/14.
+   Run it on a fresh database (or first): stock left by e2e/prod_e2e changes its allocations.
+
+8. `python3 device_e2e.py` (v0.74) — the tablet checks in with its label and app version, a refused offline save reaches
+   `fabula.tablet_rejects` and the bell once, the pending line says it was reported, an older app shows "Aggiorna ora".
+
+Last run 05/10/2026 (v0.74): SQL tests as expected, e2e 22/22, prod_e2e 13/13, pack_e2e 14/14 (fresh DB), device_e2e 8/8.

@@ -52,6 +52,20 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Reliability: tablet check-in, refused saves, pg_cron watched (v0.74)
+- Every tablet/browser running the app calls `fabula.device_checkin()` at start, after each send and every 5 min: device id
+  (kept in `localStorage` `perla_device_uid`), label, app version (`sw.js` CACHE), records waiting and since when, and the
+  saves the database refused. Devices are in `fabula.devices`; refused saves are kept in full in `fabula.tablet_rejects`
+  and each new one rings the bell from Zio Tonino (agent `tablet`, own card in Configurazione → Bot). The tablet marks them
+  reported (`perla_failed_reported`) and the pending line says "Già segnalate all'ufficio". Mark one dealt with:
+  `select fabula.resolve_tablet_reject('<qid>', 'rifatta a mano')` (sistema ≥ 2).
+- The answer carries the live app version (`fabula.live_app_version()`, from the infra probe); an older tablet shows
+  "È disponibile una nuova versione · Aggiorna ora".
+- pg_cron `fabula_device_watch` (every 15 min): records waiting > 2 h, or an old app a day after a release → one warning a day.
+- `bot_watchdog()` (run hourly by the external alarm bot, which relays `message_it` unchanged) now also reports pg_cron
+  silent for 20 min ("🛑 automazioni del database ferme") and every failed scheduled job in the last 26 h.
+- Tests: `tools/go-live/drill/infra-test/test_devices_watchdog.sql` (13), `tools/go-live/drill/tablet-test/device_e2e.py` (8).
+
 ## Auto-approval rules and rota autocopy (v0.73)
 - A new approval is checked by `fabula.auto_approve_rule()`; if routine it gets `auto_approve_at` (now + `approve.auto_delay_min`,
   60 min, never after it expires) and `auto_rule`. The console card shows "⏱ Si approva da sola alle HH:MM · <rule>"; a person

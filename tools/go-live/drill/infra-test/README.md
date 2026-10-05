@@ -19,3 +19,12 @@ Drives `fabula.bot_fallback()` at fixed Rome times: the right bots stood in for 
 the 6-hour window, the backup re-sent without a fake ok run, the alarm bot's extra 20 minutes, a failing stand-in logged as an
 error while the others still run, the on/off setting, the nightly backup at 21:15 Rome in summer and winter, grants.
 05/10/2026: 22/22 PASS. Also dry-run on the live database (rolled back): all six stand-ins run on real data.
+
+## Tablet check-in and pg_cron watch (v0.74)
+```
+tools/go-live/drill/infra-test/replay.sh dv_test
+su postgres -c "psql -d dv_test -f tools/go-live/drill/infra-test/test_devices_watchdog.sql" | grep -E "PASS|FAIL"
+```
+Check-in by staff only (a non-staff login is refused), device row upsert, refused saves stored once (dedupe by qid) with one bell
+alert, queue > 2 h and old app warned once a day, `resolve_tablet_reject`, `bot_watchdog` raising "pg_cron
+stopped" and failed-job alerts once each. 05/10/2026: 13/13 PASS; `test_bot_fallback.sql` still 22/22 with the new watchdog.

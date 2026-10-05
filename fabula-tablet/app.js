@@ -44,6 +44,7 @@
   const queue = () => readList(Q), failedList = () => readList(QF);
   const showPending = () => { const q = queue().length, f = failedList().length;
     $('pending').textContent = [q ? `${q} registrazioni in attesa di rete` : '', f ? `${f} rifiutate dal database (tocca qui)` : ''].filter(Boolean).join(' · '); };
+  // (v0.74 check-in further down reports both numbers to the office)
   const setQueue = q => { try { localStorage.setItem(Q, JSON.stringify(q)); } catch {} showPending(); };
   const setFailed = f => { try { localStorage.setItem(QF, JSON.stringify(f)); } catch {} showPending(); };
   // retryable = network down, timeout, or an expired login; anything else is the database refusing the data
@@ -124,17 +125,47 @@
       if (failed.length) { setFailed([...failedList(), ...failed]); toast(`${failed.length} registrazioni rifiutate dal database: tocca la riga in basso`, 'err'); }
       const sent = q.length - left.length - failed.length;
       if (sent > 0) { toast(`Inviate ${sent} registrazioni`); loadTasks(); warmLots(); }
-    } finally { flushing = false; }
+    } finally { flushing = false; setTimeout(checkin, 300); }
   }
   window.addEventListener('online', flush);
   setInterval(() => { if (queue().length) flush(); }, 60000);   // online event is unreliable on some tablets
+  // v0.74: the tablet checks in (app version, offline queue, refused saves) so the office knows; refused saves are sent
+  // to the database in full (fabula.tablet_rejects) and announced on the bell, so deleting them here no longer loses them.
+  const DUK = 'perla_device_uid', REPK = 'perla_failed_reported';
+  const deviceUid = () => { try { let u = localStorage.getItem(DUK); if (!u) { u = uuid(); localStorage.setItem(DUK, u); } return u; } catch { return 'nostorage-' + CFG.device; } };
+  const reported = () => new Set(readList(REPK));
+  let appVer = null;
+  async function appVersion() {
+    if (appVer) return appVer;
+    try { const ks = await caches.keys(); const k = ks.find(x => /^perla-v\d+$/.test(x)); if (k) return (appVer = k); } catch {}
+    try { const t = await (await fetch('sw.js', { cache: 'no-cache' })).text(); const m = t.match(/CACHE\s*=\s*'(perla-v\d+)'/); if (m) return (appVer = m[1]); } catch {}
+    return null;
+  }
+  let checkingIn = false;
+  async function checkin() {
+    if (checkingIn || !staff || !navigator.onLine) return; checkingIn = true;
+    try {
+      const q = queue(), rep = reported(), fresh = failedList().filter(f => f.qid && !rep.has(f.qid));
+      const ver = await appVersion();
+      const { data, error } = await live(sb.rpc('device_checkin', { p_device_uid: deviceUid(), p_label: CFG.device, p_version: ver, p_queue_len: q.length,
+        p_oldest: q.length ? new Date(Math.min(...q.map(i => i.at || Date.now()))).toISOString() : null,
+        p_failed: fresh.map(f => ({ qid: f.qid, ops: f.ops, error: f.error, code: f.code, failed_at: f.failed_at })), p_user_agent: navigator.userAgent.slice(0, 200) }), 8000);
+      if (error) return;                                      // older database or no network: try again later
+      if (fresh.length) { try { localStorage.setItem(REPK, JSON.stringify([...rep, ...fresh.map(f => f.qid)].slice(-500))); } catch {} showPending(); }
+      const bn = $('update-banner');
+      if (bn) bn.style.display = data && data.live_version && ver && data.live_version !== ver ? '' : 'none';
+    } catch (e) { console.warn('checkin', e); } finally { checkingIn = false; }
+  }
+  setInterval(checkin, 5 * 60000);
   let failedTap = 0;
   $('pending').addEventListener('click', () => {
     const f = failedList(); if (!f.length) return;
     if (Date.now() - failedTap < 5000) { setFailed([]); toast('Registrazioni rifiutate eliminate: rifalle a mano se servono'); failedTap = 0; return; }
     failedTap = Date.now();
     const first = f[0]; const what = (first.ops.find(o => o.table) || first.ops[0] || {}).table || (first.ops[0] || {}).rpc || '?';
-    toast(`${f.length} rifiutate · prima: ${what} — ${first.error}. Tocca di nuovo entro 5 s per eliminarle.`, 'err');
+    const rep = reported(), sent = f.filter(x => rep.has(x.qid)).length;
+    toast(`${f.length} rifiutate · prima: ${what} — ${first.error}. ${sent === f.length ? 'Già segnalate all\'ufficio. ' : 'Verranno segnalate all\'ufficio appena c\'è rete. '}Tocca di nuovo entro 5 s per toglierle da qui.`, 'err');
+    if (sent < f.length) checkin();
   });
 
   // ---------- Auth ----------
@@ -151,7 +182,7 @@
     const { data } = PERM.offline ? { data: null } : await PERM.timeout(sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle().then(x => x, () => ({ data: null })));
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name;
-    show('home'); loadTasks(); setQueue(queue()); flush(); if (!PERM.offline) { warmRefs(); warmLots(); }
+    show('home'); loadTasks(); setQueue(queue()); flush(); if (!PERM.offline) { warmRefs(); warmLots(); } setTimeout(checkin, 1500);
     if (PERM.offline) toast('Offline: profilo salvato su questo tablet. Le registrazioni vanno in coda e partono al ritorno della rete.');
   }
   $('btn-login').onclick = async () => {

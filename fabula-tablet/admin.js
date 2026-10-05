@@ -140,7 +140,8 @@
   const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'avvisi'], role: 'Allarme bot', sched: 'ogni ora · :50, 06:50–21:50 lun–sab', times: Array.from({ length: 16 }, (_, i) => String(6 + i).padStart(2, '0') + ':50'), wd: [1, 2, 3, 4, 5, 6] },
                 bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] },
                 produzione: { agents: ['produzione'], role: 'Resa produzione', sched: 'alla chiusura di ogni lotto', times: [], wd: [], okLine: 'Nessuna resa fuori norma' },   // v0.70
-                auto_approve: { agents: ['auto_approve'], role: 'Approvazioni automatiche', sched: 'ogni 10 minuti · turni il sabato', times: [], wd: [], okLine: 'Nessuna approvazione automatica da leggere' } };   // v0.73
+                auto_approve: { agents: ['auto_approve'], role: 'Approvazioni automatiche', sched: 'ogni 10 minuti · turni il sabato', times: [], wd: [], okLine: 'Nessuna approvazione automatica da leggere' },   // v0.73
+                tablet: { agents: ['tablet'], role: 'Tablet e registrazioni rifiutate', sched: 'a ogni contatto del tablet · controllo ogni 15 minuti', times: [], wd: [], okLine: 'Nessuna registrazione rifiutata, tablet aggiornati' } };   // v0.74
   const DOW = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
   const romeNow = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
     return { y: +p.year, mo: +p.month, d: +p.day, hm: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` }; };
