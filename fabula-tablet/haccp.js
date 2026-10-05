@@ -58,6 +58,7 @@
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
+  PERM.forgot(sb, toast);
   $('btn-refresh').onclick = () => load();
   function showTab(t) {
     if (!$('p-' + t)) t = 'registri';

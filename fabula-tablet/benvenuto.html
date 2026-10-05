@@ -45,7 +45,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
   const err = new URLSearchParams(location.hash.slice(1)).get('error_description');
   await new Promise(r => setTimeout(r, 300));   // let supabase-js read the token from the link
   const { data: { session } } = await sb.auth.getSession();
-  if (!session) { $('sub').textContent = err ? `Il link non è valido: ${err}.` : 'Il link è scaduto o è già stato usato. Chiedi al titolare di inviartene uno nuovo.'; return; }
+  if (!session) { $('sub').textContent = err ? `Il link non è valido: ${err}.` : 'Il link è scaduto o è già stato usato. Nella pagina di accesso tocca "Password dimenticata?" per riceverne uno nuovo, oppure chiedilo al titolare.'; return; }
   const P = await PERM.load(sb);
   $('sub').textContent = P && P.staff_id ? `Ciao ${P.full_name}: scegli la password per entrare come ${P.role_name}.` : `Ciao ${session.user.email}: scegli la password.`;
   $('form').hidden = false; $('pw1').focus();

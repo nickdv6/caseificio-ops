@@ -115,6 +115,7 @@
     current = page; refreshFn = onRefresh || null; loginView();
     $('btn-login').onclick = async () => { const b = $('btn-login'); b.disabled = true; const { error } = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('pw').value }); b.disabled = false; if (error) return toast(error.message === 'Invalid login credentials' ? 'Email o password non corretti' : error.message, 'err'); boot({ page, onReady, onRefresh }); };
     $('pw').onkeydown = e => { if (e.key === 'Enter') $('btn-login').click(); };
+    PERM.forgot(sb, toast);
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { show('login'); $('email').focus(); return; }
     const P = await PERM.load(sb);

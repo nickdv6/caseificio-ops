@@ -158,6 +158,7 @@
     const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value });
     if (error) return toast('Accesso negato: ' + error.message, 'err'); init();
   };
+  PERM.forgot(sb, toast);
   $('btn-logout').onclick = async () => {
     const n = queue().length;
     staff = null; await sb.auth.signOut(); show('login');

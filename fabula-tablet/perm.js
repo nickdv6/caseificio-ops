@@ -67,6 +67,33 @@ window.PERM = {
     document.body.style.background = '#f6f4ef';
     document.getElementById('perm-out').onclick = async e => { e.preventDefault(); await sb.auth.signOut(); location.reload(); };
   },
+  // v0.67: "Password dimenticata?" under every login button. Supabase emails a link to benvenuto.html, where the person
+  // chooses a new password (same page as the invite). The answer is the same whether or not the email is registered.
+  forgot(sb, toast) {
+    const btn = document.getElementById('btn-login'); if (!btn || document.getElementById('btn-forgot')) return;
+    const a = document.createElement('a'); a.href = '#'; a.id = 'btn-forgot'; a.textContent = 'Password dimenticata?';
+    a.style.cssText = 'display:block;text-align:center;margin-top:14px;font-size:.95rem;color:inherit;opacity:.75';
+    const msg = document.createElement('p'); msg.id = 'forgot-msg'; msg.hidden = true;
+    msg.style.cssText = 'text-align:center;font-size:.9rem;line-height:1.4;margin:8px 0 0';
+    btn.after(a, msg);
+    let until = 0;
+    const say = (t, bad) => { msg.textContent = t; msg.hidden = false; msg.style.color = bad ? '#b3261e' : ''; };
+    a.onclick = async e => {
+      e.preventDefault();
+      const f = document.getElementById('email'), email = (f.value || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { say('Scrivi la tua email qui sopra, poi tocca di nuovo "Password dimenticata?".', true); f.focus(); return; }
+      if (Date.now() < until) return say('Link già inviato: controlla la posta (anche lo spam). Puoi chiederne un altro tra un minuto.');
+      if (navigator.onLine === false) return say('Serve la connessione a internet per inviare il link.', true);
+      a.style.pointerEvents = 'none'; a.textContent = 'Invio in corso…';
+      try {
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
+        if (error && (error.status === 429 || /rate limit|security purposes|seconds/i.test(error.message || ''))) say('Hai già chiesto un link da poco: aspetta un minuto e riprova.', true);
+        else if (error && !/not found|user/i.test(error.message || '')) say('Invio non riuscito: ' + error.message, true);
+        else { until = Date.now() + 60000; say(`Se ${email} è registrata, tra poco ricevi un'email con il link per scegliere una nuova password. Controlla anche lo spam.`); }
+      } catch (err) { say('Invio non riuscito: controlla la connessione e riprova.', true); }
+      finally { a.style.pointerEvents = ''; a.textContent = 'Password dimenticata?'; }
+    };
+  },
   notLinked(email) { return `L'account ${email} non è collegato a nessuna persona attiva. Chiedi al titolare di invitarti da Configurazione → Utenti e accessi.`; },
   notForProfile() { return `Il profilo "${(this.data && this.data.role_name) || '?'}" non usa questa pagina.`; },
 };

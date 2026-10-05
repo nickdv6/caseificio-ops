@@ -39,6 +39,7 @@
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
+  PERM.forgot(sb, toast);
   $('btn-logout').onclick = async () => { await sb.auth.signOut(); location.reload(); };
   $('btn-refresh').onclick = () => loadAll();
   function showTab(name, push = true) {
