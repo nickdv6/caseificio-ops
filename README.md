@@ -52,6 +52,19 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Packing on autopilot (v0.71)
+- `fabula.packing_plan(date)` (tablet → 🚚 Da spedire): orders in packing order (late first, then due date, wholesale before
+  online on the same day) with lots already allocated — oldest in-date first (FEFO), a line split over lots when one is not
+  enough, allocated across the whole list so no kg is promised twice — plus the cold-room pick list (product · lot · kg ·
+  orders), late days and kg short. Lots on food-safety hold, expired, or with less life left than the channel needs
+  (`ship.min_days_left_online` 2, `ship.min_days_left_wholesale` 1) are never allocated and are shown as "Non usare".
+- Pack form: one row per allocated lot, already filled in; scanning a held or expired lot is refused on the spot.
+- `pack_order` (same signature): held or expired lot → refused, no override; short stock, short shelf life and weight outside
+  `ship.tolerance_pct` → `needs_confirm` with `reasons`, saved on the second Salva and written on the shipment ("Confermato: …").
+  The weight confirmation no longer skips the stock check. An online order with no customer gets a consignee from the
+  Shopify shipping name instead of failing.
+- Tests: `tools/go-live/drill/prod-test/test_packing.sql` (14), `tools/go-live/drill/tablet-test/pack_e2e.py` (14).
+
 ## Production autopilot (v0.70)
 - `fabula.production_plan(date)` (tablet Home → "Produzione di oggi"): for each accepted milk delivery with kg not yet in a batch
   (oldest first) the batches to make — equal vat loads (`prod.vat_kg`, 800), mozzarella with its default preset, start doses

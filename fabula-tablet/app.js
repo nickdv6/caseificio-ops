@@ -827,18 +827,34 @@
   const fmtDay = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) : '';
   async function stepShipList() {
     $('form').innerHTML = ''; current = { code: 'SHIP:' };
-    const { data, error } = await sb.from('v_orders_to_ship').select('*');
-    if (error) { toast('Lista spedizioni non disponibile offline', 'err'); return; }
-    if (!data || !data.length) { toast('Niente da spedire'); return; }
-    data.forEach(o => {
-      const d = document.createElement('div'); d.className = 'task';
-      const items = (o.lines || []).map(l => `${fmtKg(l.qty)} ${esc(l.unit)} ${esc(l.name)}`).join(' · ');
+    // v0.71: the day's packing plan — lots already allocated (oldest in-date first, split over lots, never twice), held/expired
+    // lots blocked, pick list for the cold room. Older database: the plain list with the suggested lots.
+    let plan = null;
+    const r = await live(sb.rpc('packing_plan'));
+    if (!r.error && r.data) plan = r.data;
+    else {
+      const { data, error } = await sb.from('v_orders_to_ship').select('*');
+      if (error) { toast('Lista spedizioni non disponibile offline', 'err'); return; }
+      plan = { pick: [], orders: (data || []).map(o => ({ ...o, late_days: 0, short_kg: 0, lines: (o.lines || []).map(l => ({ ...l, blocked: [], short_kg: 0, eligible: l.suggested || [],
+        alloc: (l.suggested || []).slice(0, 1).map(x => ({ lot: x.lot, expiry: x.expiry, qty: l.qty, on_hand: x.on_hand })) })) })) };
+    }
+    if (!plan.orders.length) { toast('Niente da spedire'); return; }
+    if (plan.pick && plan.pick.length) {
+      const c = document.createElement('div'); c.className = 'card';
+      c.innerHTML = '<div class="scan">Prelievo dalla cella</div>' + plan.pick.map(x => `<div style="margin-top:4px">${esc(x.product)} · lotto <b>${esc(x.lot)}</b>${x.expiry ? ' (scade ' + esc(fmtDay(x.expiry)) + ')' : ''} · <b>${fmtKg(x.kg)} ${esc(x.unit)}</b> <span class="code">→ ${(x.orders || []).map(esc).join(', ')}</span></div>`).join('');
+      $('form').append(c);
+    }
+    plan.orders.forEach(o => {
+      const d = document.createElement('div'); d.className = 'task' + ((o.late_days > 0 || o.short_kg > 0) ? ' overdue' : ''); d.style.marginTop = '8px';
+      const items = (o.lines || []).map(l => `${fmtKg(l.qty)} ${esc(l.unit)} ${esc(l.name)}${(l.alloc || []).length ? ' ← ' + l.alloc.map(a => `${esc(a.lot)} ${fmtKg(a.qty)}`).join(' + ') : ''}`).join(' · ');
       const addr = o.ship_address ? [o.ship_address.city, o.ship_address.zip].filter(Boolean).join(' ') : (o.ship_city || '');
-      d.innerHTML = `<div><div>${o.channel === 'shopify' ? '🛒 ' : '🏬 '}${esc(o.order_number)} · ${esc(o.customer || (o.ship_address && o.ship_address.name) || 'cliente online')}${addr ? ' · ' + esc(addr) : ''}</div><div class="code">${items || 'nessuna riga collegata al magazzino'}${o.unmapped ? ' · ⚠ ' + esc(o.unmapped) + ' righe non collegate' : ''}</div></div><time>${esc(fmtDay(o.due_date))}</time>`;
+      const flags = [o.late_days > 0 ? `⏰ in ritardo di ${o.late_days} g` : '', o.short_kg > 0 ? `⚠ mancano ${fmtKg(o.short_kg)} kg in giacenza` : '', o.unmapped ? `⚠ ${esc(o.unmapped)} righe non collegate` : ''].filter(Boolean).join(' · ');
+      d.innerHTML = `<div><div>${o.channel === 'shopify' ? '🛒 ' : '🏬 '}${esc(o.order_number)} · ${esc(o.customer || (o.ship_address && o.ship_address.name) || 'cliente online')}${addr ? ' · ' + esc(addr) : ''}</div><div class="code">${items || 'nessuna riga collegata al magazzino'}${flags ? '<br>' + flags : ''}</div></div><time>${esc(fmtDay(o.due_date))}</time>`;
       d.onclick = () => stepPack(o).catch(e => { toast(e.message, 'err'); show('home'); });
       $('form').append(d);
     });
-    openForm('Da spedire', 'Tocca l\'ordine da preparare · online prima, poi ingrosso', async () => {});
+    const late = plan.orders.filter(o => o.late_days > 0).length;
+    openForm('Da spedire', `${plan.orders.length} ordin${plan.orders.length === 1 ? 'e' : 'i'}${late ? ` · ${late} in ritardo` : ''} · nell'ordine in cui prepararli, lotti già assegnati`, async () => {});
     $('btn-form-save').style.display = 'none';
   }
   async function stepPack(o) {
@@ -847,20 +863,35 @@
     const S = Object.fromEntries((cfg || []).map(r => [r.key, r.value]));
     if (!(o.lines || []).length) throw new Error('Ordine senza righe collegate al magazzino: collega i prodotti Shopify in Configurazione → Vendite');
     const rows = [];
+    const why = x => x.reason === 'held' ? 'bloccato (sicurezza alimentare)' : x.reason === 'expired' ? 'scaduto' : `scade ${fmtDay(x.expiry)}, troppo presto`;
     o.lines.forEach((l, i) => {
+      // v0.71: one row per allocated lot (oldest in-date first; a line split over two lots gets two rows), already filled in
+      const alloc = (l.alloc && l.alloc.length) ? l.alloc : [{ lot: '', qty: l.qty }];
       const card = document.createElement('div'); card.className = 'card'; card.style.marginTop = '14px';
-      const sug = (l.suggested || [])[0];
-      card.innerHTML = `<div class="scan">${esc(l.name)}</div><div>ordinati <b>${fmtKg(l.qty)} ${esc(l.unit)}</b>${sug ? ` · lotto consigliato <b>${esc(sug.lot)}</b> (scade ${fmtDay(sug.expiry)}, ${fmtKg(sug.on_hand)} ${esc(l.unit)} in giacenza)` : ' · <span style="color:var(--warn)">nessun lotto in giacenza</span>'}</div>`;
+      card.innerHTML = `<div class="scan">${esc(l.name)}</div><div>ordinati <b>${fmtKg(l.qty)} ${esc(l.unit)}</b>${(l.alloc || []).length > 1 ? ` · da ${l.alloc.length} lotti, prima il più vecchio` : ''}${l.short_kg > 0 ? ` · <span style="color:var(--warn)">mancano ${fmtKg(l.short_kg)} ${esc(l.unit)} in giacenza</span>` : ''}${!(l.alloc || []).length ? ' · <span style="color:var(--warn)">nessun lotto utilizzabile in giacenza</span>' : ''}</div>`
+        + ((l.blocked || []).length ? `<div class="code">Non usare: ${l.blocked.map(x => `${esc(x.lot)} · ${esc(why(x))}`).join(' · ')}</div>` : '');
       $('form').append(card);
-      const lot = field('lot' + i, 'Lotto (scansiona l\'etichetta o conferma quello consigliato)', 'select', { options: (l.suggested || []).map(x => [x.lot, `${x.lot} · scade ${fmtDay(x.expiry)} · ${fmtKg(x.on_hand)} ${l.unit}`]) });
-      const scanBtn = document.createElement('button'); scanBtn.type = 'button'; scanBtn.className = 'btn secondary'; scanBtn.textContent = '📷 Scansiona lotto'; scanBtn.style.marginTop = '6px';
-      scanBtn.onclick = () => { scanTarget = code => { const v = code.replace(/^LOT:/i, '').trim(); const ok = [...lot.options].some(op => op.value === v); if (!ok) { const op = document.createElement('option'); op.value = v; op.textContent = v + ' · non tra i consigliati'; lot.append(op); } lot.value = v; lot.style.borderColor = ok ? 'var(--ok)' : 'var(--warn)'; show('form'); toast(ok ? 'Lotto confermato ✓' : 'Lotto diverso da quelli consigliati: controlla la scadenza', ok ? '' : 'err'); }; startScan(); };
-      $('form').append(scanBtn);
-      const q = field('q' + i, `Peso effettivo (${l.unit})`, 'number', { step: '0.01' }); q.value = Number(l.qty); q.dataset.weighed = '0';
-      q.oninput = () => { q.dataset.weighed = '0'; current.force = false; };
-      const w = scaleButton(q, 'net');
-      $('form').append(w);
-      rows.push({ l, lot, q });
+      alloc.forEach((a, j) => {
+        const k = i + '_' + j;
+        const opts = [...(l.eligible || [])]; if (a.lot && !opts.some(x => x.lot === a.lot)) opts.unshift({ lot: a.lot, expiry: a.expiry, on_hand: a.on_hand });
+        const lot = field('lot' + k, alloc.length > 1 ? `Lotto ${j + 1} di ${alloc.length}` : 'Lotto (già assegnato: conferma o scansiona l\'etichetta)', 'select',
+          { options: [['', '— scegli il lotto —'], ...opts.map(x => [x.lot, `${x.lot} · scade ${fmtDay(x.expiry)} · ${fmtKg(x.on_hand)} ${l.unit}`])] });
+        lot.value = a.lot || '';
+        const scanBtn = document.createElement('button'); scanBtn.type = 'button'; scanBtn.className = 'btn secondary'; scanBtn.textContent = '📷 Scansiona lotto'; scanBtn.style.marginTop = '6px';
+        scanBtn.onclick = () => { scanTarget = code => {
+          const v = code.replace(/^LOT:/i, '').trim(); show('form');
+          const bl = (l.blocked || []).find(x => x.lot.toLowerCase() === v.toLowerCase());
+          if (bl && bl.reason !== 'short_life') { lot.style.borderColor = 'var(--warn)'; toast(`Lotto ${v} ${bl.reason === 'held' ? 'bloccato per sicurezza alimentare' : 'scaduto'}: non si può spedire. Prendi ${lot.value || 'un altro lotto'}.`, 'err'); return; }
+          const ok = [...lot.options].some(op => op.value === v);
+          if (!ok) { const op = document.createElement('option'); op.value = v; op.textContent = v + (bl ? ' · scade troppo presto' : ' · non tra quelli assegnati'); lot.append(op); }
+          lot.value = v; lot.style.borderColor = ok && !bl ? 'var(--ok)' : 'var(--warn)'; current.force = false;
+          toast(v === a.lot ? 'Lotto confermato ✓' : bl ? `Lotto ${v}: scade il ${fmtDay(bl.expiry)}, prima del minimo — verrà chiesta conferma` : 'Lotto diverso da quello assegnato: controlla la scadenza', v === a.lot ? '' : 'err'); }; startScan(); };
+        $('form').append(scanBtn);
+        const q = field('q' + k, `Peso effettivo (${l.unit})${alloc.length > 1 ? ' da questo lotto' : ''}`, 'number', { step: '0.01' }); q.value = Number(a.qty); q.dataset.weighed = '0';
+        q.oninput = () => { q.dataset.weighed = '0'; current.force = false; };
+        $('form').append(scaleButton(q, 'net'));
+        rows.push({ l, lot, q });
+      });
     });
     const g = field('gross', 'Peso lordo collo (kg, facoltativo)', 'number', { step: '0.01', required: false }); $('form').append(scaleButton(g, 'gross'));
     const carrier = field('carrier', 'Vettore', 'text', { required: false }); carrier.value = o.channel === 'wholesale' ? (S['ship.wholesale_carrier'] || 'Consegna diretta') : (S['ship.default_carrier'] || 'BRT');
@@ -871,12 +902,13 @@
       if (lines.some(x => !x.lot_number)) { toast('Manca il lotto su una riga', 'err'); throw new Error('lot'); }
       const { data, error } = await sb.rpc('pack_order', { p_order_id: o.order_id, p_lines: lines, p_staff_id: staff.id, p_gross_kg: val('gross'), p_carrier: val('carrier') || null, p_tracking: val('tracking') || null, p_notes: val('note') || null, p_force: current.force });
       if (error) { toast(error.message, 'err'); throw error; }
-      if (data && data.needs_confirm) { current.force = true; toast(`Pesati ${fmtKg(data.packed_kg)} kg contro ${fmtKg(data.ordered_kg)} ordinati (${data.variance_pct > 0 ? '+' : ''}${data.variance_pct}%): ricontrolla e premi Salva di nuovo per confermare`, 'err'); throw new Error('confirm'); }
+      if (data && data.needs_confirm) { current.force = true;
+        toast((data.reasons && data.reasons.length ? 'Da confermare: ' + data.reasons.join('; ') : `Pesati ${fmtKg(data.packed_kg)} kg contro ${fmtKg(data.ordered_kg)} ordinati (${data.variance_pct > 0 ? '+' : ''}${data.variance_pct}%)`) + '. Ricontrolla e premi Salva di nuovo per confermare', 'err'); throw new Error('confirm'); }
       await save([scanEvent(current.code, 'pick', { payload: { order: o.order_number, ddt: data.ddt_number, kg: data.packed_kg, lines: lines.length } })]);
       // done: show the print buttons instead of going home
       $('form').innerHTML = ''; $('btn-form-save').style.display = 'none';
       const c = document.createElement('div'); c.className = 'card';
-      c.innerHTML = `<div class="scan">✓ ${esc(data.ddt_number)}</div><div>${esc(o.order_number)} · ${fmtKg(data.packed_kg)} kg in ${esc(data.lines)} righe · ${esc(data.carrier)}${data.needs_shopify_fulfilment ? '<br>Shopify verrà aggiornato dal bot (cliente avvisato con il tracking).' : '<br>Ordine ingrosso chiuso.'}</div>`;
+      c.innerHTML = `<div class="scan">✓ ${esc(data.ddt_number)}</div><div>${esc(o.order_number)} · ${fmtKg(data.packed_kg)} kg in ${esc(data.lines)} righe · ${esc(data.carrier)}${data.needs_shopify_fulfilment ? '<br>Shopify verrà aggiornato dal bot (cliente avvisato con il tracking).' : '<br>Ordine ingrosso chiuso.'}${(data.confirmed || []).length ? '<br><span class="code">Confermato: ' + data.confirmed.map(esc).join('; ') + '</span>' : ''}</div>`;
       const pr = document.createElement('a'); pr.className = 'btn'; pr.style.cssText = 'display:block;text-align:center;text-decoration:none;margin-top:12px'; pr.target = '_blank'; pr.href = 'spedizione.html?id=' + data.shipment_id; pr.textContent = o.channel === 'wholesale' ? '🖨 Stampa DDT' : '🖨 Stampa packing list';
       const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn secondary'; ok.style.cssText = 'display:block;width:100%;margin-top:8px'; ok.textContent = 'Fatto'; ok.onclick = () => { show('home'); loadTasks(); };
       $('form').append(c, pr, ok); toast('Spedizione registrata ✓');
