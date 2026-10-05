@@ -138,7 +138,8 @@
   // Bot dashboard redesign (03/10): status summary on top, bots grouped by status (da sistemare → da controllare → in ordine → disattivati),
   // one card per bot (Zio Vito and Zio Nino are now two cards), plain-language times ("3 ore fa", "domani 06:05").
   const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'avvisi'], role: 'Allarme bot', sched: 'ogni ora · :50, 06:50–21:50 lun–sab', times: Array.from({ length: 16 }, (_, i) => String(6 + i).padStart(2, '0') + ':50'), wd: [1, 2, 3, 4, 5, 6] },
-                bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] } };
+                bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] },
+                produzione: { agents: ['produzione'], role: 'Resa produzione', sched: 'alla chiusura di ogni lotto', times: [], wd: [], okLine: 'Nessuna resa fuori norma' } };   // v0.70
   const DOW = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
   const romeNow = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
     return { y: +p.year, mo: +p.month, d: +p.day, hm: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` }; };
@@ -201,7 +202,7 @@
     const [{ data: bots }, cnt, { data: sysMsgs }] = await Promise.all([
       sb.from('v_bot_dashboard').select('*').order('name_it'),
       sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000),
-      sb.from('bot_messages').select('agent, title, severity, body, created_at, read_at').in('agent', ['bot_watchdog', 'bot_heartbeat', 'avvisi']).order('created_at', { ascending: false }).limit(300),
+      sb.from('bot_messages').select('agent, title, severity, body, created_at, read_at').in('agent', Object.values(SYS).flatMap(x => x.agents)).order('created_at', { ascending: false }).limit(300),
       loadNicknames()]);
     const nU = (cnt.data || []).length;
     UI.bellCount();
@@ -221,7 +222,7 @@
       const ms = (sysMsgs || []).filter(m => s.agents.includes(m.agent)), m = ms[0], un = ms.filter(x => !x.read_at);
       const st = un.some(x => x.severity === 'alert') ? 'al' : un.some(x => x.severity === 'warn') ? 'wn' : 'ok';
       items.push({ agent: a, nick: bdNick[a] ? bdNick[a].nickname : a, role: s.role, st, sched: s.sched, next: nextRun(s.times, s.wd), last: m ? m.created_at : null, sys: true,
-        line: un.length ? cleanTxt(un[0].title) : 'Nessun allarme: tutti i bot sono regolari', unread: un.length, unreadAl: un.filter(x => x.severity === 'alert').length, active: true });
+        line: un.length ? cleanTxt(un[0].title) : (s.okLine || 'Nessun allarme: tutti i bot sono regolari'), unread: un.length, unreadAl: un.filter(x => x.severity === 'alert').length, active: true });
     });
     // summary strip
     const c = k => items.filter(i => i.st === k).length;

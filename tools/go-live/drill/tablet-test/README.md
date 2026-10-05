@@ -10,4 +10,12 @@ policies, so atomic saves, exactly-once re-sends and the offline flows can be ch
    a failing step leaves nothing, update must match one row, whitelist, role policy refusal (a Banco user).
 5. `python3 e2e.py` (Playwright) — expect `FAILURES: none`.
 
-Last run 05/10/2026: all SQL tests as expected, e2e 21/21 passed.
+6. `python3 prod_e2e.py` (v0.70) — production card on Home: two 575 kg loads from a 1,150 kg delivery, one tap fills the batch
+   start, more milk than is left asks to confirm, the second load starts offline from the kept plan, both reach the database,
+   closing shows the expected kg and a normal yield saves at once. Expect `FAILURES: none`.
+
+If the backup is older than the latest tables, the restore step of `run_drill.sh` stops after building the database from
+every migration: the tests still run, after adding one milk supplier
+(`insert into fabula.parties (type, legal_name, is_milk_supplier) values ('supplier', 'Masseria (test)', true)`).
+
+Last run 05/10/2026 (v0.70): SQL tests as expected, e2e 22/22 (now also: a yield far off asks to confirm), prod_e2e 13/13.

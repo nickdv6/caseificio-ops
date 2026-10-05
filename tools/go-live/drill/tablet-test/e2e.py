@@ -122,6 +122,8 @@ with sync_playwright() as p:
           pg.evaluate("document.getElementById('f-title').textContent") + ' | ' + toast() + f' | make steps {n2}')
     setf({'out': 100, 'n': 1});
     if pg.evaluate("!!document.getElementById('whey')"): setf({'whey': 0})
+    save_form()                           # v0.70: 100 kg from 500 kg = 20 % against 30 % expected → the tablet asks once
+    check('C far-off yield asks to confirm (offline: yield from the kept plan)', view() == 'v-form' and 'Resa 20%' in toast() and 'premi Salva di nuovo' in toast(), toast())
     save_form(); n3 = dose_through()
     queued = qlen()
     check('C nothing reached the database while offline', sql("select count(*) from fabula.milk_intake where milk_lot='"+'TE3'+RUN+"'") == '0', f'queue {queued}, close steps {n3}')

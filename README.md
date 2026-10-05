@@ -52,6 +52,19 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Production autopilot (v0.70)
+- `fabula.production_plan(date)` (tablet Home → "Produzione di oggi"): for each accepted milk delivery with kg not yet in a batch
+  (oldest first) the batches to make — equal vat loads (`prod.vat_kg`, 800), mozzarella with its default preset, start doses
+  from the recipe, expected kg from `fabula.expected_yield` (preset's last 10 batches if ≥ 3, else product's last 30 days if
+  ≥ 3, else `sales.yield_pct` 30 % / ricotta `prod.ricotta_yield_pct` 10 %), whey and ricotta, the 60 h DOP deadline (from
+  arrival or shipment), plus open batches, today's output and the approved milk-plan target. Read-only, `require_perm(produzione, 1)`.
+- Tablet: one tap on a proposal opens the batch start filled in (kg, product, preset, expected kg); more kg than is left on
+  the lot asks to confirm; the plan is kept on the tablet, so a load can be started offline (and leaves the kept plan).
+  Closing shows the expected kg and asks once to confirm a yield more than `prod.yield_tolerance_pts` (4) points off.
+- Database: closing stores `yield_expected_pct`; a yield outside the tolerance sets `yield_flag` bassa/alta and posts a
+  message from "Zio Ciro · Resa produzione" (agent `produzione`, its own card in Configurazione → Bot).
+- Tests: `tools/go-live/drill/prod-test/test_production_plan.sql` (19), `tools/go-live/drill/tablet-test/prod_e2e.py` (13).
+
 ## Self-healing bots (v0.69)
 - pg_cron `fabula_bot_fallback` (every 5 min) runs `fabula.bot_fallback()`: when a bot in `fabula.bot_fallback_agents()` has not
   started 45 min (`bot_schedule.grace_min`) after its due time, and up to 6 h after it, the database runs that bot's own function

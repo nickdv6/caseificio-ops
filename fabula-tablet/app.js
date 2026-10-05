@@ -179,6 +179,53 @@
       box.append(d);
     });
   }
+  // v0.70: production autopilot — today's batches from the milk on hand (fabula.production_plan). One tap opens the batch
+  // start already filled in (milk lot, kg, product, preset); open batches are one tap away from their next step.
+  // Offline it shows the last plan of today (kept on the tablet) and drops the loads started meanwhile.
+  const PLK = 'perla_plan_v1';
+  let planCache = null;
+  const hhmm = iso => new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const planPut = (p, at) => { planCache = p; try { localStorage.setItem(PLK, JSON.stringify({ at: at || Date.now(), p })); } catch {} };
+  async function loadPlan() {
+    const wrap = $('plan-wrap'), box = $('plan'), sum = $('plan-sum'); if (!wrap) return;
+    if (!PERM.can('produzione', 2)) { wrap.style.display = 'none'; return; }
+    let p = null, at = null;
+    const r = await live(sb.rpc('production_plan'));
+    if (!r.error && r.data) { p = r.data; planPut(p); }
+    else { try { const c = JSON.parse(localStorage.getItem(PLK) || 'null'); if (c && c.p && c.p.date === today()) { p = c.p; at = c.at; planCache = p; } } catch {} }
+    const done = (p && p.done) || {};
+    if (!p || (!p.proposals.length && !p.open.length && !done.batches)) { wrap.style.display = 'none'; return; }
+    wrap.style.display = ''; box.innerHTML = '';
+    const milkKg = p.proposals.reduce((a, x) => a + Number(x.milk_kg), 0), expKg = p.proposals.reduce((a, x) => a + Number(x.expected_kg), 0);
+    sum.textContent = [p.target ? `Obiettivo ${fmtKg(p.target.planned_output_kg)} kg${p.target.status === 'proposed' ? ' (piano latte da approvare)' : ''}` : '',
+      done.batches ? `fatti ${fmtKg(done.output_kg)} kg in ${done.batches} lott${done.batches === 1 ? 'o' : 'i'}${done.yield_pct != null ? ` (resa ${String(done.yield_pct).replace('.', ',')}%)` : ''}` : '',
+      p.proposals.length ? `da fare ≈ ${fmtKg(Math.round(expKg))} kg da ${fmtKg(milkKg)} kg di latte` : '',
+      at ? `senza rete: dati delle ${hhmm(at)}` : ''].filter(Boolean).join(' · ');
+    p.open.forEach(b => {
+      const d = document.createElement('div'); d.className = 'task';
+      d.innerHTML = `<div><div>⏳ ${esc(b.batch_lot)} · ${esc(b.product)} in lavorazione</div><div class="code">${fmtKg(b.milk_in_kg)} kg di ${b.input_kind === 'whey' ? 'siero' : 'latte'}${b.started_at ? ' · avviato alle ' + hhmm(b.started_at) : ''} · attesi ≈ ${fmtKg(b.expected_kg)} kg · tocca per continuare</div></div><time>›</time>`;
+      d.onclick = () => handleCode('LOT:' + b.batch_lot); box.append(d);
+    });
+    p.proposals.forEach(x => {
+      const h = (Date.parse(x.use_by) - Date.now()) / 36e5, late = h < 8;
+      const due = h <= 0 ? '⚠ oltre le 60 h DOP: non è più DOP' : late ? `⚠ entro le ${hhmm(x.use_by)} (60 h DOP)` : `entro ${new Date(x.use_by).toLocaleDateString('it-IT', { weekday: 'short', timeZone: 'Europe/Rome' })} ${hhmm(x.use_by)}`;
+      const d = document.createElement('div'); d.className = 'task go' + (late ? ' overdue' : '');
+      d.innerHTML = `<div><div>Avvia lotto: ${fmtKg(x.milk_kg)} kg di latte ${esc(x.milk_lot)}</div><div class="code">${esc(x.product)} · ≈ ${fmtKg(x.expected_kg)} kg (resa ${String(x.yield_pct).replace('.', ',')}%${String(x.yield_source).startsWith('default') ? ' stimata' : ''})${x.small ? ' · lotto piccolo' : ''} · ${due}</div></div><time>▶</time>`;
+      d.onclick = () => startFromPlan(x); box.append(d);
+    });
+  }
+  async function startFromPlan(x) {
+    $('form').innerHTML = ''; current = { code: 'LOT:' + x.milk_lot, plan: x };
+    if (!allowed('LOT')) return;
+    try { await stepBatchStart({ id: x.milk_intake_id, milk_lot: x.milk_lot, qty_kg: x.left_kg }, x.milk_lot, x); }
+    catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
+  }
+  const planStarted = (x, kg) => {           // offline view: take the started load out of the kept plan
+    if (!planCache) return; let c = null; try { c = JSON.parse(localStorage.getItem(PLK) || 'null'); } catch {}
+    const p = planCache; p.proposals = p.proposals.filter(y => !(y.milk_intake_id === x.milk_intake_id && y.seq === x.seq));
+    p.proposals.forEach(y => { if (y.milk_intake_id === x.milk_intake_id) y.left_kg = Math.max(0, Math.round((y.left_kg - kg) * 10) / 10); });
+    planPut(p, c && c.at);
+  };
   async function loadNotices() {           // red banner: what is still missing tonight — tap an item to go straight to its scan
     const wrap = $('notice-wrap'); if (!wrap) return;
     const { data, error } = await sb.from('v_active_notices').select('*');
@@ -202,7 +249,7 @@
     el.textContent = data && data.length ? 'In turno: ' + data.map(r => `${r.full_name} (${Number(r.hours_so_far).toLocaleString('it-IT')} h)`).join(', ') : 'Nessuno in turno · passa il badge per iniziare';
   }
   async function loadTasks() {
-    loadSellDown(); loadNotices(); loadShifts(); loadShipCount();
+    loadSellDown(); loadNotices(); loadShifts(); loadShipCount(); loadPlan();
     const { data, error } = await sb.from('v_tasks_open').select('*');
     const box = $('tasks'); box.innerHTML = '';
     if (error) { box.textContent = 'Lista non disponibile offline'; return; }
@@ -401,7 +448,7 @@
   // v0.59: Enter on a one-field screen (meter, temperature, chlorine) saves instead of reloading the page to Home
   $('form').addEventListener('submit', e => { e.preventDefault(); const b = $('btn-form-save'); if (b.style.display !== 'none' && !b.disabled) b.click(); });
   // v0.59: changing anything after a "check and press Salva again" warning asks for the confirmation again
-  $('form').addEventListener('input', () => { if (current) { current.force = false; current.overOk = false; current.bigOk = false; } });
+  $('form').addEventListener('input', () => { if (current) { current.force = false; current.overOk = false; current.bigOk = false; current.yieldOk = false; } });
 
   // 1/4/7/9 — equipment: cold room, pasteurizer, thermometer → temperature; POS → Z report
   async function stepEquipment(code) {
@@ -561,7 +608,7 @@
     if (!left.length) return stepBatchEnd(b);
     runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo l\'etichetta sul tank'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
-  async function stepBatchStart(milk, lot) {
+  async function stepBatchStart(milk, lot, pre = null) {   // pre: a proposal from the production plan (v0.70)
     let { data: prods, error: pe } = await live(sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true));
     if (pe || !prods) prods = lotView().products.filter(p => p.kind === 'finished_good' && p.active);   // offline
     if (!prods.length) throw new Error('Nessun prodotto disponibile (senza rete e prodotti non ancora salvati sul tablet)');
@@ -578,16 +625,29 @@
     const preSel = field('preset', 'Impostazioni di processo', 'select', { options: [['', '—']], required: false });
     const fillPresets = () => { const mine = presetsFor(presets, prodSel.value); preSel.innerHTML = mine.length ? mine.map(p => `<option value="${p.id}" ${p.is_default ? 'selected' : ''}>${p.name}${p.is_default ? ' · predefinito' : ''}</option>`).join('') : '<option value="">nessun preset: solo dosi</option>'; };
     prodSel.onchange = fillPresets; fillPresets();
+    if (pre) {
+      if ([...prodSel.options].some(o => o.value === pre.product_id)) { prodSel.value = pre.product_id; fillPresets(); }
+      if (pre.preset_id && [...preSel.options].some(o => o.value === pre.preset_id)) preSel.value = pre.preset_id;
+    }
     field('mu', 'Unità', 'select', { options: [['kg', 'kg (bilancia)'], ['l', 'litri (contalitri)']] });
-    field('kg', 'Latte in caldaia', 'number', { step: '0.1' });
+    const kgIn = field('kg', 'Latte in caldaia', 'number', { step: '0.1' });
+    if (pre) {
+      kgIn.value = pre.milk_kg;
+      const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
+      const upd = () => { const v = val('mu') === 'l' ? (val('kg') || 0) * MILK_DENSITY : (val('kg') || 0);
+        h.textContent = `Proposta: ${fmtKg(pre.milk_kg)} kg → ≈ ${fmtKg(Math.round(v * pre.yield_pct) / 100)} kg di ${pre.product} (resa ${String(pre.yield_pct).replace('.', ',')}%). Le dosi sono nel passo successivo.`; };
+      kgIn.addEventListener('input', upd); $('mu').addEventListener('change', upd); upd();
+    }
     openForm('Inizio lotto ' + batchLot, `latte ${lot} · disponibili ${milk.qty_kg} kg`, async () => {
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
       const product = val('product'), preset = val('preset') || null;
+      if (pre && kg > pre.left_kg * 1.02 && !current.overOk) { current.overOk = true; toast(`${fmtKg(kg)} kg sono più del latte rimasto su ${lot} (${fmtKg(pre.left_kg)} kg): controlla e premi Salva di nuovo`, 'err'); throw new Error('confirm'); }
       batchLot = await nextLot();                            // another tablet may have opened a lot meanwhile (offline: the device copy)
       await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset } }),
         { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
         { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
         { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -kg, move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }]);
+      if (pre) planStarted(pre, kg);
       const steps = mergeSteps(await doseSteps(product, 'start', { milk: kg }), processSteps(presets, preset, 'start'));
       if (!steps.length) { toast('Lotto ' + batchLot + ' avviato ✓'); return; }
       runDosing(`Avvio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => toast('Lotto ' + batchLot + ' avviato ✓ · scansiona di nuovo il lotto per la lavorazione'));
@@ -599,10 +659,22 @@
     let { data: prod, error: pre } = await live(sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single());
     if (pre || !prod) prod = cachedProduct(b.product_id);
     const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
-    field('out', 'kg prodotto', 'number', { step: '0.1' }); field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
+    let ey = null;                                   // v0.70: expected yield (online; offline the plan kept on the tablet)
+    const er = await live(sb.rpc('expected_yield', { p_product: b.product_id, p_preset: b.preset_id || null, p_exclude: b.id || null }), 5000);
+    if (!er.error && er.data) ey = er.data; else if (planCache && planCache.yield && b.input_kind !== 'whey') ey = planCache.yield;
+    const outIn = field('out', 'kg prodotto', 'number', { step: '0.1' });
+    if (ey) { const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
+      const upd = () => { const o = val('out'); h.textContent = `Attesi ≈ ${fmtKg(Math.round(b.milk_in_kg * ey.pct) / 100)} kg (resa ${String(ey.pct).replace('.', ',')}%${String(ey.source).startsWith('default') ? ', stimata' : ''})` + (o ? ` · con ${fmtKg(o)} kg la resa è ${String(Math.round(o / b.milk_in_kg * 1000) / 10).replace('.', ',')}%` : ''); };
+      outIn.addEventListener('input', upd); upd(); }
+    field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
     if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
       const out = val('out'), ph = val('ph'), n = val('n'), whey = byp ? (val('whey') || 0) : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
+      if (ey && Math.abs(y - ey.pct) > (ey.tolerance_pts ?? 4) && !current.yieldOk) {   // likely a typo in the kg: ask once
+        current.yieldOk = true;
+        toast(`Resa ${String(y).replace('.', ',')}% contro ${String(ey.pct).replace('.', ',')}% attesa: controlla i kg (prodotto e ${b.input_kind === 'whey' ? 'siero' : 'latte'}). Se è giusto premi Salva di nuovo.`, 'err');
+        throw new Error('confirm');
+      }
       const expS = addDays(today(), prod?.shelf_life_days || 5), code = current.code;
       const lotLink = [`🖨 Stampa ${n || 1} etichett${(n || 1) === 1 ? 'a' : 'e'} lotto ${b.batch_lot}`, labelUrl(b.batch_lot, prod?.name, 'scad. ' + ddmm(expS), n || 1)];
       const startRicotta = async () => {
