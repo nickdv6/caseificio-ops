@@ -8,6 +8,9 @@
 // heartbeat / watchdog and the go-live board notice when it stops.
 // Auth: x-backup-token header, checked against the Vault secret "backup_export_token".
 // Restore: tools/go-live/BACKUP-RESTORE.md in the repo.
+// v0.61: mode "fetch" { path } returns an existing backup file (base64 + sha256) to the caller, same token.
+//   The database calls it with fabula.backup_fetch_call(path); the answer lands in net._http_response,
+//   which is how a restore drill reads the real file without anyone handling the token or a service key.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -28,10 +31,19 @@ Deno.serve(async (req: Request) => {
   if (ok !== true) return json({ error: "forbidden" }, 403);
 
   let mode = "latest";
-  try {
-    const body = await req.json();
-    if (body?.mode === "nightly") mode = "nightly";
-  } catch { /* no body: latest */ }
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { /* no body: latest */ }
+  if (body?.mode === "nightly") mode = "nightly";
+
+  if (body?.mode === "fetch") {                       // v0.61: hand back a stored backup file (read-only, nothing logged)
+    const path = String(body.path ?? "backups/latest.json.gz");
+    if (!/^backups\/(latest|daily\/\d{4}-\d{2}-\d{2})\.json\.gz$/.test(path)) return json({ ok: false, error: "path non valido" }, 400);
+    const { data, error } = await sb.storage.from(BUCKET).download(path);
+    if (error || !data) return json({ ok: false, error: error?.message ?? "file non trovato", path }, 404);
+    const bytes = new Uint8Array(await data.arrayBuffer());
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    return json({ ok: true, path, bytes: bytes.byteLength, sha256: [...digest].map((b) => b.toString(16).padStart(2, "0")).join(""), b64: toBase64(bytes) });
+  }
 
   const { data: run } = await fab.from("agent_runs")
     .insert({ agent: "backup_export", status: "running", summary: `backup ${mode} in corso` })
@@ -113,6 +125,12 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, error: msg }, 500);
   }
 });
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
 
 async function gzip(text: string): Promise<Uint8Array> {
   const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
