@@ -182,10 +182,16 @@
   async function renderFarm() {
     const box = $('approvals'); if (!box) return;
     let el = $('farm-status'); if (!el) { el = document.createElement('div'); el.id = 'farm-status'; el.className = 'status'; el.style.margin = '0 0 10px'; box.parentNode.insertBefore(el, box); }
-    const { data } = await sb.from('milk_plans').select('plan_date, milk_kg, farm_seen_at').eq('status', 'approved').gte('plan_date', UI.romeISO()).order('plan_date').limit(1);
-    const m = data && data[0];
-    el.innerHTML = !m ? '' : `🥛 Latte ${esc(dShort(m.plan_date))}: ${num(m.milk_kg, 0)} kg · Masseria: ${m.farm_seen_at ? 'visto ' + new Date(m.farm_seen_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '<b class="ko">non ancora visto</b>'}`
-      + (FARM_LINK ? ` · <a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina ordini</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a>` : '');
+    const [pl, sh] = await Promise.all([
+      sb.from('milk_plans').select('plan_date, milk_kg, farm_seen_at').eq('status', 'approved').gte('plan_date', UI.romeISO()).order('plan_date').limit(1),
+      sb.from('milk_shipments').select('milk_lot, kg, shipped_at, status, received_at').order('shipped_at', { ascending: false }).limit(1)]);   // v0.65
+    const m = pl.data && pl.data[0], s = sh.data && sh.data[0];
+    const when = t => new Date(t).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    const parts = [];
+    if (s) parts.push(`🚚 Ultima spedizione Masseria: ${num(s.kg, 1)} kg (${esc(s.milk_lot)}, partita ${when(s.shipped_at)}) · ${s.status === 'received' ? 'ricevuta ' + when(s.received_at) : s.status === 'rejected' ? '<b class="ko">respinta</b>' : '<b class="ko">in viaggio: confermala all\'arrivo dal tablet</b>'}`);
+    if (m) parts.push(`🥛 Ordine ${esc(dShort(m.plan_date))}: ${num(m.milk_kg, 0)} kg · ${m.farm_seen_at ? 'visto ' + when(m.farm_seen_at) : '<b class="ko">non ancora visto</b>'}`);
+    if (FARM_LINK) parts.push(`<a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina Masseria</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a> · <a href="${esc(FARM_LINK)}&stampa=1" target="_blank" rel="noopener">stampa QR spedizioni</a>`);
+    el.innerHTML = (s || m) ? parts.join('<br>') : (FARM_LINK ? parts.join('') : '');
   }
   function renderHaccp(b, items) {
     const h = b.haccp || {};

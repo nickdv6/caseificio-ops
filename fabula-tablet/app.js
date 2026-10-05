@@ -456,6 +456,14 @@
   async function stepMilk(ddt) {
     const { data: sup } = await cached('milk_suppliers', () => sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true));
     if (!sup || !sup.length) throw new Error(navigator.onLine ? 'Nessun fornitore di latte attivo in anagrafica' : 'Senza rete e fornitori non ancora salvati sul tablet');
+    // v0.65: shipments the Masseria registered from its page (its weight is the source of truth): pick one, confirm arrival
+    let ships = [];
+    try { const r = await cached('milk_ships_pending', () => sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, supplier_id, ddt_number, temperature_c').eq('status', 'shipped').order('shipped_at', { ascending: false }).limit(10)); ships = r.data || []; } catch {}
+    const queuedShips = new Set(queue().flatMap(i => (i.ops || []).filter(o => o.table === 'milk_intake' && o.row && o.row.shipment_id).map(o => o.row.shipment_id)));
+    ships = ships.filter(x => !queuedShips.has(x.id));                     // already confirmed offline, still in the queue
+    const shipLabel = x => `${new Date(x.shipped_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })} · ${Number(x.kg).toLocaleString('it-IT')} kg · lotto ${x.milk_lot}`;
+    const shipSel = ships.length ? field('ship', 'Spedizione dalla Masseria', 'select', { options: [...ships.map(x => [x.id, shipLabel(x)]), ['', '— nessuna: altro fornitore o latte non registrato —']], required: false,
+      limit: 'Il peso registrato alla Masseria è quello che vale: qui confermi solo l\'arrivo e fai i controlli.' }) : null;
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
     const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
     const { data: cpT } = await cached('cp_CCP-MILK-TEMP', () => sb.from('haccp_control_points').select('*').eq('code', 'CCP-MILK-TEMP').maybeSingle());
@@ -463,6 +471,15 @@
     field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
     field('abx', 'Test antibiotici (CCP 1b)', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Test rapido prima dello scarico' });
     field('fat', 'Grasso % (se noto)', 'number', { step: '0.01', required: false }); field('prot', 'Proteine % (se note)', 'number', { step: '0.01', required: false }); field('scc', 'Cellule somatiche /ml (da analisi, se note)', 'number', { step: '1000', required: false }); field('photo', 'Foto DDT', 'file', { required: false });
+    const applyShip = () => {                                              // a chosen shipment fixes supplier, lot and kg
+      const x = ships.find(y => y.id === (shipSel && shipSel.value)), kgIn = $('kg'), lotF = $('lot');
+      if (x) { if (x.supplier_id && sup.some(y => y.id === x.supplier_id)) $('supplier').value = x.supplier_id;
+        kgIn.value = x.kg; lotF.value = x.milk_lot; if (x.ddt_number && !ddtIn.value) ddtIn.value = x.ddt_number; }
+      else if (kgIn.readOnly) { kgIn.value = ''; lotF.value = ''; }
+      [kgIn, lotF].forEach(e => { e.readOnly = !!x; e.style.background = x ? '#f1efe9' : ''; });
+      ddtIn.required = !x;                                                 // the farm may not have a DDT number for it
+    };
+    if (shipSel) { shipSel.onchange = applyShip; applyShip(); }
     // today's milk plan, if the planning bot made one (approved or still proposed)
     let planTxt = '';
     try { const { data: plan } = await sb.from('milk_plans').select('milk_kg, status').eq('plan_date', today()).in('status', ['proposed', 'approved']).maybeSingle();
@@ -471,8 +488,9 @@
       if (val('abx') === '') { toast('Registra l\'esito del test antibiotici', 'err'); throw new Error('abx'); }
       const ddtNo = String(val('ddtn') || '').trim().toUpperCase();
       // v0.59: lot labels are unique — a tank id used before (T1) gets the date (T1-0510, then T1-0510-2…) so intake never breaks
+      const shipId = (shipSel && shipSel.value) || null;
       let lotIn = String(val('lot') || '').trim();
-      if (lotIn) {
+      if (lotIn && !shipId) {
         const base = lotIn; let k = 0; const known = lotView().milk;
         while (k < 9) { const { count, error } = await live(sb.from('labels').select('id', { count: 'exact', head: true }).ilike('code', likeSafe('LOT:' + lotIn)));
           const taken = error ? known.some(x => lotEq(x.milk_lot, lotIn)) : !!count;   // offline: lots on the tablet
@@ -482,13 +500,13 @@
       }
       const hot = val('temp') > tMax, abxPos = val('abx') === '1', accepted = !hot && !abxPos;
       const why = [hot ? `temperatura > ${tMax} °C` : null, abxPos ? 'test antibiotici positivo' : null].filter(Boolean).join(' · ');
-      const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')) } }),
-        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet' } },
+      const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')), shipment_id: shipId } }),
+        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo || null, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet', shipment_id: shipId } },
         { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + lotIn, lot_number: lotIn, milk_intake_id: '$1.id', printed_by_id: staff.id } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: staff.id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: staff.id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
       await save(ops);
-      const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${ddtNo.replace(/[^A-Z0-9-]/g, '_')}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
+      const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${(ddtNo || lotIn).replace(/[^A-Za-z0-9-]/g, '_')}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
       toast(accepted ? (val('temp') > tWarn ? `Latte accettato · ${val('temp')} °C: iniziare la lavorazione entro 2 ore` : 'Latte registrato ✓') : 'Latte RIFIUTATO: ' + why, accepted && val('temp') <= tWarn ? 'ok' : 'err');
       const lotv = lotIn, kgv = val('kg'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
       if (!accepted) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, why, 'Isola il latte e avvisa la Masseria e il responsabile.'], []);

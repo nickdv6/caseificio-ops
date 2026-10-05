@@ -5,103 +5,190 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Ordine latte</title>
+<title>Latte · Masseria</title>
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
 <style>
-/* v0.64 · Milk order page for the Masseria: no login, private link latte.html?t=<token> (setting milk.farm_token).
-   Shows the approved milk orders and the ones still waiting for approval; "Visto" tells the dairy the farm saw it. */
-:root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--ok:#1f6b3a;--warn:#b3261e;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
+/* Masseria milk page — no login, private link latte.html?t=<token> (setting milk.farm_token).
+   v0.65: the farm records the kg it ships (its weight is the source of truth); the page shows the latest shipment with
+   its status at the dairy, the last 30 days and the month total. Orders from the dairy (v0.64) stay below.
+   ?azione=spedizione opens the shipment form straight away (that is what the QR at the farm points to).
+   ?stampa=1 prints the QR poster for the farm. */
+:root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--ok:#1f6b3a;--warn:#b3261e;--amber:#8a5a00;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.5 var(--body)}
-.box{max-width:520px;margin:0 auto;padding:24px 16px 48px}
+.box{max-width:540px;margin:0 auto;padding:24px 16px 48px}
 .rule{height:3px;width:48px;background:var(--gold);border-radius:2px;margin-bottom:12px}
 h1{font-family:var(--display);font-weight:600;font-size:1.6rem;margin:0}
-.sub{color:var(--muted);margin:2px 0 18px}
-h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
-.card{background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:16px;margin-bottom:10px;display:flex;align-items:center;gap:14px}
-.card.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
-.when{flex:1}
+.sub{color:var(--muted);margin:2px 0 16px}
+h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:24px 0 8px}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:16px;margin-bottom:10px}
+.row{display:flex;align-items:center;gap:14px}
+.grow{flex:1;min-width:0}
 .day{font-weight:600}
-.kg{font-family:var(--display);font-size:1.9rem;font-weight:600;line-height:1}
+.kg{font-family:var(--display);font-size:1.9rem;font-weight:600;line-height:1.05}
 .kg small{font-size:.9rem;font-family:var(--body);color:var(--muted);font-weight:400}
 .meta{color:var(--muted);font-size:.9rem}
-.btn{border:0;border-radius:6px;padding:10px 14px;font:600 .95rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer;white-space:nowrap}
+.pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:.85rem;font-weight:600;white-space:nowrap}
+.p-road{background:#fff4dc;color:var(--amber)}.p-ok{background:#e6f2ea;color:var(--ok)}.p-ko{background:#fbe9e7;color:var(--warn)}
+.btn{border:0;border-radius:8px;padding:12px 16px;font:600 1rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer;white-space:nowrap}
+.btn.big{width:100%;padding:16px;font-size:1.1rem}
+.btn.sec{background:transparent;color:var(--accent);border:1px solid var(--rule)}
 .btn:disabled{opacity:.5}
+label{display:block;font-size:.9rem;color:var(--muted);margin:12px 0 4px}
+input{width:100%;padding:12px;border:1px solid var(--rule);border-radius:8px;font:inherit;background:#fff}
+input.kgin{font-family:var(--display);font-size:2rem;font-weight:600;padding:10px 12px}
 .seen{color:var(--ok);font-weight:600;font-size:.9rem;white-space:nowrap}
-.pending{border-style:dashed}
-.pending .kg{color:var(--muted)}
+.hist{width:100%;border-collapse:collapse;font-size:.95rem}
+.hist td{padding:8px 4px;border-top:1px solid var(--rule)}
+.hist td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pending{border-style:dashed}.pending .kg{color:var(--muted)}
+.tot{display:flex;gap:10px}.tot .card{flex:1;margin:0}
 .empty{color:var(--muted);padding:6px 2px}
-.err{color:var(--warn);margin-top:14px}
+.err{color:var(--warn);margin-top:12px}.okmsg{color:var(--ok);font-weight:600}
 footer{color:var(--muted);font-size:.85rem;margin-top:26px}
+/* print poster */
+.poster{display:none;text-align:center;padding:40px 20px}
+.poster h1{font-size:2.2rem}.poster p{font-size:1.2rem;color:var(--muted)}
+#qr{display:inline-block;margin:24px auto;padding:16px;background:#fff;border:1px solid var(--rule);border-radius:12px}
+body.print .box{display:none}body.print .poster{display:block}
+@media print{body{background:#fff}.noprint{display:none}}
 </style>
 </head>
 <body>
 <div class="box">
   <div class="rule"></div>
-  <h1 id="co">Ordine latte</h1>
+  <h1 id="co">Latte · Masseria</h1>
   <div class="sub" id="sub">Un momento…</div>
   <div id="main" hidden>
-    <h2>Confermati</h2><div id="orders"></div>
-    <h2>Da confermare</h2><div id="pending"></div>
+    <button class="btn big" id="ship-open">＋ Registra spedizione</button>
+    <div class="card" id="ship-form" hidden>
+      <div class="day">Nuova spedizione al caseificio</div>
+      <div class="meta">Il peso che scrivi qui è quello che vale: il caseificio conferma solo l'arrivo.</div>
+      <label for="kg">Latte spedito (kg)</label><input id="kg" class="kgin" type="number" inputmode="decimal" step="any" min="1" max="5000" placeholder="es. 1050">
+      <label for="temp">Temperatura del latte alla partenza (°C, se misurata)</label><input id="temp" type="number" inputmode="decimal" step="0.1">
+      <label for="ddt">Numero DDT (se c'è)</label><input id="ddt" type="text" maxlength="40">
+      <label for="note">Note</label><input id="note" type="text" maxlength="300" placeholder="es. cisterna 2">
+      <div class="row" style="margin-top:14px"><button class="btn sec" id="ship-cancel">Annulla</button><button class="btn grow" id="ship-go">Registra spedizione</button></div>
+      <div class="err" id="ship-err"></div>
+    </div>
+    <div id="ship-ok" class="card" hidden></div>
+
+    <h2>Ultima spedizione</h2><div id="latest"></div>
+    <h2>Questo mese</h2><div class="tot" id="totals"></div>
+    <h2>Ultimi 30 giorni</h2><div class="card" style="padding:4px 12px"><table class="hist" id="hist"></table></div>
+    <h2>Ordini del caseificio</h2><div id="orders"></div><div id="pending"></div>
     <footer id="foot"></footer>
   </div>
   <div class="err" id="err"></div>
 </div>
+<div class="poster">
+  <div class="rule" style="margin:0 auto 12px"></div>
+  <h1 id="pco">Spedizione latte</h1>
+  <p>Inquadra il codice e scrivi i kg di latte caricati per il caseificio.</p>
+  <div id="qr"></div>
+  <p class="meta" id="purl"></p>
+  <button class="btn noprint" onclick="window.print()">🖨 Stampa</button>
+</div>
 <script src="config.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const token = new URLSearchParams(location.search).get('t') || '';
+  const q = new URLSearchParams(location.search), token = q.get('t') || '';
   const FN = window.FABULA_CONFIG.supabaseUrl + '/functions/v1/farm-order';
   const KEY = window.FABULA_CONFIG.supabaseKey;
-  const kg = n => Number(n).toLocaleString('it-IT', { maximumFractionDigits: 0 });
-  const dayName = (d, today) => {
-    const diff = Math.round((new Date(d + 'T12:00:00Z') - new Date(today + 'T12:00:00Z')) / 864e5);
-    const label = new Date(d + 'T12:00:00Z').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
-    return (diff === 0 ? 'Oggi · ' : diff === 1 ? 'Domani · ' : diff === -1 ? 'Ieri · ' : '') + label;
+  const kg = n => Number(n).toLocaleString('it-IT', { maximumFractionDigits: 1 });
+  const tm = ts => new Date(ts).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const dd = (d, today) => { const diff = Math.round((new Date(d + 'T12:00:00Z') - new Date(today + 'T12:00:00Z')) / 864e5);
+    return diff === 0 ? 'Oggi' : diff === 1 ? 'Domani' : diff === -1 ? 'Ieri' : new Date(d + 'T12:00:00Z').toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
+  const pill = s => s.status === 'received' ? `<span class="pill p-ok">Ricevuto ${s.received_at ? tm(s.received_at) : ''}</span>`
+    : s.status === 'rejected' ? `<span class="pill p-ko">Respinto</span>` : '<span class="pill p-road">In viaggio</span>';
+  const post = async body => { const r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body: JSON.stringify({ t: token, ...body }) });
+    const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'non salvato'); return d; };
+
+  if (!/^[0-9a-f]{16,64}$/i.test(token)) { $('sub').textContent = ''; $('err').textContent = 'Link non valido: chiedi al caseificio il link aggiornato.'; return; }
+  const shipUrl = location.origin + location.pathname + '?t=' + encodeURIComponent(token) + '&azione=spedizione';
+
+  if (q.get('stampa')) {                                   // QR poster for the farm
+    document.body.classList.add('print'); $('purl').textContent = 'oppure apri il link salvato sul telefono';
+    try { new QRCode($('qr'), { text: shipUrl, width: 280, height: 280, correctLevel: QRCode.CorrectLevel.M }); } catch { $('qr').textContent = shipUrl; }
+    return;
+  }
+
+  // ---- shipment form ----
+  const openForm = () => { $('ship-form').hidden = false; $('ship-open').hidden = true; $('ship-ok').hidden = true; $('ship-err').textContent = ''; setTimeout(() => $('kg').focus(), 50); };
+  $('ship-open').onclick = openForm;
+  $('ship-cancel').onclick = () => { $('ship-form').hidden = true; $('ship-open').hidden = false; };
+  let confirmKg = null;
+  $('ship-go').onclick = async () => {
+    const v = $('kg').value.trim().replace(',', '.'), k = Number(v);
+    if (!v || !(k > 0) || k > 5000) { $('ship-err').textContent = 'Scrivi i kg di latte spediti (tra 1 e 5.000).'; return; }
+    if (confirmKg !== k) { confirmKg = k; $('ship-err').textContent = ''; $('ship-go').textContent = `Confermo ${kg(k)} kg`; return; }   // second tap confirms the weight
+    $('ship-go').disabled = true;
+    try {
+      const d = await post({ action: 'ship', kg: k, temp: $('temp').value.trim() || null, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null });
+      $('ship-form').hidden = true; $('ship-open').hidden = false;
+      try { history.replaceState(null, '', location.pathname + '?t=' + encodeURIComponent(token)); } catch {}   // a reload doesn't reopen the form
+      ['kg', 'temp', 'ddt', 'note'].forEach(i => $(i).value = '');
+      $('ship-ok').hidden = false;
+      $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="meta">Lotto <b>${esc(d.shipment.milk_lot)}</b> · scrivilo sul DDT o sulla cisterna. Il caseificio conferma all'arrivo.</div>`;
+      load();
+    } catch (e) { $('ship-err').textContent = 'Non registrata: ' + e.message + '. Riprova.'; }
+    finally { $('ship-go').disabled = false; $('ship-go').textContent = 'Registra spedizione'; confirmKg = null; }
   };
+  $('kg').addEventListener('input', () => { confirmKg = null; $('ship-go').textContent = 'Registra spedizione'; });
+
   async function seen(d, btn) {
     btn.disabled = true;
-    try {
-      const r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body: JSON.stringify({ t: token, plan_date: d }) });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'non salvato');
-      btn.replaceWith(Object.assign(document.createElement('span'), { className: 'seen', textContent: '✓ Visto' }));
-    } catch (e) { btn.disabled = false; $('err').textContent = 'Non salvato: ' + e.message + '. Riprova.'; }
+    try { await post({ plan_date: d }); btn.replaceWith(Object.assign(document.createElement('span'), { className: 'seen', textContent: '✓ Visto' })); }
+    catch (e) { btn.disabled = false; $('err').textContent = 'Non salvato: ' + e.message + '. Riprova.'; }
   }
   async function load() {
-    if (!/^[0-9a-f]{16,64}$/i.test(token)) { $('sub').textContent = ''; $('err').textContent = 'Link non valido: chiedi al caseificio il link aggiornato.'; return; }
     try {
       const r = await fetch(FN + '?t=' + encodeURIComponent(token), { headers: { apikey: KEY } });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'errore');
-      $('co').textContent = 'Ordine latte · ' + (d.company || '');
-      document.title = 'Ordine latte · ' + (d.company || '');
+      $('co').textContent = 'Latte per ' + (d.company || 'il caseificio'); document.title = 'Latte · ' + (d.company || '');
       $('sub').textContent = 'Aggiornato ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ' · la pagina si aggiorna da sola';
+      const sh = d.shipments || [];
+      // latest shipment
+      const L = sh[0];
+      $('latest').innerHTML = !L ? '<div class="empty">Nessuna spedizione registrata negli ultimi 30 giorni.</div>' :
+        `<div class="card"><div class="row"><div class="grow"><div class="day">${esc(dd(L.ship_date, d.today))} · partito alle ${tm(L.shipped_at)}</div>
+          <div class="kg">${kg(L.kg)} <small>kg</small></div>
+          <div class="meta">Lotto ${esc(L.milk_lot)}${L.temperature_c != null ? ' · ' + kg(L.temperature_c) + ' °C alla partenza' : ''}${L.ddt_number ? ' · DDT ' + esc(L.ddt_number) : ''}</div>
+          ${L.status === 'received' && L.arrival_temp_c != null ? `<div class="meta">All'arrivo: ${kg(L.arrival_temp_c)} °C</div>` : ''}
+          ${L.status === 'rejected' ? `<div class="err" style="margin-top:4px">Respinto: ${esc(L.rejection_reason || 'non conforme')}</div>` : ''}
+          </div>${pill(L)}</div></div>`;
+      const m = d.month || {};
+      $('totals').innerHTML = `<div class="card"><div class="meta">Ricevuto dal caseificio</div><div class="kg">${kg(m.received_kg || 0)} <small>kg</small></div><div class="meta">${m.shipments || 0} ${m.shipments === 1 ? 'spedizione' : 'spedizioni'}</div></div>
+        <div class="card"><div class="meta">Mese scorso</div><div class="kg">${kg(m.prev_received_kg || 0)} <small>kg</small></div></div>`;
+      $('hist').innerHTML = sh.length ? sh.map(s => `<tr><td>${esc(dd(s.ship_date, d.today))} ${tm(s.shipped_at)}<div class="meta">${esc(s.milk_lot)}</div></td><td class="n">${kg(s.kg)} kg</td><td class="n">${pill(s)}</td></tr>`).join('')
+        : '<tr><td class="empty">Ancora niente.</td></tr>';
+      // orders from the dairy
       const o = $('orders'); o.innerHTML = '';
       (d.orders || []).forEach(x => {
-        const c = document.createElement('div'); c.className = 'card' + (x.plan_date === d.today ? ' today' : '');
-        c.innerHTML = `<div class="when"><div class="day">${esc(dayName(x.plan_date, d.today))}</div><div class="kg">${kg(x.milk_kg)} <small>kg di latte</small></div></div>`;
+        const c = document.createElement('div'); c.className = 'card row';
+        c.innerHTML = `<div class="grow"><div class="day">${esc(dd(x.plan_date, d.today))}</div><div class="kg">${kg(x.milk_kg)} <small>kg richiesti</small></div></div>`;
         if (x.seen_at) c.append(Object.assign(document.createElement('span'), { className: 'seen', textContent: '✓ Visto' }));
-        else if (x.plan_date >= d.today) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Visto'; b.onclick = () => seen(x.plan_date, b); c.append(b); }
+        else { const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Visto'; b.onclick = () => seen(x.plan_date, b); c.append(b); }
         o.append(c);
       });
-      if (!(d.orders || []).length) o.innerHTML = '<div class="empty">Nessun ordine confermato per i prossimi giorni.</div>';
       const p = $('pending'); p.innerHTML = '';
       (d.pending || []).forEach(x => {
-        const c = document.createElement('div'); c.className = 'card pending';
         const by = x.decide_by ? ' · conferma entro ' + new Date(x.decide_by).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '';
-        c.innerHTML = `<div class="when"><div class="day">${esc(dayName(x.plan_date, d.today))}</div><div class="kg">≈ ${kg(x.milk_kg)} <small>kg previsti</small></div><div class="meta">Non ancora confermato${esc(by)}</div></div>`;
-        p.append(c);
+        p.insertAdjacentHTML('beforeend', `<div class="card pending"><div class="day">${esc(dd(x.plan_date, d.today))}</div><div class="kg">≈ ${kg(x.milk_kg)} <small>kg previsti</small></div><div class="meta">Non ancora confermato${esc(by)}</div></div>`);
       });
-      if (!(d.pending || []).length) p.innerHTML = '<div class="empty">Niente in attesa.</div>';
-      $('foot').textContent = d.receiving_hours ? 'Orari di ricevimento latte: ' + d.receiving_hours : '';
+      if (!(d.orders || []).length && !(d.pending || []).length) o.innerHTML = '<div class="empty">Nessun ordine per i prossimi giorni.</div>';
+      $('foot').textContent = d.receiving_hours ? 'Orari di ricevimento latte al caseificio: ' + d.receiving_hours : '';
       $('main').hidden = false; $('err').textContent = '';
     } catch (e) { $('err').textContent = 'Pagina non disponibile: ' + e.message + '.'; }
   }
-  load(); setInterval(load, 5 * 60000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  load().then(() => { if (q.get('azione') === 'spedizione') openForm(); });
+  setInterval(() => { if ($('ship-form').hidden) load(); }, 2 * 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && $('ship-form').hidden) load(); });
 })();
 </script>
 </body>
