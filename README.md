@@ -27,6 +27,10 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
 - Milk order to the Masseria (v0.64): approved milk plans appear on the farm's private page `latte.html?t=<milk.farm_token>`
   (edge function `farm-order`, no login; change the setting to switch an old link off). The farm taps "Visto"; the Console
   shows the next order and whether it was seen, with the link to copy.
+- Masseria shipments (v0.65): the farm records each load on its page (QR poster: latte.html?t=…&stampa=1 → opens
+  `&azione=spedizione`); the farm's kg is the source of truth and each load gets a lot M<yymmdd>-<n>. The tablet's milk
+  intake lists loads still in transit: picking one locks kg/lot/supplier (trigger `milk_intake_shipment_check` enforces it
+  and blocks a second receipt); saving marks the load received or rejected, which the farm sees on its page.
 - Sell-down promos (v0.64): the sell-down bot pre-creates a random Shopify code per promo it proposes (ends 20:00); the tablet
   shows it only once Nick approves; approving writes two approved posts (WhatsApp "oggi al banco", Instagram story).
 - Consorzio DOP declaration (v0.63): pg_cron runs `consorzio_declaration()` on the 1st (05:30 UTC); it lands in Console → Oggi
