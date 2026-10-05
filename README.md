@@ -64,6 +64,8 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
 - Database: closing stores `yield_expected_pct`; a yield outside the tolerance sets `yield_flag` bassa/alta and posts a
   message from "Zio Ciro · Resa produzione" (agent `produzione`, its own card in Configurazione → Bot).
 - Tests: `tools/go-live/drill/prod-test/test_production_plan.sql` (19), `tools/go-live/drill/tablet-test/prod_e2e.py` (13).
+- `prod.vat_kg` = capacity of the Fortino mini caseificio ("TINO"), not yet read: 800 is a placeholder (the Fortino 800 L offer in
+  the project is a reference quote, not the machine in the sale — v0.70c). Machine tags from the 05/10 site photos are in `fabula.equipment`.
 
 ## Self-healing bots (v0.69)
 - pg_cron `fabula_bot_fallback` (every 5 min) runs `fabula.bot_fallback()`: when a bot in `fabula.bot_fallback_agents()` has not
