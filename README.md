@@ -52,6 +52,13 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Outside watcher (v0.78)
+GitHub Actions `.github/workflows/watch.yml` runs `tools/watch/check.sh` at :07 and :37 every hour, outside Supabase, the bots
+and Claude: tablet site serves the app, `public.fabula_health()` (public key; returns only `db`, `cron_ok` = pg_cron ran in
+the last 20 min, `backup_ok` = backup in the last 26 h) and edge function `farm-order` answers 403 without token. A failure
+is re-checked after 3 minutes; a confirmed one fails the run, and GitHub e-mails the repo owner (GitHub → Settings →
+Notifications → Actions). Run it by hand from the repo's Actions tab ("Run workflow").
+
 ## Trial week, paper back-up, recall drill in the console (v0.77)
 - **Trial week:** set `trial.start` (Configurazione → Parametri) to day 1. `fabula.trial_check(day)` lists the 12 daily steps
   (milk + temperature, antibiotics, pasteuriser check, pasteurisation, batches closed, stretching per lot, cold rooms ×2,

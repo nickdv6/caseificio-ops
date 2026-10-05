@@ -1,0 +1,22 @@
+# v0.78 outside watcher: every 30 minutes GitHub checks the tablet site, the database, pg_cron, the nightly backup and
+# an edge function (tools/watch/check.sh). Independent of Supabase, the bots and Claude. When a problem is confirmed
+# twice, the run fails and GitHub e-mails the repo owner (Settings → Notifications → Actions: "Send notifications for
+# failed workflows only").
+name: Outside watcher
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: watch
+  cancel-in-progress: false
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check site, database, scheduler, backup
+        run: bash tools/watch/check.sh
