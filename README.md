@@ -20,7 +20,13 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
 ## Operating decisions encoded in the database (v0.39)
 - Milk price: setting `milk.price_eur_kg` (1.70, confirmed by Nick 05/10 after a stray edit to 1.6). Every intake without a price takes it; all cost reports read it.
 - Milk is **pasteurised** (`food.milk_process` = pastorizzato): CCP 2 is required on every mozzarella lot.
-- Website and Shopify POS sell even at zero stock ("continue selling"); `shopify.push_inventory` = 0.
+- Website and Shopify POS sell even at zero stock ("continue selling"). Stock sync (v0.63): `shopify.push_inventory` = 2 —
+  report-only until the opening stock count is posted, then the Giacenze bot updates Shopify by itself (`fabula.shopify_push_enabled()`).
+  The mozzarella pool is split across the 16 variants: 80 % by kg sold in the last 28 days, 20 % equal (`shopify.mix_weight`),
+  equal split while nothing has sold; the pieces offered never add up to more than the pool (`v_shopify_inventory_push`).
+- Consorzio DOP declaration (v0.63): pg_cron runs `consorzio_declaration()` on the 1st (05:30 UTC); it lands in Console → Oggi
+  with the disciplinare checks (60 h, fat/protein, DOP suppliers, traceability) and a fee estimate (`dop.consorzio_eur_kg`, estimate).
+  Approving it closes the month's T-DOP task. Sending it to the Consorzio stays manual until the official format is known.
   Paid web orders not yet shipped count as demand for the next production day (`v_preorder_demand`).
 - Lot guard: system-allocated sales never drive a lot below zero (FEFO, then unassigned + notice);
   scanned sales keep the scanned lot and raise a notice to check the batch output weight.

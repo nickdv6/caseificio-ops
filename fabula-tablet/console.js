@@ -152,7 +152,21 @@
       }
       case 'dop_declaration':
         title = `Dichiarazione Consorzio ${esc(p.month || '')}`;
-        facts = fact('Latte lavorato', `${num(p.milk_processed_kg, 0)} <small>kg</small>`) + fact('Mozzarella DOP', `${num(p.mozzarella_dop_kg, 0)} <small>kg</small>`) + fact('Lotti', esc(p.batches ?? '—')) + fact('Etichette', num(p.labels_printed, 0)) + fact('Venduto', `${num(p.sold_kg, 0)} <small>kg</small>`);
+        facts = fact('Latte lavorato', `${num(p.milk_processed_kg, 0)} <small>kg</small>`) + fact('Mozzarella DOP', `${num(p.mozzarella_dop_kg, 0)} <small>kg</small>`) + fact('Lotti', esc(p.batches ?? '—')) + fact('Etichette', num(p.labels_printed, 0)) + fact('Venduto', `${num(p.sold_kg, 0)} <small>kg</small>`)
+          + (p.fees_estimate_eur ? fact('Contributo stimato', `€ ${num(Number(p.fees_estimate_eur.consorzio || 0) + Number(p.fees_estimate_eur.rina_variable || 0), 2)}`) : '')
+          + (Array.isArray(p.issues) ? fact('Controlli disciplinare', p.issues.length ? `${p.issues.length} da vedere` : 'tutto ok', p.issues.length ? 'ko' : '') : '');
+        {   // v0.63: what the Consorzio/RINA will ask about, then how to send it
+          const iss = Array.isArray(p.issues) ? p.issues : [];
+          const one = x => typeof x !== 'object' || !x ? esc(x)
+            : x.hours != null ? `${esc(x.lot)} (latte ${esc(x.milk_lot)}, ${num(x.hours, 0)} h)`
+            : x.fat_pct !== undefined ? `${esc(x.milk_lot)} del ${esc(x.date)}: grasso ${num(x.fat_pct, 2)} %, proteine ${num(x.protein_pct, 2)} %`
+            : Object.values(x).map(v => esc(v)).join(' · ');
+          const det = d => Array.isArray(d) ? d.slice(0, 8).map(one).join('; ') : '';
+          more = `<details${iss.length ? ' open' : ''}><summary>Controlli e invio</summary>`
+            + (iss.length ? iss.map(i => `<div class="ko">• ${esc(i.it)}: ${esc(i.n)}${det(i.detail) ? ` <small>(${det(i.detail)})</small>` : ''}</div>`).join('') : '<div class="status">Nessun problema su 60 h, grasso/proteine, fornitori DOP e tracciabilità.</div>')
+            + ((p.by_product || []).length ? `<div>${p.by_product.map(x => `${esc(x.product)}: ${num(x.kg, 0)} kg in ${esc(x.batches)} lotti`).join(' · ')}</div>` : '')
+            + `<div class="status">${esc(p.note || '')} Approvando, il compito "Dichiarazione produzione Consorzio" del mese si chiude.</div></details>`;
+        }
         break;
     }
     const [klabel, kcls] = KIND[type] || KIND.other;
