@@ -52,6 +52,23 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Infra & security autopilot (v0.68)
+- **Hourly monitor** (pg_cron `fabula_infra_probe` :40 → `fabula_infra_collect` :43 UTC): reads GitHub main of the public repo
+  (`infra.github_repo`: migration list, `fabula-tablet/sw.js`, last commit), the Netlify site (`infra.site_url` → `/sw.js`) and
+  the `farm-order` / `backup-export` functions (a wrong token must give 403). Results in `fabula.infra_status`.
+- **Board checks now automatic** (`fabula.infra_checks()`): code_pushed (every live migration is on GitHub), repo_sync (exact match),
+  app_deployed (Netlify serves the sw version on GitHub), restore_tested (an ok `agent_runs` row `restore_drill` in the last
+  100 days), advisors_clean, uptime. Never tick these by hand: push, deploy or run the drill and the board follows within an hour.
+- **Notices**: `infra_uptime` (alert, down on 2 checks in a row), `infra_drift` (GitHub / Netlify / live database out of step > 6 h),
+  `infra_security`, `infra_advisors`.
+- **Security scan** `fabula.security_scan()` (hourly): the Supabase security-advisor lints in SQL + anon table grants + public buckets.
+  Anything not in `fabula.security_accepted` raises `infra_security`. A deliberate exception gets a row there (key `<lint>:<object>`,
+  reason) in a migration. `create or replace view` drops `security_invoker` — always write `with (security_invoker = true)`.
+  The nightly system-check bot sends the real advisor's lint counts to `fabula.infra_record_advisors()`, which flags lints the SQL
+  scan doesn't cover (accept with key `advisor:<lint>`) or counts that differ.
+- **Backup v3** adds `auth_users` (no passwords) and `storage_manifest` to every file (`restore_backup.py logins|files`).
+- One-time paste for Nick: `tools/go-live/sql-editor/save_ledger_trim.sql`. Test kit: `tools/go-live/drill/infra-test/`.
+
 ## Manuale di Autocontrollo (v0.57)
 - The legally required HACCP self-control manual is the Claude Doc "Manuale di Autocontrollo — Caseificio di Agropoli"
   (link in setting `food.manuale_url`; revision/date/status in `food.manuale_rev`, `food.manuale_data`, `food.manuale_stato`).

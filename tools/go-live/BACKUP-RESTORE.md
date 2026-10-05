@@ -21,8 +21,12 @@ Supabase → Project Settings → **Vault** → *Add new secret* — name `backu
 { "format": "la-perla-backup/1", "project": "ojkquhzaeypsphncjqwy", "schema": "fabula",
   "mode": "latest|nightly", "exported_at": "ISO time", "rome_day": "YYYY-MM-DD",
   "counts": { "<table>": n, ... },
-  "tables": { "<table>": [ {row}, ... ], ... } }
+  "tables": { "<table>": [ {row}, ... ], ... },
+  "auth_users": [ {id, email, created_at, last_sign_in_at, …, staff: {id, full_name, app_role, active}} ],   // v0.68, no passwords
+  "storage_manifest": [ {bucket, name, size, mimetype, etag, updated_at} ] }                                   // v0.68, files listed, not copied
 ```
+`python3 tools/go-live/restore_backup.py logins latest.json.gz` and `… files latest.json.gz` print the two lists
+(who to re-invite; which Storage files existed). Backups taken before v0.68 don't have them.
 
 ## Restore drill — tested 05/10/2026 ✅
 The real `backups/latest.json.gz` (taken 02:27 UTC, 79,722 bytes, 93 tables, 1,017 rows) was restored into a scratch
@@ -67,7 +71,8 @@ significant digits would be rounded — none exist in the data today.
    inserts only the rows whose id is missing and never deletes or overwrites anything.
 4. **Check:** `python3 tools/go-live/restore_backup.py verify latest.json.gz --db "…"` (row counts vs the backup; per-table
    checksums written to `restored_checksums.json`).
-5. Re-invite users, re-upload any needed files, re-add the Vault secret, run `select fabula.backup_export_call('latest');`
+5. Re-invite users (`restore_backup.py logins` lists who had a login and their staff row; after they accept, `staff.auth_user_id`
+   is re-linked by email), re-upload the files listed by `restore_backup.py files`, re-add the Vault secret, run `select fabula.backup_export_call('latest');`
    and confirm a new `backup_export` run with status ok.
 
 ## Repeating the drill (every 3 months — scheduled 5 Jan / Apr / Jul / Oct)
@@ -79,6 +84,8 @@ Everything needed is in `tools/go-live/drill/`:
    empty database from every migration (stubbed Supabase platform: `drill/bootstrap.sql`), restores the backup, checks row
    counts and checksums against live, checks every foreign key for orphan rows and runs `ops_dashboard()` on the copy.
    Expected: 0 migration failures, row counts equal, a handful of tables differing only as explained above, 0 orphans.
-4. Update the "Restore drill" table above with the date and numbers, and the go-live board check `restore_tested`.
+4. Record the result as one `agent_runs` row with `agent = 'restore_drill'` (status ok/error, summary, details) — since v0.68 the
+   go-live board check `restore_tested` reads it: green for 100 days after a passing drill, red after a failed one.
+   Update the "Restore drill" table above too when you can push to the repo.
 
 Repeat it also after big schema changes. The same check can be run on a Supabase branch instead of a local Postgres.

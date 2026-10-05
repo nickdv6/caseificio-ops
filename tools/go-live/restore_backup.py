@@ -16,6 +16,10 @@ Usage
   # 3) check a database against the backup (row counts + per-table checksums of the restored rows)
   python3 restore_backup.py verify latest.json.gz --db "…"
 
+  # 4) (v0.68) who had a login and which files were stored at backup time
+  python3 restore_backup.py logins latest.json.gz   # email · staff name · role · last sign-in → re-invite these people
+  python3 restore_backup.py files latest.json.gz    # bucket/name · size · type → what to copy back into Storage
+
 What the restore does
   * one transaction; session_replication_role = replica, so triggers (audit log, stock guard, bot messages, staff guard…)
     don't fire and foreign keys aren't checked while the tables are refilled in any order;
@@ -24,8 +28,9 @@ What the restore does
   * partial restore (--tables): inserts only the backup rows whose primary key is missing (on conflict do nothing);
   * moves every serial/identity sequence past the highest restored id.
 
-Not in the backup (restore separately): Supabase Auth users (logins: staff.auth_user_id points to them), Storage files
-(DDT photos, lab certificates, the backups themselves), Vault secrets, pg_cron jobs (in the migrations), edge function secrets.
+Not in the backup (restore separately): passwords (since v0.68 the list of logins is in `auth_users`: re-invite the people and
+re-link staff.auth_user_id by email), Storage files themselves (since v0.68 their list is in `storage_manifest`), Vault secrets,
+pg_cron jobs (in the migrations), edge function secrets.
 """
 import argparse, gzip, json, os, secrets, subprocess, sys
 
@@ -113,7 +118,7 @@ def psql(db, sql):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('action', choices=['sql', 'load', 'verify', 'counts'])
+    ap.add_argument('action', choices=['sql', 'load', 'verify', 'counts', 'logins', 'files'])
     ap.add_argument('backup')
     ap.add_argument('--db', default=os.environ.get('DATABASE_URL'))
     ap.add_argument('--tables', help='comma-separated table names (default: all tables in the backup)')
@@ -124,6 +129,19 @@ def main():
         for t in sorted(b['tables']):
             print(f"{t}\t{len(b['tables'][t])}")
         return
+    if a.action == 'logins':
+        users = b.get('auth_users')
+        if users is None: sys.exit('this backup predates v0.68: no list of logins')
+        for u in users:
+            st = u.get('staff') or {}
+            print(f"{u.get('email')}\t{st.get('full_name') or '-'}\t{st.get('app_role') or '-'}\t{'active' if st.get('active') else 'inactive' if st else 'no staff row'}\tlast sign-in {u.get('last_sign_in_at') or 'never'}")
+        print(f"{len(users)} logins", file=sys.stderr); return
+    if a.action == 'files':
+        files = b.get('storage_manifest')
+        if files is None: sys.exit('this backup predates v0.68: no file list')
+        for f in files:
+            print(f"{f['bucket']}/{f['name']}\t{f.get('size')}\t{f.get('mimetype') or ''}\t{f.get('updated_at') or ''}")
+        print(f"{len(files)} files, {sum(int(f.get('size') or 0) for f in files)} bytes", file=sys.stderr); return
     if a.action == 'sql':
         sys.stdout.write(restore_sql(b, tables)); return
     if not a.db:

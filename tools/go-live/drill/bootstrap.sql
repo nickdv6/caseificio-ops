@@ -23,8 +23,12 @@ create table cron.job_run_details (runid bigserial primary key, jobid bigint, st
 create function cron.schedule(job_name text, schedule text, command text) returns bigint language sql as $$ insert into cron.job(jobname, schedule, command) values (job_name, schedule, command) on conflict (jobname) do update set schedule = excluded.schedule, command = excluded.command returning jobid $$;
 create function cron.schedule(schedule text, command text) returns bigint language sql as $$ insert into cron.job(schedule, command) values (schedule, command) returning jobid $$;
 create function cron.unschedule(job_name text) returns boolean language sql as $$ with d as (delete from cron.job where jobname = job_name returning 1) select count(*) > 0 from d $$;
-create function net.http_post(url text, body jsonb default '{}', params jsonb default '{}', headers jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ select 1::bigint $$;
-create function net.http_get(url text, params jsonb default '{}', headers jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ select 1::bigint $$;
+-- v0.68: pg_net stub keeps each request (net.http_request_queue) and answers come from net._http_response (tests insert them)
+create sequence net.request_seq;
+create table net.http_request_queue (id bigint primary key, method text, url text, headers jsonb, body jsonb, created timestamptz default now());
+create table net._http_response (id bigint primary key, status_code int, content_type text, headers jsonb, content text, timed_out boolean, error_msg text, created timestamptz default now());
+create function net.http_post(url text, body jsonb default '{}', params jsonb default '{}', headers jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ insert into net.http_request_queue(id, method, url, headers, body) values (nextval('net.request_seq'), 'POST', url, headers, body) returning id $$;
+create function net.http_get(url text, params jsonb default '{}', headers jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ insert into net.http_request_queue(id, method, url, headers) values (nextval('net.request_seq'), 'GET', url, headers) returning id $$;
 create table vault.secrets (id uuid primary key default gen_random_uuid(), name text unique, secret text, description text, created_at timestamptz default now());
 create view vault.decrypted_secrets as select id, name, secret, secret as decrypted_secret, description, created_at from vault.secrets;
 create function vault.create_secret(secret text, name text default null, description text default '') returns uuid language sql as $$ insert into vault.secrets(secret, name, description) values (secret, name, description) returning id $$;

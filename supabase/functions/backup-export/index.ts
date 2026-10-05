@@ -1,4 +1,4 @@
-// backup-export — off-database copy of the La Perla ops data (v0.43, 03/10/2026)
+// backup-export — off-database copy of the La Perla ops data (v0.43, 03/10/2026; v3 logins + file list, v0.68 05/10/2026)
 //
 // Called by pg_cron through fabula.backup_export_call(mode):
 //   mode "latest"  every 2 h on working days → documents/backups/latest.json.gz (overwritten)
@@ -11,6 +11,11 @@
 // v0.61: mode "fetch" { path } returns an existing backup file (base64 + sha256) to the caller, same token.
 //   The database calls it with fabula.backup_fetch_call(path); the answer lands in net._http_response,
 //   which is how a restore drill reads the real file without anyone handling the token or a service key.
+// v0.68: the file also carries
+//   auth_users       — every login (fabula.backup_auth_users(): id, email, dates, metadata, linked staff row; NO password hashes:
+//                      after a restore into a new project people are re-invited and staff.auth_user_id is re-linked by email)
+//   storage_manifest — every stored file except backups/ (fabula.backup_storage_manifest(): bucket, name, size, mimetype, eTag)
+//   so a restore knows exactly which logins and files existed. The files themselves are not copied.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -73,6 +78,15 @@ Deno.serve(async (req: Request) => {
       counts[t] = rows.length;
     }
 
+    // v0.68: logins (no passwords) and the list of stored files
+    const { data: authUsers, error: uErr } = await fab.rpc("backup_auth_users");
+    if (uErr) throw new Error("auth users: " + uErr.message);
+    const { data: manifest, error: mErr } = await fab.rpc("backup_storage_manifest");
+    if (mErr) throw new Error("storage manifest: " + mErr.message);
+    const logins = (authUsers ?? []) as unknown[];
+    const files = (manifest ?? []) as { size?: number }[];
+    const fileBytes = files.reduce((a, f) => a + (Number(f.size) || 0), 0);
+
     const exportedAt = new Date();
     const romeDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome" }).format(exportedAt);
     const payload = JSON.stringify({
@@ -84,6 +98,8 @@ Deno.serve(async (req: Request) => {
       rome_day: romeDay,
       counts,
       tables: out,
+      auth_users: logins,
+      storage_manifest: files,
     });
     const gz = await gzip(payload);
 
@@ -97,8 +113,8 @@ Deno.serve(async (req: Request) => {
     let pruned = 0;
     if (mode === "nightly") {
       const cutoff = new Date(exportedAt.getTime() - KEEP_DAYS * 86400000).toISOString().slice(0, 10);
-      const { data: files } = await sb.storage.from(BUCKET).list("backups/daily", { limit: 1000 });
-      const old = (files ?? []).map((f) => f.name).filter((n) => /^\d{4}-\d{2}-\d{2}\.json\.gz$/.test(n) && n.slice(0, 10) < cutoff);
+      const { data: dailyFiles } = await sb.storage.from(BUCKET).list("backups/daily", { limit: 1000 });
+      const old = (dailyFiles ?? []).map((f) => f.name).filter((n) => /^\d{4}-\d{2}-\d{2}\.json\.gz$/.test(n) && n.slice(0, 10) < cutoff);
       if (old.length) {
         await sb.storage.from(BUCKET).remove(old.map((n) => `backups/daily/${n}`));
         pruned = old.length;
@@ -107,11 +123,11 @@ Deno.serve(async (req: Request) => {
 
     const totalRows = Object.values(counts).reduce((a, b) => a + b, 0);
     const kb = Math.round(gz.byteLength / 1024);
-    const summary = `backup ${mode}: ${Object.keys(counts).length} tabelle, ${totalRows} righe, ${kb} KB → ${paths.join(", ")}` + (pruned ? `, ${pruned} vecchi rimossi` : "");
+    const summary = `backup ${mode}: ${Object.keys(counts).length} tabelle, ${totalRows} righe, ${logins.length} login, ${files.length} file elencati, ${kb} KB → ${paths.join(", ")}` + (pruned ? `, ${pruned} vecchi rimossi` : "");
     if (runId) {
       await fab.from("agent_runs").update({
         status: "ok", finished_at: new Date().toISOString(), summary,
-        details: { mode, paths, kb, total_rows: totalRows, counts, pruned },
+        details: { mode, paths, kb, total_rows: totalRows, counts, pruned, logins: logins.length, files: files.length, file_bytes: fileBytes },
       }).eq("id", runId);
     }
     return json({ ok: true, summary });
