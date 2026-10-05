@@ -281,10 +281,19 @@
   }
   async function loadTasks() {
     loadSellDown(); loadNotices(); loadShifts(); loadShipCount(); loadPlan();
-    const { data, error } = await sb.from('v_tasks_open').select('*');
+    let { data, error } = await sb.from('v_tasks_open').select('*');
     const box = $('tasks'); box.innerHTML = '';
-    if (error) { box.textContent = 'Lista non disponibile offline'; return; }
-    if (!data.length) { box.textContent = 'Tutto fatto ✓'; return; }
+    // v0.78: the last list is kept on the tablet, so the day's tasks still show without network
+    const TK = 'perla_tasks_v1';
+    if (!error && data) { try { localStorage.setItem(TK, JSON.stringify({ at: Date.now(), day: today(), data })); } catch {} }
+    else {
+      let c = null; try { c = JSON.parse(localStorage.getItem(TK) || 'null'); } catch {}
+      if (!c || c.day !== today()) { box.textContent = 'Lista non disponibile senza rete (non ancora salvata oggi su questo tablet)'; return; }
+      const done = new Set(queue().flatMap(i => (i.ops || []).filter(o => o.rpc === 'close_open_task').map(o => (o.args || {}).p_control_point_id || (o.args || {}).p_code || (o.args || {}).p_equipment_id)));
+      data = c.data.filter(t => !done.has(t.code) && !done.has(t.control_point_id) && !done.has(t.equipment_id));
+      const n = document.createElement('div'); n.className = 'code'; n.textContent = `Senza rete: elenco delle ${hhmm(c.at)} · le attività fatte ora si chiudono al ritorno della rete`; box.append(n);
+    }
+    if (!data.length) { box.append('Tutto fatto ✓'); return; }
     data.forEach(t => {
       const d = document.createElement('div'); d.className = 'task ' + t.status;
       d.innerHTML = `<div><div>${esc(t.title_it)}</div><div class="code">${esc(t.equipment_code || t.code)}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
@@ -312,12 +321,13 @@
   }
   async function warmRefs() {                       // after login, in the background: one read per list
     try {
-      const [eq, cps, sup, pest] = await Promise.all([sb.from('equipment').select('*').eq('active', true), sb.from('haccp_control_points').select('*').eq('active', true),
-        sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true), sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code')]);
+      const [eq, cps, sup, pest, cust] = await Promise.all([sb.from('equipment').select('*').eq('active', true), sb.from('haccp_control_points').select('*').eq('active', true),
+        sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true), sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code'),
+        sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name')]);
       const patch = {};
       (eq.data || []).forEach(e => { patch['eq_' + e.code] = e; });
       (cps.data || []).forEach(c => { patch['cp_' + c.code] = c; if (c.equipment_id && c.code !== 'CCP-MILK-TEMP') patch['cp_eq_' + c.equipment_id] = c; });
-      if (sup.data) patch.milk_suppliers = sup.data; if (pest.data) patch.pest_stations = pest.data;
+      if (sup.data) patch.milk_suppliers = sup.data; if (pest.data) patch.pest_stations = pest.data; if (cust.data) patch.customers = cust.data;   // v0.78
       putRef(patch);
     } catch (e) { /* offline: keep what we have */ }
   }
@@ -611,7 +621,7 @@
     if (milk && !batch) lot = milk.milk_lot;            // the stored spelling, for the stock move
     if (batch) {
       if (batch.output_kg == null) return stepBatchWork(batch);   // open batch → working steps, then close
-      if (off) throw new Error(`Lotto ${batch.batch_lot} chiuso: la spedizione diretta richiede la rete`);
+      if (batch.food_safety_hold) throw new Error(`Lotto ${batch.batch_lot} BLOCCATO (${batch.hold_reason || 'sicurezza alimentare'}): non si spedisce`);   // v0.78: offline too (the device copy keeps the hold)
       return stepPick(batch);
     }
     if (!milk) throw new Error('Lotto sconosciuto: ' + lot + (off ? ` (senza rete il tablet conosce i lotti degli ultimi ${LOT_DAYS} giorni)` : ''));
@@ -687,7 +697,8 @@
     });
   }
   async function stepBatchEnd(b) {
-    if (!b.id) throw new Error(`Ricotta ${b.batch_lot} avviata offline: si chiude quando torna la rete`);
+    // v0.78: a batch started offline (no id yet) closes offline too: the update finds it by lot number, later steps take its id from that step
+    const bKey = b.id ? { id: b.id } : { batch_lot: b.batch_lot }, bId = b.id || '$1.id';
     let { data: prod, error: pre } = await live(sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single());
     if (pre || !prod) prod = cachedProduct(b.product_id);
     const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
@@ -722,10 +733,10 @@
       };
       const close = async () => {
         const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
-          { table: 'production_batches', update: { id: b.id }, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
-          { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: b.id, source: 'tablet' } }];
+          { table: 'production_batches', update: bKey, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
+          { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: bId, source: 'tablet' } }];
         if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)
-          ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: b.id, qty_printed: n || 1, printed_by_id: staff.id } });
+          ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: bId, qty_printed: n || 1, printed_by_id: staff.id } });
         await save(ops);
         toast(`Resa ${y}% · ${out} kg ✓`);
         if (whey > 0) return startRicotta();
@@ -740,8 +751,12 @@
   }
   // 6 — direct shipment line from a batch QR (counter sales live on Shopify POS; online/wholesale orders go through 🚚 Da spedire)
   async function stepPick(b) {
-    const { data: prod } = await sb.from('products').select('*').eq('id', b.product_id).single();
-    const { data: custs } = await sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name');
+    // v0.78: works offline — product from the device copy, customers from the list kept on the tablet
+    let { data: prod } = await live(sb.from('products').select('*').eq('id', b.product_id).single());
+    if (!prod) prod = cachedProduct(b.product_id);
+    if (!prod) throw new Error('Prodotto non disponibile senza rete: riprova quando torna la connessione');
+    const { data: custs } = await cached('customers', () => sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name'));
+    if (!custs || !custs.length) throw new Error(navigator.onLine ? 'Nessun cliente attivo in anagrafica' : 'Senza rete e clienti non ancora salvati sul tablet');
     const d = document.createElement('div'); d.className = 'card';
     d.innerHTML = `<div class="scan">${esc(prod.name)}</div><div class="status">Spedizione diretta senza ordine. Le vendite al banco si battono su Shopify POS; gli ordini online e ingrosso si preparano da 🚚 Da spedire.</div>`;
     $('form').append(d);

@@ -29,4 +29,8 @@ every migration: the tests still run, after adding one milk supplier
 9. `python3 paper_e2e.py` (v0.77) — 🛡 → Ricopia da foglio di carta: sheet time kept (Agropoli), source paper, who wrote it;
    offline it queues and keeps the sheet time; out of limit opens the NC; older than 7 days refused.
 
-Last run 05/10/2026 (v0.77): pack_e2e 14/14 (fresh DB, first), e2e 22/22, prod_e2e 13/13, device_e2e 8/8, paper_e2e 9/9.
+10. `python3 offline_e2e.py` (v0.78) — batch started and closed with no network, both arrive in order; task list shown
+    offline; direct shipment offline with the kept customers; a held lot refused.
+
+Last run 06/10/2026 (v0.78), fresh DB in this order: pack_e2e 14/14, e2e 22/22, prod_e2e 13/13, device_e2e 8/8,
+paper_e2e 9/9, offline_e2e 10/10.

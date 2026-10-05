@@ -59,6 +59,13 @@ the last 20 min, `backup_ok` = backup in the last 26 h) and edge function `farm-
 is re-checked after 3 minutes; a confirmed one fails the run, and GitHub e-mails the repo owner (GitHub → Settings →
 Notifications → Actions). Run it by hand from the repo's Actions tab ("Run workflow").
 
+**Offline gaps closed (v0.78):** a batch started without network can also be closed without network (the close updates it by
+lot number and later steps take its id from that update; `stepBatchEnd`); the day's task list is kept on the tablet
+(`perla_tasks_v1`) and tasks closed offline are hidden (`v_tasks_open` now also returns `control_point_id`, `equipment_id`);
+direct shipment from a closed lot works offline (customers kept in the reference store; held lots refused on the tablet).
+Still online-only: stock count, packing from "Da spedire", goods receipt of a purchase order. Test:
+`tools/go-live/drill/tablet-test/offline_e2e.py` (10).
+
 ## Trial week, paper back-up, recall drill in the console (v0.77)
 - **Trial week:** set `trial.start` (Configurazione → Parametri) to day 1. `fabula.trial_check(day)` lists the 12 daily steps
   (milk + temperature, antibiotics, pasteuriser check, pasteurisation, batches closed, stretching per lot, cold rooms ×2,
