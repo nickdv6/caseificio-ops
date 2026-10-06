@@ -326,6 +326,16 @@
     const [{ data: people, error }, { data: roles }, { data: areas }, { data: perms }] = await Promise.all([
       sb.from('staff').select('id, full_name, email, role, app_role, auth_user_id, active, badge_code').order('active', { ascending: false }).order('full_name'),
       sb.from('app_roles').select('*').order('sort'), sb.from('app_areas').select('*').neq('code', 'comune').order('sort'), sb.from('role_permissions').select('*')]);
+    // v0.81: real login state from auth (an invite sent is not a login). Titolare only; others fall back to the staff row.
+    const LOGIN = {}; if (admin) { const { data: lg } = await sb.rpc('staff_logins'); (lg || []).forEach(r => { LOGIN[r.staff_id] = r; }); }
+    const fmtT = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    const loginLabel = p => { const L = LOGIN[p.id];
+      if (!L) return !p.active ? 'disattivato' : p.auth_user_id ? 'account creato' : p.email ? 'invito da inviare' : 'senza email';
+      return ({ attivo: `<span class="ok">attivo</span>${L.last_sign_in_at ? '<br>ultimo accesso ' + fmtT(L.last_sign_in_at) : ''}`,
+        invitato: `invito inviato ${fmtT(L.link_sent_at)}<br>il link vale fino alle ${fmtT(L.link_expires_at).slice(-5)}: deve aprire l'ultima email`,
+        link_scaduto: `<span class="ko">link scaduto, mai usato</span><br>inviato ${fmtT(L.link_sent_at)} · tocca «Reinvia invito»`,
+        senza_password: '<span class="ko">link aperto ma password non scelta</span><br>tocca «Reinvia invito»',
+        da_invitare: 'invito da inviare', senza_email: 'senza email', disattivato: 'disattivato' })[L.state] || esc(L.state); };
     const box = $('users'); if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     const roleOpts = sel => (roles || []).map(r => `<option value="${r.code}"${r.code === sel ? ' selected' : ''}>${esc(r.name_it)}</option>`).join('');
     $('inv-role').innerHTML = roleOpts('produzione');
@@ -333,13 +343,12 @@
     tbl.innerHTML = '<tr><th>Persona</th><th>Email</th><th>Profilo</th><th>Mansione</th><th>Accesso</th><th></th></tr>';
     (people || []).forEach(p => {
       const tr = document.createElement('tr'); if (!p.active) tr.style.opacity = '.55';
-      const login = !p.active ? 'disattivato' : p.auth_user_id ? 'collegato' : p.email ? 'invito da inviare' : 'senza email';
       tr.innerHTML = `<td><b>${esc(p.full_name)}</b><br><small>${esc(p.badge_code || '')}</small></td>`;
       const em = document.createElement('input'); em.type = 'email'; em.value = p.email || ''; em.disabled = !admin; em.style.width = '200px';
       const rs = document.createElement('select'); rs.innerHTML = roleOpts(p.app_role); rs.disabled = !admin;
       const js = document.createElement('select'); js.innerHTML = JOBS.map(([v, l]) => `<option value="${v}"${v === p.role ? ' selected' : ''}>${l}</option>`).join(''); js.disabled = !admin;
       [em, rs, js].forEach(x => { const td = document.createElement('td'); td.append(x); tr.append(td); });
-      const tdl = document.createElement('td'); tdl.innerHTML = `<small>${login}</small>`; tr.append(tdl);
+      const tdl = document.createElement('td'); tdl.innerHTML = `<small>${loginLabel(p)}</small>`; tr.append(tdl);
       const tda = document.createElement('td'); tda.style.whiteSpace = 'nowrap';
       if (p.active && p.badge_code) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.cssText = 'text-decoration:none;margin-right:4px'; a.target = '_blank'; a.textContent = 'Badge';
         a.title = 'Stampa il badge QR da passare sul tablet'; a.href = 'labels.html?' + new URLSearchParams({ l: badgeLine(p) }); tda.append(a); }
@@ -347,7 +356,9 @@
         const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'btn sm ' + cls; x.textContent = label; x.style.marginRight = '4px';
           x.onclick = async () => { x.disabled = true; try { const res = await fn(); if (cls === 'save' && res !== false) UI.clean(x); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
         b('Salva', 'save', async () => { PERM.changed(await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id).select('id')); toast('Salvato'); loadUsers(); });
-        if (p.active && p.email && p.id !== staff.id) b(p.auth_user_id ? 'Reinvia link' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role }); toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : 'Invito inviato'); loadUsers(); });
+        const st = (LOGIN[p.id] || {}).state;
+        if (p.active && p.email && p.id !== staff.id) b(st === 'attivo' ? 'Reimposta password' : p.auth_user_id ? 'Reinvia invito' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role });
+          toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : `Invito inviato a ${p.email}. Avvisa ${p.full_name.split(' ')[0]}: il link vale poco tempo e solo l'ultima email funziona (le precedenti non valgono più).`); loadUsers(); });
         if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return false; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
       }
       tr.append(tda); tbl.append(tr);
@@ -385,7 +396,7 @@
     const b = $('inv-go'); b.disabled = true;
     if (!$('inv-name').value.trim() || !/^\S+@\S+\.\S+$/.test($('inv-email').value.trim())) { b.disabled = false; return toast('Scrivi nome e un\'email valida', 'err'); }
     try { const r = await callUsers({ action: 'invite', full_name: $('inv-name').value.trim(), email: $('inv-email').value.trim(), app_role: $('inv-role').value });
-      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite')); loadUsers();
+      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password. Il link vale poco tempo: avvisala di aprirla subito.' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite')); loadUsers();
     } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
   };
   const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',

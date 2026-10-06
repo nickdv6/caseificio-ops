@@ -32,6 +32,11 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
     <label for="pw2">Ripeti la password</label><input id="pw2" type="password" autocomplete="new-password">
     <button class="btn" id="go">Salva e entra</button>
   </div>
+  <div id="again" hidden>
+    <label for="em">La tua email</label><input id="em" type="email" autocomplete="email" inputmode="email">
+    <button class="btn" id="send">Mandami un nuovo link</button>
+    <div class="sub" id="sent" style="margin:12px 0 0"></div>
+  </div>
   <div class="err" id="err"></div>
 </div></div>
 <script src="vendor/supabase.js"></script>
@@ -42,10 +47,34 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
 (async () => {
   const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
-  const err = new URLSearchParams(location.hash.slice(1)).get('error_description');
+  const H = new URLSearchParams(location.hash.slice(1)), Q = new URLSearchParams(location.search);
+  const err = H.get('error_description') || Q.get('error_description'), code = H.get('error_code') || Q.get('error_code');
   await new Promise(r => setTimeout(r, 300));   // let supabase-js read the token from the link
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) { $('sub').textContent = err ? `Il link non è valido: ${err}.` : 'Il link è scaduto o è già stato usato. Nella pagina di accesso tocca "Password dimenticata?" per riceverne uno nuovo, oppure chiedilo al titolare.'; return; }
+  let { data: { session } } = await sb.auth.getSession();
+  // v0.81: links built on the token hash (?token_hash=…&type=invite|recovery) are verified here, on our page, so a mail
+  // scanner that pre-opens the link cannot use it up.
+  if (!session && Q.get('token_hash')) {
+    const { data, error } = await sb.auth.verifyOtp({ token_hash: Q.get('token_hash'), type: Q.get('type') || 'invite' });
+    if (!error) { session = data.session; history.replaceState(null, '', location.pathname); }
+  }
+  if (!session) {
+    // v0.81: an expired or superseded invite no longer leaves the person stuck — they ask for a fresh link themselves.
+    const why = code === 'otp_expired' || /expired|invalid/i.test(err || '') || Q.get('token_hash')
+      ? 'Questo link non vale più: è scaduto oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
+      : 'Il link è scaduto o è già stato usato.';
+    $('sub').textContent = why + ' Scrivi la tua email e ricevi subito un link nuovo: aprilo entro un\'ora.';
+    $('again').hidden = false; $('em').focus();
+    $('send').onclick = async () => {
+      const email = $('em').value.trim().toLowerCase(); $('err').textContent = '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $('err').textContent = 'Scrivi un\'email valida.';
+      $('send').disabled = true;
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
+      if (error) { $('send').disabled = false; return $('err').textContent = /rate|seconds/i.test(error.message) ? 'Hai appena chiesto un link: aspetta un minuto e riprova.' : error.message; }
+      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email, entro un'ora. Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
+    };
+    $('em').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').click(); });
+    return;
+  }
   const P = await PERM.load(sb);
   $('sub').textContent = P && P.staff_id ? `Ciao ${P.full_name}: scegli la password per entrare come ${P.role_name}.` : `Ciao ${session.user.email}: scegli la password.`;
   $('form').hidden = false; $('pw1').focus();
@@ -55,7 +84,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
     if (a !== b) return $('err').textContent = 'Le due password non coincidono.';
     $('go').disabled = true;
     const { error } = await sb.auth.updateUser({ password: a });
-    if (error) { $('go').disabled = false; return $('err').textContent = error.message; }
+    if (error) { $('go').disabled = false; return $('err').textContent = /weak|easy to guess|pwned/i.test(error.message) ? 'Questa password è troppo comune (compare in elenchi di password rubate): scegline una diversa.' : /should be different/i.test(error.message) ? 'Scegli una password diversa da quella di prima.' : error.message; }
     const home = P && P.home && PERM.page(P.home) ? PERM.HOME[P.home] : 'console.html';
     location.replace(home);
   };
