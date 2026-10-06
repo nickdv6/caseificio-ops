@@ -19,3 +19,12 @@ Stock A (expires tomorrow), B (in 4 days), C (on hold), X (expired); orders S1 o
 Checks packing order, FEFO allocation with the online shelf-life minimum, split over lots, no double promise (W2 short),
 blocked lots with reasons, the pick list; pack_order refuses held/expired even with confirm, asks to confirm short life /
 short stock / weight with reasons, saves on confirm and notes it, gives a guest order a consignee. 05/10/2026: 14/14 PASS.
+
+# Production guard rails test (v0.80)
+```
+tools/go-live/drill/infra-test/replay.sh guard_test
+su postgres -c "psql -d guard_test -f tools/go-live/drill/prod-test/test_prod_guards.sql" | grep -E "PASS|FAIL"
+```
+`v_process_steps.ccp_code`; a batch closed without CCP 2/3 (mozzarella) or CCP 4 (ricotta) alerts once, a CCP logged in the
+same transaction as the close counts, simulation batches skipped; `prod_watch` only at 19:xx Rome, open batches and milk
+48 h old, one post a day; not callable by app users. 06/10/2026: 10/10 PASS.

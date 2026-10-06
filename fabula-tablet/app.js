@@ -655,9 +655,11 @@
     runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo l\'etichetta sul tank'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
   async function stepBatchStart(milk, lot, pre = null) {   // pre: a proposal from the production plan (v0.70)
-    let { data: prods, error: pe } = await live(sb.from('products').select('id, name').eq('kind', 'finished_good').eq('active', true));
+    let { data: prods, error: pe } = await live(sb.from('products').select('id, name, byproduct_product_id').eq('kind', 'finished_good').eq('active', true));
     if (pe || !prods) prods = lotView().products.filter(p => p.kind === 'finished_good' && p.active);   // offline
     if (!prods.length) throw new Error('Nessun prodotto disponibile (senza rete e prodotti non ancora salvati sul tablet)');
+    const fromWhey = new Set(prods.map(p => p.byproduct_product_id).filter(Boolean));   // v0.80: whey products (ricotta) last: milk goes to mozzarella by default
+    prods = [...prods].sort((a, b) => (fromWhey.has(a.id) - fromWhey.has(b.id)) || String(a.name).localeCompare(String(b.name)));
     // v0.59: next free letter among today's L-lots (ricotta R-lots and old simulation rows no longer shift it); re-read at save time
     const nextLot = async () => { const pre = 'L' + today().replace(/-/g, '') + '-';
       let { data: ls, error: le } = await live(sb.from('production_batches').select('batch_lot').like('batch_lot', pre + '%'));
@@ -677,6 +679,21 @@
     }
     field('mu', 'Unità', 'select', { options: [['kg', 'kg (bilancia)'], ['l', 'litri (contalitri)']] });
     const kgIn = field('kg', 'Latte in caldaia', 'number', { step: '0.1' });
+    // v0.80: the day's pasteuriser check, asked here if nobody has recorded it yet (NON ok = no batch)
+    const valveDone = await ccpRecorded('PRP-PAST-VALVE', null, null, true);
+    if (!valveDone) {
+      const vs = field('valve', 'Pastorizzatore: verifica di inizio giornata (non ancora registrata oggi)', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']], limit: 'NON ok = non pastorizzare: chiama il responsabile' });
+      vs.onchange = async () => {                      // NON ok: recorded at once (non-conformity) and no batch
+        if (vs.value !== '1') return;
+        try { await rpcNow('log_ccp', { p_cp_code: 'PRP-PAST-VALVE', p_value: 1, p_staff_id: staff.id, p_action: 'Verifica non ok all\'inizio lotto: lotto non avviato', p_source: 'tablet' }); } catch (e) { console.warn(e); }
+        toast('Pastorizzatore NON ok: lotto non avviato. Chiama il responsabile.', 'err'); show('home'); loadTasks();
+      };
+    }
+    // v0.80: pasteurisation (CCP 2) asked here when the chosen preset has no pasteurisation step
+    const pastIn = field('past', 'Temperatura di pastorizzazione (CCP 2), °C', 'number', { step: '0.1', required: false });
+    const pastLbl = pastIn.previousElementSibling;
+    const togglePast = () => { const has = processSteps(presets, preSel.value, 'start').some(st => st.ccp === 'CCP-PAST' || /CCP\s*2/.test(st.name)); pastIn.style.display = pastLbl.style.display = has ? 'none' : ''; pastIn.required = !has; };
+    preSel.addEventListener('change', togglePast); prodSel.addEventListener('change', togglePast); togglePast();
     if (pre) {
       kgIn.value = pre.milk_kg;
       const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
@@ -689,10 +706,13 @@
       const product = val('product'), preset = val('preset') || null;
       if (pre && kg > pre.left_kg * 1.02 && !current.overOk) { current.overOk = true; toast(`${fmtKg(kg)} kg sono più del latte rimasto su ${lot} (${fmtKg(pre.left_kg)} kg): controlla e premi Salva di nuovo`, 'err'); throw new Error('confirm'); }
       batchLot = await nextLot();                            // another tablet may have opened a lot meanwhile (offline: the device copy)
+      const extra = [];
+      if (!valveDone) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'PRP-PAST-VALVE', p_value: 0, p_staff_id: staff.id, p_source: 'tablet' } });
+      if (pastIn.required && val('past') != null) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('past'), p_staff_id: staff.id, p_batch_lot: batchLot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });
       await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset } }),
         { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
         { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
-        { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -kg, move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }]);
+        { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -kg, move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }, ...extra]);
       if (pre) planStarted(pre, kg);
       const steps = mergeSteps(await doseSteps(product, 'start', { milk: kg }), processSteps(presets, preset, 'start'));
       if (!steps.length) { toast('Lotto ' + batchLot + ' avviato ✓'); return; }
@@ -713,6 +733,10 @@
     if (ey) { const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
       const upd = () => { const o = val('out'); h.textContent = `Attesi ≈ ${fmtKg(Math.round(b.milk_in_kg * ey.pct) / 100)} kg (resa ${String(ey.pct).replace('.', ',')}%${String(ey.source).startsWith('default') ? ', stimata' : ''})` + (o ? ` · con ${fmtKg(o)} kg la resa è ${String(Math.round(o / b.milk_in_kg * 1000) / 10).replace('.', ',')}%` : ''); };
       outIn.addEventListener('input', upd); upd(); }
+    // v0.80: the lot's critical point (mozzarella CCP 3 stretching, ricotta CCP 4) asked here if it is not recorded yet
+    const ccpCode = b.input_kind === 'whey' ? 'CCP-RIC' : 'CCP-STRETCH';
+    const ccpDone = await ccpRecorded(ccpCode, b.batch_lot, b.id);
+    if (!ccpDone) field('ccpv', b.input_kind === 'whey' ? 'Temperatura di affioramento (CCP 4), °C · non ancora registrata' : 'Temperatura della pasta filata (CCP 3), °C · non ancora registrata', 'number', { step: '0.1', limit: 'Valore letto sul termometro; se era scritto sul foglio, ricopialo qui' });
     field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
     if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
@@ -739,6 +763,7 @@
         const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
           { table: 'production_batches', update: bKey, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
           { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: bId, source: 'tablet' } }];
+        if (!ccpDone && val('ccpv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: ccpCode, p_value: val('ccpv'), p_staff_id: staff.id, p_batch_lot: b.batch_lot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });   // v0.80 (after the update: ids above stay $1)
         if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)
           ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: bId, qty_printed: n || 1, printed_by_id: staff.id } });
         await save(ops);
@@ -1026,8 +1051,22 @@
     const t = r.record_metric === 'temp' ? r.target_temp_c : r.record_metric === 'duration' ? r.duration_min : r.record_metric === 'ph' ? r.target_ph : r.record_metric === 'speed' ? r.speed : null;
     const lo = r.record_metric === 'temp' ? r.temp_min_c : r.record_metric === 'duration' ? r.duration_min_min : r.record_metric === 'ph' ? r.ph_min : null;
     const hi = r.record_metric === 'temp' ? r.temp_max_c : r.record_metric === 'duration' ? r.duration_max_min : r.record_metric === 'ph' ? r.ph_max : null;
-    return { kind: 'process', step_id: r.step_id, step_order: r.step_order, name: r.name_it, machine: r.equipment_code ? `${r.equipment_name} · ${r.equipment_code}` : '', target_txt: r.target_txt || '', instruction_it: r.instruction_it, metric: r.record_metric, target: t == null ? null : Number(t), lo: lo == null ? null : Number(lo), hi: hi == null ? null : Number(hi) };
+    return { kind: 'process', step_id: r.step_id, step_order: r.step_order, name: r.name_it, machine: r.equipment_code ? `${r.equipment_name} · ${r.equipment_code}` : '', target_txt: r.target_txt || '', instruction_it: r.instruction_it, metric: r.record_metric, target: t == null ? null : Number(t), lo: lo == null ? null : Number(lo), hi: hi == null ? null : Number(hi),
+      ccp: r.ccp_code || (/\(CCP\s*\d/.test(r.name_it || '') ? 'CCP' : null) };   // v0.80: a CCP step needs the measured value
   }) : [];
+  // v0.80: is a CCP already recorded? (server when online, plus anything still in this tablet's queue)
+  const queuedOps = () => queue().flatMap(i => i.ops || []);
+  async function ccpRecorded(code, lot, batchId, okOnly = false) {   // okOnly: only a passed check counts (pasteuriser start-of-day)
+    const pres = await loadPresets(), stepIds = new Set(pres.filter(r => r.ccp_code === code).map(r => r.step_id));
+    if (queuedOps().some(o => (o.rpc === 'log_ccp' && o.args && o.args.p_cp_code === code && (lot ? lotEq(o.args.p_batch_lot || '', lot) : true) && (!okOnly || Number(o.args.p_value) === 0))
+                           || (lot && o.rpc === 'log_batch_step' && o.args && lotEq(o.args.p_batch_lot || '', lot) && stepIds.has(o.args.p_step_id)))) return true;
+    let q = sb.from('haccp_log').select('id, haccp_control_points!inner(code)').eq('haccp_control_points.code', code).limit(1);
+    if (batchId) q = q.eq('batch_id', batchId); else if (lot) return false; else q = q.gte('logged_at', romeDayStartIso());
+    if (okOnly) q = q.eq('result', 'ok');
+    const { data, error } = await live(q, 5000);
+    if (error || !data) return null;                 // offline / unknown: ask, a second record does no harm
+    return data.length > 0;
+  }
   const mergeSteps = (doses, proc) => [...doses.map(d => ({ ...d, kind: 'dose' })), ...proc].sort((a, b) => a.step_order - b.step_order);
   async function doseSteps(productId, phase, base) {
     const all = await loadRecipes();
@@ -1061,7 +1100,12 @@
       }
       $('d-instr').textContent = s.instruction_it || '';
       $('d-skip').style.display = opts.skippable ? '' : 'none'; $('d-pause').style.display = opts.skippable ? '' : 'none';
-      $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-warn').textContent = '';
+      $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-warn').textContent = ''; $('d-ok').style.display = '';
+      if (s.kind === 'process' && s.ccp) {             // v0.80: CCP = write the value read on the thermometer; no one-tap "Fatto · target", no skip
+        $('d-ok').style.display = 'none'; $('d-diff').style.display = 'none'; $('d-skip').style.display = 'none';
+        $('d-alt').style.display = 'block'; $('d-alt-l').textContent = `${(METRIC[s.metric] || ['', 'Valore misurato'])[1]} (punto critico: scrivi il valore letto)`;
+        $('d-instr').textContent = [s.instruction_it, `Obiettivo ${s.target ?? '—'}${(METRIC[s.metric] || [''])[0] ? ' ' + METRIC[s.metric][0] : ''}${s.lo != null || s.hi != null ? ` · intervallo ${s.lo ?? '…'}–${s.hi ?? '…'}` : ''}`].filter(Boolean).join(' · ');
+      }
       btns.forEach(b => b.disabled = false); show('dose');
     };
     const finish = async () => {                      // 'stay' = next sequence took over
@@ -1081,10 +1125,10 @@
       k++; if (k < steps.length) return render();
       return finish();
     };
-    $('d-ok').onclick = () => { if (k >= steps.length) return finish(); const s = steps[k]; next(s.kind === 'process' ? s.target : s.qty); };
+    $('d-ok').onclick = () => { if (k >= steps.length) return finish(); const s = steps[k]; if (s.kind === 'process' && s.ccp) { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); return; } next(s.kind === 'process' ? s.target : s.qty); };
     $('d-diff').onclick = () => { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); };
     $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona di nuovo il lotto per continuare'); show('home'); loadTasks(); };
-    $('d-skip').onclick = () => { k++; if (k < steps.length) return render(); if (opts.onSkipAll && steps.every(st => st.kind === 'process')) { $('form').innerHTML = ''; return opts.onSkipAll(); } return finish(); };
+    $('d-skip').onclick = () => { if (steps[k] && steps[k].kind === 'process' && steps[k].ccp) return toast('Punto critico: non si salta, scrivi il valore misurato', 'err'); k++; if (k < steps.length) return render(); if (opts.onSkipAll && steps.every(st => st.kind === 'process')) { $('form').innerHTML = ''; return opts.onSkipAll(); } return finish(); };
     $('d-alt-ok').onclick = () => {
       if (k >= steps.length) return finish();
       const s = steps[k], raw = $('d-alt-in').value;

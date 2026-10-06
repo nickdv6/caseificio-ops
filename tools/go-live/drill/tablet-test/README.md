@@ -32,5 +32,9 @@ every migration: the tests still run, after adding one milk supplier
 10. `python3 offline_e2e.py` (v0.78) — batch started and closed with no network, both arrive in order; task list shown
     offline; direct shipment offline with the kept customers; a held lot refused.
 
-Last run 06/10/2026 (v0.79), fresh DB in this order: pack_e2e 16/16, e2e 22/22, prod_e2e 13/13, device_e2e 8/8,
-paper_e2e 9/9, offline_e2e 11/11.
+11. `python3 guard_e2e.py` (v0.80) — **run last** (it moves today's valve checks back a day): CCP step asks for the value
+    and refuses "Salta"; first batch asks for the valve check, a failed valve stops the batch; CCP 2 on start and CCP 3/4
+    on close when missing; a batch closed with a skipped CCP raises the Zio Ciro alert.
+
+Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
+paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

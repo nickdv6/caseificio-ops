@@ -52,6 +52,16 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Production floor guard rails (v0.80)
+The tablet now enforces the HACCP critical points instead of trusting a tap. `v_process_steps` returns each step's
+`ccp_code`: a CCP step (pasteurisation, stretching, ricotta) asks for the value read (no one-tap "Fatto" recording the
+target as measured, no "Salta"). The first batch of the day asks for the pasteuriser valve check (PRP-PAST-VALVE); a failed
+valve is logged NON ok and the batch does not start. If the preset has no CCP step, CCP 2 is asked on the start form, and
+CCP 3 (mozzarella) or CCP 4 (ricotta) on the close form, when not already recorded (queued offline ops count). Server side:
+constraint trigger `batch_ccp_check` (deferred to commit) alerts Zio Ciro when a batch closes without its CCP records;
+`fabula.prod_watch()` (pg_cron `fabula_prod_watch`, runs at 19:45 Rome) warns once a day about batches left open and
+accepted milk 48 h old or more (DOP limit 60 h). Tests: `prod-test/test_prod_guards.sql` (10), `tablet-test/guard_e2e.py` (15).
+
 ## Review fixes and board re-audit (v0.79)
 An independent review of v0.69–v0.78 found 5 defects (none high), all fixed: the 2-hourly "latest" backup at 21:05 Rome no
 longer counts as the nightly in `bot_fallback`/`bot_watchdog` (it hid a missing nightly in summer); `device_watch` keeps when

@@ -59,9 +59,9 @@ try:
     mine = lambda: pg.evaluate(f"[...document.querySelectorAll('#plan .task.go')].filter(d => d.innerText.includes('{LOT}')).length")
     def setf(vals):
         for k, v in vals.items(): pg.evaluate("([k, v]) => { const e = document.getElementById(k); e.value = v; e.dispatchEvent(new Event('change')); }", [k, str(v)])
-    def save_form(): pg.evaluate("document.getElementById('btn-form-save').click()"); pg.wait_for_timeout(1500)
+    def save_form(): pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; const c = document.getElementById('ccpv'); if (c && !c.value) c.value = (c.previousElementSibling && /CCP 4/.test(c.previousElementSibling.textContent)) ? '88' : '65'; })()"); pg.evaluate("document.getElementById('btn-form-save').click()"); pg.wait_for_timeout(1500)
     def dose_through(n=0):
-        while view() == 'v-dose' and n < 40: pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(450); n += 1
+        while view() == 'v-dose' and n < 40: pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); const m = (document.getElementById('d-instr').textContent.match(/Obiettivo ([0-9.,]+)/) || [])[1]; i.value = (m || '70').replace(',', '.'); document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(450); n += 1
         return n
     def home():
         pg.evaluate("document.querySelector('#v-form .btn.secondary, #btn-form-cancel') && 0"); pg.goto('http://localhost:8767/index.html')
