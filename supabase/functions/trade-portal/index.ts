@@ -14,16 +14,38 @@
 //   POST ?action=run-queue                             → header x-trade-secret = setting trade.job_secret (pg_cron) or staff JWT: every pending
 //                                                        booked delivery becomes a Shopify B2B draft order for the company location, completed on
 //                                                        net terms (paymentPending). Result written back with fabula.trade_queue_result.
+//   GET  ?action=status                                → staff or x-trade-secret: are the Shopify credentials working, which scopes
 //
-// Shopify Admin API credentials: secrets SHOPIFY_ADMIN_TOKEN (custom app, scopes write_customers write_companies write_draft_orders
-// write_orders write_products read_payment_terms) and SHOPIFY_SHOP (pxssjd-cq.myshopify.com). Without them the database side still
-// works and the answers say what is left to do by hand ("shopify": "not_configured").
+// Shopify Admin API credentials — Dev Dashboard app "Caseificio ops" (scopes read/write customers, companies, draft_orders, orders,
+// products, markets, publications + read_payment_terms). Dev Dashboard apps have no permanent token: the function mints one with the
+// client-credentials grant from the secrets SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET (valid 24 h, cached and renewed by itself).
+// A legacy static token still works through SHOPIFY_ADMIN_TOKEN. SHOPIFY_SHOP = pxssjd-cq.myshopify.com. Without any of them the
+// database side still works and the answers say what is left to do by hand ("shopify": "not_configured").
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SHOP = Deno.env.get("SHOPIFY_SHOP") ?? "pxssjd-cq.myshopify.com";
-const TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
+const STATIC_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
+const CLIENT_ID = Deno.env.get("SHOPIFY_CLIENT_ID") ?? "";
+const CLIENT_SECRET = Deno.env.get("SHOPIFY_CLIENT_SECRET") ?? "";
 const API = "2026-07";
+const CONFIGURED = !!(STATIC_TOKEN || (CLIENT_ID && CLIENT_SECRET));
+
+// access token: static one if given, else client-credentials grant (Dev Dashboard app), cached until 5 minutes before it expires
+let tokenCache: { token: string; exp: number } | null = null;
+async function accessToken(force = false): Promise<string> {
+  if (STATIC_TOKEN) return STATIC_TOKEN;
+  if (!CLIENT_ID || !CLIENT_SECRET) throw new Error("not_configured");
+  if (!force && tokenCache && tokenCache.exp > Date.now()) return tokenCache.token;
+  const r = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "client_credentials", client_id: CLIENT_ID, client_secret: CLIENT_SECRET }),
+  });
+  if (!r.ok) throw new Error(`Shopify token: ${r.status} ${(await r.text()).slice(0, 200)}`);
+  const j = await r.json() as { access_token: string; expires_in?: number };
+  tokenCache = { token: j.access_token, exp: Date.now() + Math.max(60, (j.expires_in ?? 86400) - 300) * 1000 };
+  return tokenCache.token;
+}
 const TAG = "ingrosso";
 
 const cors = {
@@ -42,12 +64,13 @@ const dbErr = (e: { code?: string; message?: string }) => json({ error: e.code =
 
 // ---------- Shopify Admin GraphQL ----------
 async function gql(query: string, variables: Record<string, unknown> = {}) {
-  if (!TOKEN) throw new Error("not_configured");
+  if (!CONFIGURED) throw new Error("not_configured");
   for (let i = 0; i < 3; i++) {
     const r = await fetch(`https://${SHOP}/admin/api/${API}/graphql.json`, {
-      method: "POST", headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": TOKEN }, body: JSON.stringify({ query, variables }),
+      method: "POST", headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": await accessToken(i > 0) }, body: JSON.stringify({ query, variables }),
     });
     if (r.status === 429) { await new Promise((res) => setTimeout(res, 1500)); continue; }
+    if (r.status === 401 && i === 0) continue;   // token expired or revoked: mint a new one once
     const b = await r.json();
     if (b.errors?.length) throw new Error(b.errors.map((e: { message: string }) => e.message).join("; "));
     return b.data;
@@ -277,6 +300,17 @@ Deno.serve(async (req: Request) => {
       if (!okSecret && (await staffLevel(req)) < 3) return json({ error: "non autorizzato" }, 403);
       const r = await runQueue();
       return json(r, r.configured ? 200 : 503);
+    }
+    // ----- diagnostics: is Shopify reachable with the configured credentials? (staff or job secret) -----
+    if (req.method === "GET" && action === "status") {
+      const { data: sec } = await admin().from("settings").select("value").eq("key", "trade.job_secret").maybeSingle();
+      const okSecret = sec?.value && req.headers.get("x-trade-secret") === sec.value;
+      if (!okSecret && (await staffLevel(req)) < 1) return json({ error: "non autorizzato" }, 403);
+      if (!CONFIGURED) return json({ configured: false, shop: SHOP, mode: "none" });
+      try {
+        const d = await gql(`{ shop { name myshopifyDomain plan { partnerDevelopment shopifyPlus } } currentAppInstallation { accessScopes { handle } } }`);
+        return json({ configured: true, shop: SHOP, mode: STATIC_TOKEN ? "static_token" : "client_credentials", shop_name: d.shop?.name, scopes: (d.currentAppInstallation?.accessScopes ?? []).map((x: { handle: string }) => x.handle) });
+      } catch (e) { return json({ configured: true, shop: SHOP, mode: STATIC_TOKEN ? "static_token" : "client_credentials", error: (e as Error).message }, 502); }
     }
     return json({ error: "azione non valida" }, 404);
   } catch (e) {

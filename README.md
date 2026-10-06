@@ -41,9 +41,12 @@ system — lives here. Nothing is a paid app.
   and confirmed even while unpaid (net terms). Trigger `parties_trade_guard`: the nightly customer sync cannot rename or de-wholesale an
   approved trade customer. Legacy `standing_orders` rows are no longer read (placeholders only).
 - **Edge function `trade-portal`** (verify_jwt off): `apply` (public form), `state`/`portal` (customer key = metafield token),
-  `approve`/`reject`/`link`/`sync-prices` (staff JWT, Vendite ≥ 3), `run-queue` (secret or staff). Needs Supabase secrets
-  `SHOPIFY_ADMIN_TOKEN` (custom app: write_customers, write_companies, write_draft_orders, write_orders, write_products, read_payment_terms)
-  and `SHOPIFY_SHOP`; without them approvals still work here and say what to do by hand, orders stay in the queue (`configured: false`).
+  `approve`/`reject`/`link`/`sync-prices` (staff JWT, Vendite ≥ 3), `run-queue` (secret or staff), `status` (diagnostics). Shopify side:
+  Dev Dashboard app **Caseificio ops** (org "La Perla del Cilento", installed on the store; scopes read/write customers, companies,
+  draft_orders, orders, products, markets, publications + read_payment_terms). Dev Dashboard apps have no permanent token: the function mints
+  one with the client-credentials grant (24 h, cached) from the Supabase secrets `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (Dev Dashboard →
+  app → Overview → Credentials); `SHOPIFY_SHOP` = pxssjd-cq.myshopify.com; a static `SHOPIFY_ADMIN_TOKEN` is still honoured. Without them
+  approvals still work here and say what to do by hand, orders stay in the queue (`configured: false`).
 - **Console → Ingrosso** (`ingrosso.html`, page `ingrosso` = Vendite ≥ 1; approvals/prices need Vendite ≥ 3): Richieste, Clienti e piani
   (plan grid, pause/resume/cancel, exceptions with "force" past the cut-off, suspend access, portal link, new link), Consegne (per date with
   product totals, CSV totals / CSV per customer, Shopify queue + "Invia ora"), Listino e sconti (trade prices, min/step, tiers, "Invia a
