@@ -100,6 +100,11 @@ Still online-only: stock count, packing from "Da spedire", goods receipt of a pu
 - **Recall drill:** console → Manuale → Lotti bloccati e NC → Prova di richiamo (calls `fabula.recall_drill(lot)`).
 - Tests: `tools/go-live/drill/prod-test/test_trial_paper.sql` (16), `tools/go-live/drill/tablet-test/paper_e2e.py` (9).
 
+## Internet in the expenses (v0.80)
+`opex.internet_eur_year` = 600 (€50/month, assumption until the contract is signed). `weekly_brief()` shows it as
+`pnl_estimate.internet_eur` (setting/52 ≈ €11.54) and subtracts it from the operating result. `benchmark.annual_profit_eur`
+= 150300 (≈ €2,890/week; ≈ €149,700/yr from 2028 at the €1,100 rent).
+
 ## Lease at the agreed rent (v0.76)
 `opex.lease_eur_year` = 12600 (€1,050/month, 2027), `opex.lease_eur_year_step` = 13200 (€1,100/month) from
 `opex.lease_step_from` = 2028-01-01. `fabula.lease_eur_year(day)` picks the year; `weekly_brief()` uses it, so the brief
