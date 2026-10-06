@@ -7,6 +7,12 @@
 
 {%- liquid
   assign edge = section.settings.edge_url
+  assign portal_path = '/pages/' | append: section.settings.portal_handle
+  assign sep = '?'
+  if routes.account_login_url contains '?'
+    assign sep = '&'
+  endif
+  assign login_url = routes.account_login_url | append: sep | append: 'return_to=' | append: portal_path | append: '&return_url=' | append: portal_path
   assign types = 'ristorante:Ristorante,pizzeria:Pizzeria,hotel:Hotel,bnb:B&B,agriturismo:Agriturismo,lido:Lido / stabilimento,gastronomia:Gastronomia / negozio,altro:Altro' | split: ','
 -%}
 
@@ -31,7 +37,7 @@
       {%- if customer -%}
         <p class="trade-note">Sei collegato come <strong>{{ customer.email }}</strong>: useremo questa email per attivare l'accesso.</p>
       {%- else -%}
-        <p class="trade-note">Hai già l'accesso? <a href="{{ routes.account_login_url }}?return_url=/pages/{{ section.settings.portal_handle }}">Accedi</a> per vedere il listino e le tue consegne.</p>
+        <p class="trade-note">Hai già l'accesso? <a href="{{ login_url }}">Accedi</a> per vedere il listino e le tue consegne.</p>
       {%- endif -%}
     </div>
 

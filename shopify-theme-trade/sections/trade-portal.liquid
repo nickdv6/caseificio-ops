@@ -18,7 +18,11 @@
     endif
   endif
   assign apply_url = '/pages/' | append: section.settings.apply_handle
-  assign login_url = routes.account_login_url | append: '?return_url=' | append: request.path
+  assign sep = '?'
+  if routes.account_login_url contains '?'
+    assign sep = '&'
+  endif
+  assign login_url = routes.account_login_url | append: sep | append: 'return_to=' | append: request.path | append: '&return_url=' | append: request.path
 -%}
 
 <div class="container container--large container--vertical-space-small trade" id="trade-portal-{{ section.id }}">
