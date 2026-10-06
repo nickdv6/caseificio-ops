@@ -41,8 +41,10 @@ select pg_temp.ck('no fallback after the 6-hour window', (select count(*) from j
 -- 5. ops_health stand-in on a day without a bot run (Wednesday 21:25) and backup re-send (21:15 + 45 = 22:00)
 select fabula.bot_fallback('2026-10-14 21:25:00+02') r5 \gset
 select pg_temp.ck('ops_health stand-in runs and reports', exists (select 1 from jsonb_array_elements(:'r5'::jsonb->'runs') x where x->>'agent' = 'ops_health' and x->>'status' = 'ok'), :'r5');
+-- v0.79: a 2-hourly "latest" backup at 21:05 Rome must not count as the nightly
+insert into fabula.agent_runs (agent, started_at, finished_at, status, summary, details) values ('backup_export', '2026-10-14 21:05:00+02', '2026-10-14 21:05:30+02', 'ok', 'backup latest: test', '{"mode":"latest"}');
 select fabula.bot_fallback('2026-10-14 22:05:00+02') r6 \gset
-select pg_temp.ck('nightly backup re-sent once, not logged as a fake ok run',
+select pg_temp.ck('nightly backup re-sent once (a 21:05 latest backup does not count), not logged as a fake ok run',
   exists (select 1 from jsonb_array_elements(:'r6'::jsonb->'runs') x where x->>'agent' = 'backup_export' and x->>'status' = 'ok')
   and not exists (select 1 from fabula.agent_runs where agent = 'backup_export' and details->>'via' = 'db_fallback'), :'r6');
 

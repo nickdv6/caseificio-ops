@@ -32,5 +32,5 @@ every migration: the tests still run, after adding one milk supplier
 10. `python3 offline_e2e.py` (v0.78) — batch started and closed with no network, both arrive in order; task list shown
     offline; direct shipment offline with the kept customers; a held lot refused.
 
-Last run 06/10/2026 (v0.78), fresh DB in this order: pack_e2e 14/14, e2e 22/22, prod_e2e 13/13, device_e2e 8/8,
-paper_e2e 9/9, offline_e2e 10/10.
+Last run 06/10/2026 (v0.79), fresh DB in this order: pack_e2e 16/16, e2e 22/22, prod_e2e 13/13, device_e2e 8/8,
+paper_e2e 9/9, offline_e2e 11/11.

@@ -98,6 +98,18 @@ try:
     check('second Salva saves and shows what was confirmed', 'DDT-' in form_txt() and 'Confermato:' in form_txt(), form_txt()[:200].replace('\n', ' | '))
     check('stock after packing: A 0, B 0, C and X untouched',
           sql(f"select string_agg(lot_number || '=' || trim_scale(qty_on_hand), ',' order by lot_number) from fabula.v_stock_on_hand where lot_number like '%{R}'") == f'C{R}=10,X{R}=3')
+    # v0.79: a split line where the packer takes everything from the first lot and sets the second row to 0
+    sql(f"insert into fabula.stock_moves (product_id, lot_number, expiry_date, qty, move_type, source) values ('{MOZ}', 'D{R}', {D} + 4, 3, 'production_out', 'test'), ('{MOZ}', 'E{R}', {D} + 5, 3, 'production_out', 'test')")
+    sql(f"insert into fabula.sales_orders (order_number, channel, order_date, customer_id, status, source) values ('W3-{R}', 'wholesale', {D} + 1, '{CUST}', 'confirmed', 'test')")
+    sql(f"insert into fabula.sales_order_lines (sales_order_id, product_id, qty, unit_price_eur, iva_rate) select id, '{MOZ}', 4, 12, 4 from fabula.sales_orders where order_number = 'W3-{R}'")
+    open_list(); open_order(f'W3-{R}')
+    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + document.getElementById('q' + s.id.slice(3)).value)")
+    check('W3 opens split: D 3 + E 1', f == [f'D{R}=3', f'E{R}=1'], str(f))
+    pg.evaluate("(() => { const s = [...document.querySelectorAll('#form select[id^=lot]')][1]; const q = document.getElementById('q' + s.id.slice(3)); q.value = '0'; q.dispatchEvent(new Event('input')); })()")
+    save()
+    if view() == 'v-form' and 'Quantità non valida' not in toast(): save()
+    check('second row set to 0: saved with one line (no "Quantità non valida")', 'DDT-' in form_txt()
+          and sql(f"select string_agg(l.lot_number || '=' || trim_scale(l.qty), ',') from fabula.shipment_lines l join fabula.shipments sh on sh.id = l.shipment_id join fabula.sales_orders o on o.id = sh.sales_order_id where o.order_number = 'W3-{R}'") == f'D{R}=3', toast())
     check('no page errors', not logs, ' | '.join(logs)[:300])
     b.close()
 finally:

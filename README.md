@@ -52,6 +52,15 @@ Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tabl
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
   handle @laperladelcilento are accounts, not the name, and stay.
 
+## Review fixes and board re-audit (v0.79)
+An independent review of v0.69–v0.78 found 5 defects (none high), all fixed: the 2-hourly "latest" backup at 21:05 Rome no
+longer counts as the nightly in `bot_fallback`/`bot_watchdog` (it hid a missing nightly in summer); `device_watch` keeps when
+the live app version last changed (`infra.sw_seen`) so the old-app warning can fire; `fabula_health.cron_ok` ignores a run row
+without a start time; the offline task list hides only one task per queued close; packing drops rows set to 0. Tests added
+in `test_bot_fallback.sql` (22), `test_devices_watchdog.sql` (15), `pack_e2e.py` (16), `offline_e2e.py` (11).
+The go-live board was re-audited (v0.79b, new `prev` baseline) with a stated rubric: *reliable* tops out around 75 until an
+area has handled real transactions, and open opening gates count against it. Headline 85 / 66 / 67 (was 85 / 72 / 66).
+
 ## Outside watcher (v0.78)
 GitHub Actions `.github/workflows/watch.yml` runs `tools/watch/check.sh` at :07 and :37 every hour, outside Supabase, the bots
 and Claude: tablet site serves the app, `public.fabula_health()` (public key; returns only `db`, `cron_ok` = pg_cron ran in

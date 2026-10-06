@@ -289,8 +289,12 @@
     else {
       let c = null; try { c = JSON.parse(localStorage.getItem(TK) || 'null'); } catch {}
       if (!c || c.day !== today()) { box.textContent = 'Lista non disponibile senza rete (non ancora salvata oggi su questo tablet)'; return; }
-      const done = new Set(queue().flatMap(i => (i.ops || []).filter(o => o.rpc === 'close_open_task').map(o => (o.args || {}).p_control_point_id || (o.args || {}).p_code || (o.args || {}).p_equipment_id)));
-      data = c.data.filter(t => !done.has(t.code) && !done.has(t.control_point_id) && !done.has(t.equipment_id));
+      // v0.79: each queued close hides only ONE task — the earliest open one it matches, as close_open_task does on the server
+      // (a twice-daily cold-room check done in the morning must leave the evening one on the list)
+      const closes = queue().flatMap(i => (i.ops || []).filter(o => o.rpc === 'close_open_task').map(o => o.args || {}));
+      const left = [...c.data].sort((a, b) => String(a.due_at).localeCompare(String(b.due_at)));
+      closes.forEach(a => { const k = left.findIndex(t => (a.p_code && t.code === a.p_code) || (a.p_control_point_id && t.control_point_id === a.p_control_point_id) || (a.p_equipment_id && t.equipment_id === a.p_equipment_id)); if (k >= 0) left.splice(k, 1); });
+      data = left;
       const n = document.createElement('div'); n.className = 'code'; n.textContent = `Senza rete: elenco delle ${hhmm(c.at)} · le attività fatte ora si chiudono al ritorno della rete`; box.append(n);
     }
     if (!data.length) { box.append('Tutto fatto ✓'); return; }
@@ -945,7 +949,9 @@
     field('tracking', 'Tracking / n. lettera di vettura (se già stampata)', 'text', { required: false });
     field('note', 'Note', 'text', { required: false });
     openForm(`Prepara ${o.order_number}`, `${o.customer || 'cliente online'} · ${o.lines.length} righe · tolleranza ±${S['ship.tolerance_pct'] || 5}%`, async () => {
-      const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: Number(r.q.value), weighed: r.q.dataset.weighed === '1' }));
+      // v0.79: a row set to 0 (all the kg taken from the other lot of a split line) is left out instead of refusing the save
+      const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: Number(r.q.value) || 0, weighed: r.q.dataset.weighed === '1' })).filter(x => x.qty > 0);
+      if (!lines.length) { toast('Nessuna quantità da spedire', 'err'); throw new Error('qty'); }
       if (lines.some(x => !x.lot_number)) { toast('Manca il lotto su una riga', 'err'); throw new Error('lot'); }
       const { data, error } = await sb.rpc('pack_order', { p_order_id: o.order_id, p_lines: lines, p_staff_id: staff.id, p_gross_kg: val('gross'), p_carrier: val('carrier') || null, p_tracking: val('tracking') || null, p_notes: val('note') || null, p_force: current.force });
       if (error) { toast(error.message, 'err'); throw error; }

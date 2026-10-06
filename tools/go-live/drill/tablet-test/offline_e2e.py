@@ -60,6 +60,18 @@ try:
     queued = lambda: pg.evaluate("JSON.parse(localStorage.getItem('fabula_queue')||'[]').length")
     rej0 = sql("select count(*) from fabula.tablet_rejects")
 
+    # 0 — v0.79: two cold-room checks today; doing the morning one offline must leave the evening one on the list
+    sql("insert into fabula.task_instances (schedule_id, due_at, status) select id, ((now() at time zone 'Europe/Rome')::date + time '09:00') at time zone 'Europe/Rome', 'due'::fabula.task_status from fabula.task_schedules where code = 'T-CF1' union all select id, ((now() at time zone 'Europe/Rome')::date + time '17:00') at time zone 'Europe/Rome', 'due'::fabula.task_status from fabula.task_schedules where code = 'T-CF1'")
+    pg.goto('http://localhost:8771/index.html'); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(3000)
+    n_cf1 = lambda: pg.evaluate("[...document.querySelectorAll('#tasks .task')].filter(d => d.innerText.includes('cella 1')).length")
+    before = n_cf1()
+    go_off()
+    code('CCP:CCP-COLD-1'); setf({'v': 3}); save_form()
+    pg.evaluate("(() => document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-home')))()")
+    after = n_cf1()
+    check('offline: one cold-room check done → only that one hidden, the other stays', before >= 2 and after == before - 1, f'{before} → {after}')
+    go_on()
+
     # 1 — start and close a batch with no network
     go_off()
     code('LOT:' + LOT)

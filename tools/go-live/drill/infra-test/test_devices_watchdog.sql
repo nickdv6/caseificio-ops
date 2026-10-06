@@ -7,6 +7,7 @@ $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_nam
 insert into fabula.staff(id, full_name, auth_user_id, app_role, role, active) values ('10000000-0000-4000-a000-000000000077', 'Casaro Test', '00000000-0000-4000-a000-000000000077', 'produzione', 'casaro', true);
 insert into fabula.infra_status (key, ok, detail, data, checked_at, last_ok_at) values ('github_sw', true, 'perla-v50', '{"sw":"perla-v50"}', now() - interval '2 days', now() - interval '2 days')
 on conflict (key) do update set ok = true, data = excluded.data, checked_at = excluded.checked_at, last_ok_at = excluded.last_ok_at;
+insert into fabula.settings (key, value, data_type) values ('infra.sw_seen', 'perla-v50|' || (now() - interval '2 days')::text, 'text') on conflict (key) do update set value = excluded.value;   -- v0.79: released 2 days ago
 
 -- 1. check-in as a signed-in staff member (JWT claims)
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-000000000077","role":"authenticated"}', false);
@@ -55,3 +56,14 @@ select pg_temp.ck('jobs and grants', exists (select 1 from cron.job where jobnam
   and has_function_privilege('authenticated', 'fabula.device_checkin(text, text, text, int, timestamptz, jsonb, text)', 'execute')
   and not has_function_privilege('anon', 'fabula.device_checkin(text, text, text, int, timestamptz, jsonb, text)', 'execute')
   and not has_function_privilege('authenticated', 'fabula.device_watch(timestamptz)', 'execute'));
+
+-- v0.79: a new version just went live → its release time is now, so nobody is warned yet
+update fabula.infra_status set data = '{"sw":"perla-v51"}' where key = 'github_sw';
+update fabula.devices set app_version = 'perla-v50', last_seen_at = now(), warned = '{}' where device_uid = 'dev-abc123';
+select fabula.device_watch() w9 \gset
+select pg_temp.ck('new version just live: release time recorded now, no old-app warning yet',
+  split_part((select value from fabula.settings where key = 'infra.sw_seen'), '|', 1) = 'perla-v51'
+  and not exists (select 1 from jsonb_array_elements(:'w9'::jsonb->'warnings') x where x->>'kind' = 'version'), :'w9');
+update fabula.devices set last_seen_at = now() + interval '24 hours' where device_uid = 'dev-abc123';   -- it kept checking in on the old version
+select fabula.device_watch(now() + interval '25 hours') w10 \gset
+select pg_temp.ck('a day later the tablet still on the old version is warned', exists (select 1 from jsonb_array_elements(:'w10'::jsonb->'warnings') x where x->>'kind' = 'version'), :'w10');
