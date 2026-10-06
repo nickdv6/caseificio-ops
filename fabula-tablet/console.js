@@ -305,7 +305,8 @@
       trend: loadTrend,
       anag: () => Promise.all([loadParties(), loadTerms(), loadStanding()]),
       ricette: () => Promise.all([loadRecipes(), loadPresets()]),
-      personale: () => Promise.all([loadRota(), loadStaffCard()])
+      personale: () => Promise.all([loadRota(), loadStaffCard()]),
+      incassi: () => window.INCASSI.load()
     }
   });
   async function loadTrend() {
@@ -813,7 +814,7 @@
     page: 'console', onRefresh: refresh,
     onReady: async s => {
       staff = s;
-      const TAB_AREAS = { ops: ['produzione', 'acquisti', 'vendite'], trend: ['produzione', 'vendite'], anag: ['vendite', 'acquisti'], ricette: ['produzione'], personale: ['personale'] };
+      const TAB_AREAS = { ops: ['produzione', 'acquisti', 'vendite'], trend: ['produzione', 'vendite'], anag: ['vendite', 'acquisti'], ricette: ['produzione'], personale: ['personale'], incassi: ['finanza'] };
       document.querySelectorAll('.tab').forEach(t => { const a = TAB_AREAS[t.dataset.tab]; if (a) t.hidden = !a.some(x => PERM.can(x)); });
       $('c-pkg').hidden = !PERM.page('pacchetto'); PERM.navLinks();
       T.start(); refreshBadges();

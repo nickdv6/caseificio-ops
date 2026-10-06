@@ -9,7 +9,7 @@ end $$;
 create schema auth; create schema storage; create schema extensions; create schema cron; create schema net; create schema vault; create schema supabase_migrations;
 grant usage on schema auth, storage, extensions to anon, authenticated, service_role;
 create extension pgcrypto with schema extensions; create extension "uuid-ossp" with schema extensions;
-create table auth.users (id uuid primary key default gen_random_uuid(), email text, raw_user_meta_data jsonb default '{}', raw_app_meta_data jsonb default '{}', created_at timestamptz default now(), last_sign_in_at timestamptz, email_confirmed_at timestamptz, invited_at timestamptz, deleted_at timestamptz, banned_until timestamptz);
+create table auth.users (id uuid primary key default gen_random_uuid(), email text, raw_user_meta_data jsonb default '{}', raw_app_meta_data jsonb default '{}', created_at timestamptz default now(), last_sign_in_at timestamptz, email_confirmed_at timestamptz, invited_at timestamptz, deleted_at timestamptz, banned_until timestamptz, encrypted_password text, recovery_sent_at timestamptz, confirmation_sent_at timestamptz);
 create function auth.uid() returns uuid language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid $$;
 create function auth.role() returns text language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claim.role', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'), current_user::text) $$;
 create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $$;

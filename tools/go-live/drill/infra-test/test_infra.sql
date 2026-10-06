@@ -35,12 +35,12 @@ do $$ declare c jsonb := fabula.infra_checks(); k text; begin
   raise notice 'PASS 2 healthy: all infra checks green';
 end $$;
 
--- 3. ops_dashboard carries 21 checks, the 6 infra ones as auto
+-- 3. ops_dashboard carries 36 checks (35 since the v0.75 review + outside watcher), the 6 infra ones as auto
 do $$ declare d jsonb := fabula.ops_dashboard(); n int; a int; begin
   select count(*), count(*) filter (where e->>'kind' = 'auto' and e->>'key' in ('code_pushed','repo_sync','app_deployed','restore_tested','advisors_clean','uptime'))
     into n, a from jsonb_array_elements(d->'checks') e;
-  if n <> 21 or a <> 6 then raise exception 'FAIL dashboard checks n=% auto infra=%', n, a; end if;
-  raise notice 'PASS 3 dashboard: 21 checks, 6 infra auto';
+  if n <> 36 or a <> 6 then raise exception 'FAIL dashboard checks n=% auto infra=%', n, a; end if;
+  raise notice 'PASS 3 dashboard: 36 checks, 6 infra auto';
 end $$;
 
 -- 4. trouble: live migration not on GitHub, Netlify behind, farm-order 500 twice, GitHub rate limit

@@ -36,5 +36,11 @@ every migration: the tests still run, after adding one milk supplier
     and refuses "Salta"; first batch asks for the valve check, a failed valve stops the batch; CCP 2 on start and CCP 3/4
     on close when missing; a batch closed with a skipped CCP raises the Zio Ciro alert.
 
+12. `DB=<db> python3 recon_e2e.py` (v0.82) — Console → Incassi as the owner: the Shopify payments CSV (Italian admin) is
+    recognised while "Estratto conto" is selected and switches by itself; a bank CSV in Windows encoding with a preamble and
+    a footer; payout matched to the Shopify credit, bank fee by rule; an unknown credit classified "Altro" (refused without a
+    note); a card order with no payment marked as checked; a production login does not see the tab. Needs a replay with
+    v0.82a (no backup needed). 06/10/2026: 18/18.
+
 Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
 paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

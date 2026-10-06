@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="ui.css">
 </head>
 <body>
-<!-- Owner console (v0.51): Oggi (numbers + approval gate) · Operazioni · Andamento · Anagrafiche · Ricette · Personale. Parameters, machines, bots and users live in admin.html. -->
+<!-- Owner console (v0.51): Oggi (numbers + approval gate) · Operazioni · Andamento · Anagrafiche · Ricette · Personale · Incassi (v0.82). Parameters, machines, bots and users live in admin.html. -->
 <div class="wrap">
 <header>
   <div><h1><span data-brand="name">La Perla del Cilento</span> <span id="simbadge" class="badge" hidden>simulazione</span></h1><div class="sub" id="sub">Console di gestione</div></div>
@@ -24,6 +24,7 @@
     <button class="tab" role="tab" data-tab="anag">Anagrafiche <span class="n" id="n-anag"></span></button>
     <button class="tab" role="tab" data-tab="ricette">Ricette</button>
     <button class="tab" role="tab" data-tab="personale">Personale <span class="n" id="n-pers"></span></button>
+    <button class="tab" role="tab" data-tab="incassi">Incassi <span class="n" id="n-incassi"></span></button>
   </nav>
 
   <!-- OGGI: numbers, the human gate, compliance -->
@@ -93,6 +94,31 @@
     <div class="card" style="margin-top:14px"><h3>Ore lavorate e straordinari</h3><div class="hint">Dalle timbrature del badge sul tablet. Straordinario = ore oltre il contratto settimanale della persona (o oltre il limite giornaliero in <a class="lnk" href="admin.html#lavoro">Configurazione → Parametri → Lavoro</a>). € = costo orario × (1 + maggiorazione).</div><div id="rota-hours" style="overflow-x:auto"></div></div>
     <div class="card" style="margin-top:14px"><h3>Persone · contratto, nomine e attestati</h3><div class="hint">Ore di contratto (vuoto = valore aziendale), nomine per la sicurezza (aggiungono i corsi obbligatori) e stato degli attestati. Gli attestati si caricano in <a class="lnk" href="haccp.html#formazione">Autocontrollo → Formazione</a>; email e profilo di accesso in <a class="lnk" href="admin.html#utenti">Configurazione → Utenti</a>.</div><div id="set-staff"></div></div>
   </div>
+  <!-- INCASSI (v0.82): Shopify payments and bank statements matched against orders. Logic in incassi.js, file reading in recon.js -->
+  <div class="pane" id="p-incassi">
+    <div class="row" style="margin:0 0 10px;justify-content:space-between">
+      <div class="row" id="rc-period" style="margin:0"><button class="chip" data-days="30" aria-pressed="false">30 giorni</button><button class="chip" data-days="60" aria-pressed="true">60 giorni</button><button class="chip" data-days="120" aria-pressed="false">120 giorni</button></div>
+      <button class="btn sm sec" id="rc-run" title="Rifà gli abbinamenti automatici (gira anche ogni mattina)">Abbina di nuovo</button>
+    </div>
+    <div class="tiles" id="rc-tiles"></div>
+    <div id="rc-warn"></div>
+    <h2>Da controllare <span class="status" id="rc-n"></span></h2>
+    <div class="hint">Gli abbinamenti automatici girano ogni mattina e dopo ogni importazione: versamento Shopify ↔ accredito in banca (stesso importo al centesimo, entro 10 giorni), bonifici ↔ fatture e ordini ingrosso (numero o cliente nella causale), spese bancarie e versamenti di contanti dalle regole. Qui resta solo quello che serve guardare: abbina o classifica il movimento, oppure segnalo come controllato con una nota.</div>
+    <div id="rc-exc" style="overflow-x:auto"></div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3>Versamenti Shopify</h3><div class="hint">Ogni versamento raccoglie i pagamenti con carta (online e banco) meno commissioni e rimborsi. Dal file pagamenti Shopify.</div><div id="rc-payouts" style="overflow-x:auto"></div></div>
+      <div class="card" id="rc-import" hidden><h3>Importa file</h3>
+        <div class="hint keep"><b>Estratto conto:</b> dall'home banking scarica i movimenti in CSV (se c'è solo Excel, aprilo e salvalo come CSV). <b>Pagamenti Shopify:</b> nell'admin Shopify apri i pagamenti di Shopify Payments e usa Esporta → transazioni (CSV). Puoi ricaricare file che si sovrappongono: le righe già presenti vengono saltate.</div>
+        <div class="row nodirty"><select id="rc-kind"><option value="bank">Estratto conto (CSV della banca)</option><option value="payments">Pagamenti Shopify (CSV)</option></select>
+          <span id="rc-acc-row"><input type="text" id="rc-acc" list="rc-acc-list" placeholder="Conto, es. BCC Aquara 1234" style="min-width:200px"><datalist id="rc-acc-list"></datalist></span></div>
+        <div class="row nodirty"><input type="file" id="rc-file" accept=".csv,.txt,text/csv"></div>
+        <div id="rc-preview" class="nodirty"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px"><h3>Movimenti banca</h3>
+      <div class="row" id="rc-bank-filter" style="margin:0 0 8px"><button class="chip" data-f="open" aria-pressed="true">Da abbinare</button><button class="chip" data-f="all" aria-pressed="false">Tutti</button></div>
+      <div id="rc-bank" style="overflow-x:auto"></div></div>
+  </div>
 </section>
 </div>
 <div class="tip" id="tip"></div>
@@ -103,6 +129,8 @@
 <script src="brand.js"></script>
 <script src="perm.js"></script>
 <script src="ui.js"></script>
+<script src="recon.js"></script>
+<script src="incassi.js"></script>
 <script src="console.js"></script>
 </body>
 </html>
