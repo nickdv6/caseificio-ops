@@ -314,6 +314,17 @@
   }  // ---------- Utenti e ruoli ----------
   const LVL = ['—', 'vede', 'registra', 'gestisce'];
   const JOBS = [['owner', 'titolare'], ['partner', 'socio'], ['casaro', 'casaro'], ['operaio', 'operaio'], ['commesso', 'commesso'], ['consulente', 'consulente']];
+  function showLink(p, link) {
+    let box = $('usr-link'); if (!box) { box = document.createElement('div'); box.id = 'usr-link'; box.className = 'card'; box.style.marginTop = '12px'; $('users').after(box); }
+    const first = (p.full_name || '').split(' ')[0];
+    const text = `Ciao ${first}, ecco il link per entrare in La Perla: aprilo una volta sola e scegli la password (vale 24 ore). Poi entra sempre con email e password da ${location.origin}/console.html\n${link}`;
+    box.innerHTML = `<b>Link per ${esc(p.full_name)}</b> <small class="status">· vale 24 ore · nessuna email inviata · i link precedenti non valgono più</small>
+      <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input readonly style="flex:1;min-width:220px" value="${esc(link)}">
+      <button class="btn sm sec" id="usr-link-copy">Copia</button>
+      <a class="btn sm" style="text-decoration:none" target="_blank" href="https://wa.me/?text=${encodeURIComponent(text)}">Manda su WhatsApp</a></div>`;
+    $('usr-link-copy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiato'); } catch { box.querySelector('input').select(); } };
+    box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
   async function callUsers(body) {
     const { data, error } = await sb.functions.invoke('invite-user', { body });
     if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch {} throw new Error(m); }
@@ -359,6 +370,8 @@
         const st = (LOGIN[p.id] || {}).state;
         if (p.active && p.email && p.id !== staff.id) b(st === 'attivo' ? 'Reimposta password' : p.auth_user_id ? 'Reinvia invito' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role });
           toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : `Invito inviato a ${p.email}. Avvisa ${p.full_name.split(' ')[0]}: il link vale 24 ore e funziona solo l'ultima email (le precedenti non valgono più).`); loadUsers(); });
+        // v0.81f: a one-time link without e-mail (Supabase's built-in e-mail allows only a few messages an hour)
+        if (p.active && p.email && p.id !== staff.id) b('Link WhatsApp', 'sec', async () => { const r = await callUsers({ action: 'link', staff_id: p.id }); showLink(p, r.link); });
         if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return false; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
       }
       tr.append(tda); tbl.append(tr);

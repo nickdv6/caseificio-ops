@@ -36,6 +36,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
     <label for="em">La tua email</label><input id="em" type="email" autocomplete="email" inputmode="email">
     <button class="btn" id="send">Mandami un nuovo link</button>
     <div class="sub" id="sent" style="margin:12px 0 0"></div>
+    <a class="btn" href="console.html" style="display:block;text-align:center;text-decoration:none;background:transparent;color:var(--accent);border:1px solid var(--rule)">Ho già la password: entra</a>
   </div>
   <div class="err" id="err"></div>
 </div></div>
@@ -61,14 +62,14 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
       ? 'Questo link non vale più: è scaduto, è già stato usato, oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
       : 'Il link è scaduto o è già stato usato.';
     $('form').hidden = true; $('err').textContent = '';
-    $('sub').textContent = why + ' Scrivi la tua email e ricevi subito un link nuovo (vale 24 ore).';
+    $('sub').textContent = why + ' Se hai già scelto la password, entra e basta. Altrimenti scrivi la tua email e ricevi un link nuovo (vale 24 ore).';
     $('again').hidden = false; $('em').focus();
     $('send').onclick = async () => {
       const email = $('em').value.trim().toLowerCase(); $('err').textContent = '';
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $('err').textContent = 'Scrivi un\'email valida.';
       $('send').disabled = true;
       const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
-      if (error) { $('send').disabled = false; return $('err').textContent = /rate|seconds/i.test(error.message) ? 'Hai appena chiesto un link: aspetta un minuto e riprova.' : error.message; }
+      if (error) { $('send').disabled = false; return $('err').textContent = /rate limit/i.test(error.message) ? 'Troppe email inviate nell\'ultima ora: per ora non ne arrivano altre. Se hai già scelto una password, tocca «Ho già la password: entra»; altrimenti chiedi al titolare un link su WhatsApp.' : /seconds/i.test(error.message) ? 'Hai appena chiesto un link: aspetta un minuto e riprova.' : error.message; }
       $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email, una volta sola (vale 24 ore). Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
     };
     $('em').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').click(); });

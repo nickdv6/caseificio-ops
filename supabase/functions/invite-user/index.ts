@@ -3,6 +3,8 @@
 // POST { action: "invite", email, full_name, app_role, job_role? }  → creates/updates the staff row, sends the Supabase invite e-mail,
 //        links staff.auth_user_id; if the e-mail already has an account it is linked without a new invite.
 // POST { action: "resend", staff_id }   → new invite (or password-reset e-mail if the account already set a password)
+// POST { action: "link", staff_id }     → v0.81f: NO e-mail. Returns a one-time link to benvenuto.html (token_hash, verified only when the
+//        password is saved) for the titolare to send by WhatsApp. Not subject to the Supabase e-mail rate limit.
 // POST { action: "deactivate", staff_id } / { action: "reactivate", staff_id } → staff.active false/true and bans/unbans the login.
 // Redirect: the e-mail link opens benvenuto.html on the site (Supabase → Authentication → URL configuration must allow it).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -83,6 +85,22 @@ Deno.serve(async (req) => {
       return json({ ok: true, staff_id: staff!.id, invited, linked_existing_account: !invited });
     }
 
+    if (action === "link") {
+      const { data: staff } = await admin.from("staff").select("id, email, auth_user_id, full_name, active").eq("id", String(body.staff_id ?? "")).maybeSingle();
+      if (!staff) return json({ error: "Persona non trovata" }, 404);
+      if (!staff.active) return json({ error: "Persona disattivata" }, 400);
+      if (!staff.email) return json({ error: "Manca l'email" }, 400);
+      const email = staff.email.toLowerCase();
+      const existing = await findAuthUser(email);
+      const type = existing ? "recovery" : "invite";   // recovery also confirms an invited account that never finished
+      const { data, error } = await admin.auth.admin.generateLink(
+        existing ? { type: "recovery", email, options: { redirectTo } } : { type: "invite", email, options: { redirectTo, data: { full_name: staff.full_name } } });
+      if (error) throw error;
+      if (data.user && staff.auth_user_id !== data.user.id) await admin.from("staff").update({ auth_user_id: data.user.id }).eq("id", staff.id);
+      const link = `${SITE}/benvenuto.html?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=${type}`;
+      return json({ ok: true, link, type, has_password: !!(existing && existing.last_sign_in_at) });
+    }
+
     if (action === "resend" || action === "deactivate" || action === "reactivate") {
       const { data: staff } = await admin.from("staff").select("id, email, auth_user_id, full_name").eq("id", String(body.staff_id ?? "")).maybeSingle();
       if (!staff) return json({ error: "Persona non trovata" }, 404);
@@ -111,6 +129,8 @@ Deno.serve(async (req) => {
     }
     return json({ error: "azione sconosciuta" }, 400);
   } catch (e) {
-    return json({ error: (e as Error).message ?? String(e) }, 500);
+    const m = (e as Error).message ?? String(e);
+    if (/rate limit/i.test(m)) return json({ error: "Supabase ha raggiunto il limite di email (poche all'ora con il servizio email incluso). Usa «Link WhatsApp» oppure riprova tra un'ora." }, 429);
+    return json({ error: m }, 500);
   }
 });

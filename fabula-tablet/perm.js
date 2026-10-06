@@ -87,7 +87,7 @@ window.PERM = {
       a.style.pointerEvents = 'none'; a.textContent = 'Invio in corso…';
       try {
         const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
-        if (error && (error.status === 429 || /rate limit|security purposes|seconds/i.test(error.message || ''))) say('Hai già chiesto un link da poco: aspetta un minuto e riprova.', true);
+        if (error && (error.status === 429 || /rate limit|security purposes|seconds/i.test(error.message || ''))) say(/rate limit/i.test(error.message || '') ? 'Troppe email inviate nell\'ultima ora: per ora non ne arrivano altre. Se hai già scelto una password, scrivila qui sopra e tocca Entra; altrimenti chiedi al titolare un link su WhatsApp.' : 'Hai già chiesto un link da poco: aspetta un minuto e riprova.', true);
         else if (error && !/not found|user/i.test(error.message || '')) say('Invio non riuscito: ' + error.message, true);
         else { until = Date.now() + 60000; say(`Se ${email} è registrata, tra poco ricevi un'email con il link per scegliere una nuova password. Controlla anche lo spam.`); }
       } catch (err) { say('Invio non riuscito: controlla la connessione e riprova.', true); }
