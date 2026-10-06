@@ -41,7 +41,7 @@ system — lives here. Nothing is a paid app.
   and confirmed even while unpaid (net terms). Trigger `parties_trade_guard`: the nightly customer sync cannot rename or de-wholesale an
   approved trade customer. Legacy `standing_orders` rows are no longer read (placeholders only).
 - **Edge function `trade-portal`** (verify_jwt off): `apply` (public form), `state`/`portal` (customer key = metafield token),
-  `approve`/`reject`/`link`/`sync-prices` (staff JWT, Vendite ≥ 3), `run-queue` (secret or staff), `status` (diagnostics). Shopify side:
+  `approve`/`reject`/`link` (staff JWT, Vendite ≥ 3), `sync-prices` and `run-queue` (staff or job secret), `status` (diagnostics). Theme: the 7 files in `shopify-theme-trade/` are live in theme "Perla · Professionisti 2026-10-06" (published 06/10); header menu item "Per i professionisti" → /pages/professionisti. Shopify side:
   Dev Dashboard app **Caseificio ops** (org "La Perla del Cilento", installed on the store; scopes read/write customers, companies,
   draft_orders, orders, products, markets, publications, payment_terms). Dev Dashboard apps have no permanent token: the function mints
   one with the client-credentials grant (24 h, cached) from the Supabase secrets `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (Dev Dashboard →

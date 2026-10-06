@@ -17,7 +17,7 @@
 //   GET  ?action=status                                → staff or x-trade-secret: are the Shopify credentials working, which scopes
 //
 // Shopify Admin API credentials — Dev Dashboard app "Caseificio ops" (scopes read/write customers, companies, draft_orders, orders,
-// products, markets, publications + read_payment_terms). Dev Dashboard apps have no permanent token: the function mints one with the
+// products, markets, publications, payment_terms). Dev Dashboard apps have no permanent token: the function mints one with the
 // client-credentials grant from the secrets SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET (valid 24 h, cached and renewed by itself).
 // A legacy static token still works through SHOPIFY_ADMIN_TOKEN. SHOPIFY_SHOP = pxssjd-cq.myshopify.com. Without any of them the
 // database side still works and the answers say what is left to do by hand ("shopify": "not_configured").
@@ -72,7 +72,13 @@ async function gql(query: string, variables: Record<string, unknown> = {}) {
     if (r.status === 429) { await new Promise((res) => setTimeout(res, 1500)); continue; }
     if (r.status === 401 && i === 0) continue;   // token expired or revoked: mint a new one once
     const b = await r.json();
-    if (b.errors?.length) throw new Error(b.errors.map((e: { message: string }) => e.message).join("; "));
+    if (b.errors?.length) {
+      const msg = b.errors.map((e: { message: string }) => e.message).join("; ");
+      if (i === 0 && !STATIC_TOKEN && /access denied|not approved to access|must have access/i.test(msg)) { tokenCache = null; continue; }   // scopes changed since the token was minted
+      throw new Error(msg);
+    }
+    // same thing reported as a userError (e.g. "The user must have access to set payment terms"): re-mint once, scopes may have grown
+    if (i === 0 && !STATIC_TOKEN && /must have access|access denied/i.test(JSON.stringify(b.data ?? {}))) { tokenCache = null; continue; }
     return b.data;
   }
   throw new Error("Shopify: troppe richieste");
@@ -143,7 +149,8 @@ async function createOrder(row: Record<string, any>) {
       ...(p.instructions ? [{ key: "Istruzioni", value: String(p.instructions).slice(0, 250) }] : []),
     ],
     shippingLine: { title: "Consegna diretta", price: "0.00" },
-    ...(tmpl ? { paymentTerms: { paymentTermsTemplateId: tmpl.id } } : {}),
+    // net terms need an issue date: the delivery day (Shopify computes the due date from the template)
+    ...(tmpl ? { paymentTerms: { paymentTermsTemplateId: tmpl.id, paymentSchedules: [{ issuedAt: `${row.delivery_date}T06:00:00Z` }] } } : {}),
     ...(p.po_number ? { poNumber: String(p.po_number) } : {}),
   };
   const d = await gql(`mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id name } userErrors { field message } } }`, { input });
