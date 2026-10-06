@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>La Perla · Ingrosso</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
+<link rel="stylesheet" href="ui.css">
+<style>
+/* Ingrosso (v0.83): richieste di accesso, clienti e piani consegne, calendario consegne con totali e CSV, listino B2B, chiusure. Shared look in ui.css. */
+.app{border:1px solid var(--rule);border-left:4px solid var(--warn);border-radius:8px;padding:12px 14px;margin-bottom:12px;background:var(--paper)}
+.app .t{font-family:var(--display);font-size:1.25rem;font-weight:700}
+.app .facts{margin:8px 0 4px}
+.cust{border:1px solid var(--rule);border-radius:8px;padding:10px 14px;margin-bottom:10px;background:var(--paper)}
+.cust summary{cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;list-style:none}
+.cust summary::-webkit-details-marker{display:none}
+.cust summary b{font-family:var(--display);font-size:1.15rem}
+.pill{display:inline-block;font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:10px;background:var(--tile);color:var(--muted);font-weight:600}
+.pill.ok{background:#e3f1e8;color:var(--good)}.pill.ko{background:#f8e6e0;color:var(--warn)}
+.plan{width:auto;min-width:420px}.plan input{width:4.2rem;text-align:center;font:1rem var(--body);padding:4px;border:1px solid var(--rule);border-radius:6px}
+.plan select{font:.9rem var(--body);padding:3px;border:1px solid var(--rule);border-radius:6px;max-width:7rem}
+.day{border:1px solid var(--rule);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--paper)}
+.day .h{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}.day .h b{font-family:var(--display);font-size:1.1rem;text-transform:capitalize}
+.day table{margin-top:6px}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:.85rem}
+.lnk{color:var(--accent);font-weight:600}
+input[type=date],input[type=number],select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg)}
+.ex{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--rule);font-size:.9rem}
+.small{font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1><span data-brand="name">La Perla del Cilento</span> <span class="badge" style="background:var(--accent)">ingrosso</span></h1><div class="sub">Ristoranti, pizzerie, hotel: richieste, piani consegne, calendario e listino B2B</div></div>
+</header>
+<nav class="top" id="nav"></nav>
+
+<section class="view" id="v-main">
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="richieste" aria-selected="true">Richieste <span class="n" id="n-app"></span></button>
+    <button class="tab" role="tab" data-tab="clienti">Clienti e piani</button>
+    <button class="tab" role="tab" data-tab="consegne">Consegne</button>
+    <button class="tab" role="tab" data-tab="listino">Listino e sconti</button>
+    <button class="tab" role="tab" data-tab="regole">Giorni e chiusure</button>
+  </nav>
+
+  <div class="pane active" id="p-richieste">
+    <div class="hint">Le richieste arrivano dalla pagina "Richiedi l'accesso" del sito. Approvare crea il cliente qui, l'azienda B2B su Shopify (termini di pagamento, listino riservato) e manda il cliente al portale. Rifiutare non manda nulla: avvisa tu il cliente.</div>
+    <div id="apps"></div>
+    <details class="card" style="margin-top:12px"><summary><h3>Richieste già decise</h3></summary><div class="body" id="apps-done" style="overflow-x:auto"></div></details>
+  </div>
+
+  <div class="pane" id="p-clienti">
+    <div class="hint">Ogni cliente approvato ha un piano settimanale (quantità per giorno e fascia), le modifiche in programma e il link personale del portale. Le modifiche fatte da qui valgono anche oltre l'ora limite ("forza").</div>
+    <div id="custs"></div>
+  </div>
+
+  <div class="pane" id="p-consegne">
+    <div class="card" style="margin-bottom:12px"><div class="row nodirty"><label>Dal <input type="date" id="dl-from"></label><label>giorni <input type="number" id="dl-days" min="1" max="60" value="14" style="width:80px"></label><button class="btn sm sec" id="dl-go">Aggiorna</button><span style="flex:1"></span><button class="btn sm sec" id="dl-csv-tot">CSV totali per prodotto</button><button class="btn sm sec" id="dl-csv-det">CSV consegne per cliente</button></div>
+      <div class="hint">Le consegne di domani si prenotano alle 18:20 (bot Ordini ingrosso; se non parte, il database alle 18:25) e vanno su Shopify come ordini B2B subito dopo. Qui vedi anche i giorni successivi come previsione dal piano.</div></div>
+    <div id="deliv"></div>
+    <div class="card" style="margin-top:12px"><h3>Ordini Shopify in coda</h3><div class="hint">Consegne prenotate che aspettano di diventare ordini Shopify. "Invia ora" chiama la funzione subito.</div><div id="queue"></div><div class="row"><button class="btn sm" id="q-run">Invia ora a Shopify</button></div></div>
+  </div>
+
+  <div class="pane" id="p-listino">
+    <div class="card" style="margin-bottom:12px"><h3>Prodotti e prezzi riservati</h3><div class="hint">Prezzo base = prezzo in Shopify (al kg, IVA esclusa); prezzo riservato = listino B2B. "Invia a Shopify" scrive prezzi, minimi e (se gli scaglioni sono per consegna) gli scaglioni nel listino "Listino Ho.Re.Ca." di Shopify. Un prodotto senza prezzo riservato non è ordinabile dai professionisti.</div><div id="prods" style="overflow-x:auto"></div><div class="row"><button class="btn sm" id="pr-sync">Invia a Shopify</button><span class="status" id="pr-sync-st"></span></div></div>
+    <div class="grid2">
+      <div class="card"><h3>Scaglioni di quantità</h3><div class="hint">Da N kg in su: prezzo fisso oppure sconto %. "Tutti i prodotti" si calcola sui kg totali, un prodotto sui suoi kg. La base (per consegna o per settimana) e la regola di cumulo con lo sconto ricorrente sono in Configurazione → Parametri (trade.tier_basis, trade.discounts_combine).</div><div id="tiers"></div>
+        <div class="row" data-scope><select id="tr-var" aria-label="Prodotto"><option value="">Tutti i prodotti</option></select><input type="number" id="tr-min" placeholder="da kg" min="0.5" step="0.5" style="width:90px"><input type="number" id="tr-price" placeholder="€/kg" min="0" step="0.01" style="width:90px"><input type="number" id="tr-pct" placeholder="sconto %" min="0" max="99" step="0.5" style="width:100px"><button class="btn sm save" id="tr-add">Aggiungi</button></div></div>
+      <div class="card"><h3>Regole in vigore</h3><div id="rules"></div><div class="hint" style="margin-top:8px">Si cambiano in <a class="lnk" href="admin.html#parametri">Configurazione → Parametri</a> (prefisso trade.).</div></div>
+    </div>
+  </div>
+
+  <div class="pane" id="p-regole">
+    <div class="grid2">
+      <div class="card"><h3>Chiusure del caseificio</h3><div class="hint">Nei giorni di chiusura non si consegna a nessuno: i piani saltano da soli e riprendono dopo. I clienti le vedono nel portale.</div><div id="closures"></div>
+        <div class="row" data-scope><input type="date" id="cl-from"><input type="date" id="cl-to"><input type="text" id="cl-note" placeholder="motivo (facoltativo)" style="flex:1;min-width:140px"><button class="btn sm save" id="cl-add">Aggiungi</button></div></div>
+      <div class="card"><h3>Giorni, fasce, ordine minimo, ora limite</h3><div id="rules2"></div><div class="hint" style="margin-top:8px">Si cambiano in <a class="lnk" href="admin.html#parametri">Configurazione → Parametri</a> (prefisso trade.).</div></div>
+    </div>
+  </div>
+</section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="brand.js"></script>
+<script src="perm.js"></script>
+<script src="ui.js"></script>
+<script src="ingrosso.js"></script>
+</body>
+</html>

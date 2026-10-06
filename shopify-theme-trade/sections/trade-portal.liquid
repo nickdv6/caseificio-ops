@@ -1,0 +1,91 @@
+{%- comment -%}
+  Per i professionisti · portale (v0.83). Three states:
+    1. nobody logged in            → what the trade section is + "Accedi" (new customer accounts) + "Richiedi l'accesso"
+    2. logged in, not a trade customer → "accesso non ancora attivo" + link to the application (e-mail prefilled)
+    3. logged in trade customer    → the portal app (assets/trade.js): weekly plan, next deliveries, pauses/closures, history
+  The gate is native Shopify: tag "ingrosso" + customer metafield trade.portal_token, both set by the ops system on approval.
+  The metafield is rendered only for the logged-in customer and acts as the key of the Supabase function trade-portal.
+{%- endcomment -%}
+{{ 'trade.css' | asset_url | stylesheet_tag }}
+
+{%- liquid
+  assign token = ''
+  assign is_trade = false
+  if customer
+    assign token = customer.metafields.trade.portal_token | default: ''
+    if customer.tags contains 'ingrosso' or customer.b2b?
+      assign is_trade = true
+    endif
+  endif
+  assign apply_url = '/pages/' | append: section.settings.apply_handle
+  assign login_url = routes.account_login_url | append: '?return_url=' | append: request.path
+-%}
+
+<div class="container container--large container--vertical-space-small trade" id="trade-portal-{{ section.id }}">
+
+  {%- if customer and is_trade and token != blank -%}
+    <div id="trade-app" class="trade-app" data-edge="{{ section.settings.edge_url | escape }}" data-token="{{ token | escape }}"
+         data-orders-url="{{ routes.account_url }}" data-apply-url="{{ apply_url }}" data-shop="{{ shop.name | escape }}">
+      <div class="trade-app__loading">Carico il tuo piano consegne…</div>
+    </div>
+    <noscript><p>Il portale ha bisogno di JavaScript. Scrivici su WhatsApp per gestire le consegne.</p></noscript>
+    <script src="{{ 'trade.js' | asset_url }}" defer></script>
+
+  {%- elsif customer -%}
+    <div class="trade-gate">
+      <span class="trade-kicker">{{ section.settings.kicker | escape }}</span>
+      <h1 class="title heading-size--page-title">{{ section.settings.heading | escape }}</h1>
+      <div class="rte gutter-top--small">
+        <p>Ciao {{ customer.first_name | default: customer.email }}, il tuo account non ha ancora l'accesso ai prezzi riservati ai professionisti.</p>
+        <p>Se hai già inviato la richiesta ti attiviamo entro un giorno lavorativo. Altrimenti bastano due minuti:</p>
+      </div>
+      <div class="trade-gate__actions">
+        {%- render 'button', label: "Richiedi l'accesso", style: 'solid', type: 'link', link: apply_url -%}
+        <a class="trade-gate__alt" href="{{ routes.account_url }}">I miei ordini</a>
+      </div>
+    </div>
+
+  {%- else -%}
+    <div class="trade-gate trade-gate--public">
+      <span class="trade-kicker">{{ section.settings.kicker | escape }}</span>
+      <h1 class="title heading-size--page-title">{{ section.settings.heading | escape }}</h1>
+      <div class="rte gutter-top--small">{{ section.settings.intro }}</div>
+      <div class="trade-gate__actions">
+        {%- render 'button', label: 'Accedi al portale', style: 'solid', type: 'link', link: login_url -%}
+        {%- render 'button', label: "Richiedi l'accesso", style: 'outline', type: 'link', link: apply_url -%}
+      </div>
+      {%- if section.blocks.size > 0 -%}
+        <ul class="trade-perks">
+          {%- for block in section.blocks -%}
+            <li {{ block.shopify_attributes }}><strong>{{ block.settings.title | escape }}</strong><span>{{ block.settings.text | escape }}</span></li>
+          {%- endfor -%}
+        </ul>
+      {%- endif -%}
+    </div>
+  {%- endif -%}
+</div>
+
+{% schema %}
+{
+  "name": "Professionisti · Portale",
+  "tag": "section",
+  "settings": [
+    { "type": "text", "id": "kicker", "label": "Sopratitolo", "default": "Per i professionisti" },
+    { "type": "text", "id": "heading", "label": "Titolo", "default": "Le tue consegne di mozzarella, programmate" },
+    { "type": "richtext", "id": "intro", "label": "Introduzione (visitatori non collegati)", "default": "<p>Ristoranti, pizzerie e hotel del Cilento ricevono ogni mattina la nostra Mozzarella di Bufala Campana DOP a prezzo riservato. Accedi con la tua email per vedere il listino, impostare i giorni di consegna e cambiare le quantità quando serve.</p>" },
+    { "type": "text", "id": "apply_handle", "label": "Handle della pagina richiesta", "default": "richiesta-professionisti" },
+    { "type": "text", "id": "edge_url", "label": "Indirizzo funzione trade-portal", "default": "https://ojkquhzaeypsphncjqwy.supabase.co/functions/v1/trade-portal" }
+  ],
+  "blocks": [
+    { "type": "perk", "name": "Vantaggio", "settings": [
+      { "type": "text", "id": "title", "label": "Titolo", "default": "Prezzo riservato al kg" },
+      { "type": "text", "id": "text", "label": "Testo", "default": "Listino professionale, scaglioni di quantità e sconto sul piano fisso." } ] }
+  ],
+  "presets": [ { "name": "Professionisti · Portale", "blocks": [
+    { "type": "perk", "settings": { "title": "Prezzo riservato al kg", "text": "Listino professionale, scaglioni di quantità e sconto sul piano fisso." } },
+    { "type": "perk", "settings": { "title": "Consegna diretta la mattina", "text": "Nei giorni e nella fascia oraria che scegli, con mezzo refrigerato." } },
+    { "type": "perk", "settings": { "title": "Cambi quando vuoi", "text": "Quantità diverse per giorno, chiusure, pause: tutto dal portale, entro le 18 del giorno prima." } },
+    { "type": "perk", "settings": { "title": "Fattura a fine mese", "text": "Ordini registrati automaticamente, pagamento a 30 giorni." } }
+  ] } ]
+}
+{% endschema %}

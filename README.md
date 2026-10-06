@@ -17,6 +17,41 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Per i professionisti — Shopify B2B + piani consegne (v0.83)
+Shopify B2B is native on the Basic plan (verified 06/10/2026): companies, company locations, Net terms, B2B market + catalog with its
+own price list, quantity rules and price breaks. What Shopify does not do — application queue, weekly delivery plan with per-day
+quantities and windows, skips/closures/temporary quantities/pause, pricing rules beyond the native ones, booking into the ops
+system — lives here. Nothing is a paid app.
+- **Shopify (native):** B2B market `Ho.Re.Ca. Italia (B2B)` (all company locations) → catalog `Listino Ho.Re.Ca.` → price list
+  (fixed trade prices per kg, quantity rules min/step, price breaks when `trade.tier_basis` = delivery). Trade product
+  `mozzarella-bufala-dop-ristorazione` (5 pezzature, €14 base = banco, €11.50 trade), template `product.trade`. Customer metafield
+  `trade.portal_token` (pinned definition) + tag `ingrosso` = the storefront gate. Pages `/pages/professionisti` (portal) and
+  `/pages/richiesta-professionisti` (application); theme files in `shopify-theme-trade/` (uploaded to the unpublished theme
+  "Perla · Professionisti (anteprima B2B)", id 135103840331; to go live copy the 7 files into a duplicate of the live theme and publish).
+- **Database (v083a–g):** `trade_applications`, `trade_products` (mirror of the trade variants, ops product + kg/unit), `trade_price_tiers`,
+  `trade_schedules` + `trade_schedule_days` (+ `active`) + `trade_schedule_lines` (qty per weekday per variant), `trade_exceptions`
+  (skip / override / window, date ranges, expire by themselves), `trade_closures` (dairy closed), `trade_change_log` (confirmations the
+  customer sees), `trade_order_queue` (booked deliveries → Shopify orders). Settings `trade.*` (Configurazione → Parametri): minimum,
+  cut-off, delivery days, windows, recurring discount %, combine rule, tier basis (delivery | week), payment terms, ids of the Shopify objects,
+  `trade.job_secret` (pg_cron → edge function). Engine: `trade_effective_lines(date)` (plan + exceptions + closures + pause),
+  `trade_price(customer, variant, qty, recurring)` (list → tier → recurring discount; combine or best-of), `trade_upcoming`, `trade_daily_totals`.
+  `confirm_standing_orders` (bot Ordini ingrosso 18:20 / db fallback) now books from the trade plan into `sales_orders` (channel wholesale,
+  source standing_order, delivery window/address/instructions) and queues each order; pg_cron `fabula_trade_push` (18:25 Rome) and
+  `fabula_trade_push_retry` (hourly) call the edge function. Trigger `sales_orders_b2b`: a Shopify order of a trade customer is wholesale
+  and confirmed even while unpaid (net terms). Trigger `parties_trade_guard`: the nightly customer sync cannot rename or de-wholesale an
+  approved trade customer. Legacy `standing_orders` rows are no longer read (placeholders only).
+- **Edge function `trade-portal`** (verify_jwt off): `apply` (public form), `state`/`portal` (customer key = metafield token),
+  `approve`/`reject`/`link`/`sync-prices` (staff JWT, Vendite ≥ 3), `run-queue` (secret or staff). Needs Supabase secrets
+  `SHOPIFY_ADMIN_TOKEN` (custom app: write_customers, write_companies, write_draft_orders, write_orders, write_products, read_payment_terms)
+  and `SHOPIFY_SHOP`; without them approvals still work here and say what to do by hand, orders stay in the queue (`configured: false`).
+- **Console → Ingrosso** (`ingrosso.html`, page `ingrosso` = Vendite ≥ 1; approvals/prices need Vendite ≥ 3): Richieste, Clienti e piani
+  (plan grid, pause/resume/cancel, exceptions with "force" past the cut-off, suspend access, portal link, new link), Consegne (per date with
+  product totals, CSV totals / CSV per customer, Shopify queue + "Invia ora"), Listino e sconti (trade prices, min/step, tiers, "Invia a
+  Shopify"), Giorni e chiusure.
+- Rules worth remembering: changes for date D are accepted until `trade.cutoff_time` of D-1 (staff can force); a booked delivery is a snapshot
+  (later plan changes do not touch it); "pausa fino al" = skip range that resumes by itself; recurring discount applies only to plan lines;
+  tiers "tutti i prodotti" on the weekly basis read the whole plan's kg. Tests of 06/10: scenario in the project doc.
+
 ## Operating decisions encoded in the database (v0.39)
 - Milk price: setting `milk.price_eur_kg` (1.70, confirmed by Nick 05/10 after a stray edit to 1.6). Every intake without a price takes it; all cost reports read it.
 - Milk is **pasteurised** (`food.milk_process` = pastorizzato): CCP 2 is required on every mozzarella lot.

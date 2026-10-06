@@ -3,7 +3,7 @@
    this file only hides what the person can't use. */
 window.PERM = {
   data: null,
-  HOME: { tablet: 'index.html', console: 'console.html', haccp: 'haccp.html', marketing: 'marketing.html', vendite: 'vendite.html', admin: 'admin.html' },
+  HOME: { tablet: 'index.html', console: 'console.html', haccp: 'haccp.html', marketing: 'marketing.html', vendite: 'vendite.html', ingrosso: 'ingrosso.html', admin: 'admin.html' },
   offline: false,
   // v0.59: the last profile seen on this device is kept per user, so the tablet still opens when the network is down.
   // Only used when the database can't be reached; the database keeps enforcing the real rules when the records are sent.

@@ -75,7 +75,7 @@
   document.documentElement.classList.toggle('nohints', hintsOff());
 
   // ---------- header: page links, bot bell, user menu ----------
-  const PAGES = [['console', 'console.html', 'Console'], ['haccp', 'haccp.html', 'Autocontrollo'], ['marketing', 'marketing.html', 'Marketing'], ['vendite', 'vendite.html', 'Vendite'], ['admin', 'admin.html', 'Configurazione']];
+  const PAGES = [['console', 'console.html', 'Console'], ['haccp', 'haccp.html', 'Autocontrollo'], ['marketing', 'marketing.html', 'Marketing'], ['vendite', 'vendite.html', 'Vendite'], ['ingrosso', 'ingrosso.html', 'Ingrosso'], ['admin', 'admin.html', 'Configurazione']];
   let current = null, refreshFn = null, staff = null;
   function renderNav() {
     const nav = $('nav'); if (!nav) return;

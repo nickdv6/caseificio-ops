@@ -1,0 +1,22 @@
+{
+  "sections": {
+    "portal": {
+      "type": "trade-portal",
+      "blocks": {
+        "p1": { "type": "perk", "settings": { "title": "Prezzo riservato al kg", "text": "Listino professionale, scaglioni di quantità e sconto sul piano fisso." } },
+        "p2": { "type": "perk", "settings": { "title": "Consegna diretta la mattina", "text": "Nei giorni e nella fascia oraria che scegli, con mezzo refrigerato." } },
+        "p3": { "type": "perk", "settings": { "title": "Cambi quando vuoi", "text": "Quantità diverse per giorno, chiusure, pause: tutto dal portale, entro le 18 del giorno prima." } },
+        "p4": { "type": "perk", "settings": { "title": "Fattura a fine mese", "text": "Ordini registrati automaticamente, pagamento a 30 giorni." } }
+      },
+      "block_order": ["p1", "p2", "p3", "p4"],
+      "settings": {
+        "kicker": "Per i professionisti",
+        "heading": "Le tue consegne di mozzarella, programmate",
+        "intro": "<p>Ristoranti, pizzerie e hotel del Cilento ricevono ogni mattina la nostra Mozzarella di Bufala Campana DOP a prezzo riservato. Accedi con la tua email per vedere il listino, impostare i giorni di consegna e cambiare le quantità quando serve.</p>",
+        "apply_handle": "richiesta-professionisti",
+        "edge_url": "https://ojkquhzaeypsphncjqwy.supabase.co/functions/v1/trade-portal"
+      }
+    }
+  },
+  "order": ["portal"]
+}

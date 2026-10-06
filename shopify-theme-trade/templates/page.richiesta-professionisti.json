@@ -1,0 +1,23 @@
+{
+  "sections": {
+    "apply": {
+      "type": "trade-apply",
+      "blocks": {
+        "s1": { "type": "step", "settings": { "title": "Compila la richiesta", "text": "Bastano i dati della tua attività e una stima dei chili a settimana." } },
+        "s2": { "type": "step", "settings": { "title": "Ti attiviamo l'accesso", "text": "Entro un giorno lavorativo. Entri nel sito con la tua email e vedi il listino riservato." } },
+        "s3": { "type": "step", "settings": { "title": "Imposti le consegne", "text": "Giorni, quantità e fascia oraria. Cambi, salti o metti in pausa quando vuoi, entro le 18 del giorno prima." } }
+      },
+      "block_order": ["s1", "s2", "s3"],
+      "settings": {
+        "kicker": "Ristoranti · Pizzerie · Hotel",
+        "heading": "Mozzarella di bufala DOP per la tua cucina, ogni mattina",
+        "intro": "<p>Produciamo ad Agropoli con il latte delle nostre bufale e consegniamo direttamente ai professionisti del Cilento. Prezzi riservati, consegna programmata nei giorni che scegli, fattura mensile.</p>",
+        "button_label": "Invia la richiesta",
+        "fine_print": "Valutiamo ogni richiesta entro un giorno lavorativo. Nessun vincolo: il piano consegne si cambia quando vuoi.",
+        "portal_handle": "professionisti",
+        "edge_url": "https://ojkquhzaeypsphncjqwy.supabase.co/functions/v1/trade-portal"
+      }
+    }
+  },
+  "order": ["apply"]
+}

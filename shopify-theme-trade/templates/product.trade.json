@@ -1,0 +1,34 @@
+{
+  "sections": {
+    "gate": {
+      "type": "custom-liquid",
+      "settings": {
+        "heading": "",
+        "subheading": "",
+        "custom_liquid": "{% liquid\n  assign is_trade = false\n  if customer and customer.tags contains 'ingrosso'\n    assign is_trade = true\n  endif\n  if customer.b2b?\n    assign is_trade = true\n  endif\n%}\n{% if is_trade %}\n<div style=\"background:var(--color-background-header);color:var(--color-text-header);padding:.8rem 1.2rem;border-radius:var(--border-radius-widgets,14px);display:flex;gap:1rem;flex-wrap:wrap;justify-content:space-between;align-items:center\"><span>Prezzo riservato attivo{% if customer.current_company %} per <strong>{{ customer.current_company.name }}</strong>{% endif %}. Il prezzo mostrato è al kg, IVA esclusa.</span><a href=\"/pages/professionisti\" style=\"color:inherit;text-decoration:underline;font-weight:600\">Gestisci le consegne programmate →</a></div>\n{% else %}\n<div style=\"background:var(--color-third-background-main);padding:.8rem 1.2rem;border-radius:var(--border-radius-widgets,14px);display:flex;gap:1rem;flex-wrap:wrap;justify-content:space-between;align-items:center\"><span>Prodotto per ristoranti, pizzerie e hotel: il listino riservato compare dopo l'accesso.</span><span><a href=\"{{ routes.account_login_url }}?return_url={{ request.path }}\" style=\"font-weight:600;text-decoration:underline\">Accedi</a> &nbsp;·&nbsp; <a href=\"/pages/richiesta-professionisti\" style=\"font-weight:600;text-decoration:underline\">Richiedi l'accesso</a></span></div>\n{% endif %}",
+        "full_width": false,
+        "remove_margin": true,
+        "seo_h_tag": "span"
+      }
+    },
+    "main": {
+      "type": "main-product",
+      "blocks": {
+        "vendor": { "type": "vendor", "settings": {} },
+        "title": { "type": "title", "settings": {} },
+        "price": { "type": "price", "settings": {} },
+        "variant_picker": { "type": "variant_picker", "settings": { "heading": "", "variants_style": "radio", "variant_labels": true, "color_swatches": false, "style": "none", "unavailable_variants": "hide" } },
+        "buy_buttons": { "type": "buy_buttons", "settings": { "show_quantity_selector": true, "show_preorder": false, "show_dynamic_checkout": false, "show_gift_card_recipient": false, "show_price": true, "style": "outline", "color_text_buttons": "#c9a961" } },
+        "description": { "type": "description", "settings": { "product_description_truncated": "600", "collapsible": false, "heading": "Il prodotto" } }
+      },
+      "block_order": ["vendor", "title", "price", "variant_picker", "buy_buttons", "description"],
+      "settings": {
+        "gallery_layout": "one-col scroll", "enhance_first_image": false, "gallery_desktop_width": "one-half", "gallery_mobile_width": 100, "gallery_mobile_margin": false,
+        "gallery_aspect_ratio": "1", "gallery_fit": false, "gallery_padding": 0, "gallery_background": "rgba(0,0,0,0)", "gallery_border": "rgba(0,0,0,0)", "border_radius": 0,
+        "show_thumbnails": false, "enable_zoom": false, "enable_video_looping": false, "enable_video_autoplay": false, "video_fit": false, "default_to_first_variant": true,
+        "sticky_add_to_cart": false, "sticky_atc_variants": false, "sticky_atc_style": "floating", "sticky_bar_bgcolor": "#2e2e2e", "sticky_bar_txtcolor": "#ffffff"
+      }
+    }
+  },
+  "order": ["gate", "main"]
+}

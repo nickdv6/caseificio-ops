@@ -1,0 +1,158 @@
+{%- comment -%}
+  Per i professionisti · richiesta di accesso (v0.83). Public page: who it is for, how it works, the application form.
+  The form posts to the Supabase function trade-portal (?action=apply) → fabula.trade_applications → Console → Ingrosso.
+  No Shopify login needed to apply; after approval the customer logs in with the same e-mail and finds the trade prices.
+{%- endcomment -%}
+{{ 'trade.css' | asset_url | stylesheet_tag }}
+
+{%- liquid
+  assign edge = section.settings.edge_url
+  assign types = 'ristorante:Ristorante,pizzeria:Pizzeria,hotel:Hotel,bnb:B&B,agriturismo:Agriturismo,lido:Lido / stabilimento,gastronomia:Gastronomia / negozio,altro:Altro' | split: ','
+-%}
+
+<div class="container container--large container--vertical-space-small trade trade-apply" id="trade-apply-{{ section.id }}">
+  <div class="trade-apply__grid">
+    <div class="trade-apply__intro remove-empty-space">
+      <span class="trade-kicker">{{ section.settings.kicker | escape }}</span>
+      <h1 class="title heading-size--page-title">{{ section.settings.heading | escape }}</h1>
+      <div class="rte gutter-top--small">{{ section.settings.intro }}</div>
+
+      {%- if section.blocks.size > 0 -%}
+        <ul class="trade-steps">
+          {%- for block in section.blocks -%}
+            <li {{ block.shopify_attributes }}>
+              <span class="trade-steps__n">{{ forloop.index }}</span>
+              <div><strong>{{ block.settings.title | escape }}</strong><p>{{ block.settings.text | escape }}</p></div>
+            </li>
+          {%- endfor -%}
+        </ul>
+      {%- endif -%}
+
+      {%- if customer -%}
+        <p class="trade-note">Sei collegato come <strong>{{ customer.email }}</strong>: useremo questa email per attivare l'accesso.</p>
+      {%- else -%}
+        <p class="trade-note">Hai già l'accesso? <a href="{{ routes.account_login_url }}?return_url=/pages/{{ section.settings.portal_handle }}">Accedi</a> per vedere il listino e le tue consegne.</p>
+      {%- endif -%}
+    </div>
+
+    <form class="trade-form isolate" id="trade-apply-form" novalidate data-edge="{{ edge | escape }}">
+      <h2 class="heading-size--xsmall text-font--heading gutter-bottom--small">Richiedi l'accesso</h2>
+
+      <div class="trade-form__row">
+        <label for="ta-business">Nome dell'attività *</label>
+        <input class="field__input" id="ta-business" name="business_name" type="text" required autocomplete="organization" placeholder="Es. Pizzeria Da Mario">
+      </div>
+      <div class="trade-form__row trade-form__row--2">
+        <div>
+          <label for="ta-type">Tipo di attività *</label>
+          <select class="field__input" id="ta-type" name="business_type" required>
+            {%- for t in types -%}{%- assign kv = t | split: ':' -%}<option value="{{ kv[0] }}">{{ kv[1] }}</option>{%- endfor -%}
+          </select>
+        </div>
+        <div>
+          <label for="ta-piva">Partita IVA *</label>
+          <input class="field__input" id="ta-piva" name="piva" type="text" inputmode="numeric" required pattern="(IT)?[0-9]{11}" placeholder="11 cifre">
+        </div>
+      </div>
+      <div class="trade-form__row trade-form__row--2">
+        <div>
+          <label for="ta-contact">Referente *</label>
+          <input class="field__input" id="ta-contact" name="contact_name" type="text" required autocomplete="name" value="{% if customer %}{{ customer.name | escape }}{% endif %}">
+        </div>
+        <div>
+          <label for="ta-phone">Telefono / WhatsApp *</label>
+          <input class="field__input" id="ta-phone" name="phone" type="tel" required autocomplete="tel" value="{% if customer %}{{ customer.phone | escape }}{% endif %}">
+        </div>
+      </div>
+      <div class="trade-form__row">
+        <label for="ta-email">Email *</label>
+        <input class="field__input" id="ta-email" name="email" type="email" required autocomplete="email" value="{% if customer %}{{ customer.email | escape }}{% endif %}" {% if customer %}readonly{% endif %}>
+        <small>Con questa email entrerai nel sito e vedrai i prezzi riservati.</small>
+      </div>
+      <div class="trade-form__row">
+        <label for="ta-address">Indirizzo di consegna *</label>
+        <input class="field__input" id="ta-address" name="address" type="text" required autocomplete="street-address" placeholder="Via e numero civico">
+      </div>
+      <div class="trade-form__row trade-form__row--3">
+        <div><label for="ta-city">Comune *</label><input class="field__input" id="ta-city" name="city" type="text" required autocomplete="address-level2"></div>
+        <div><label for="ta-province">Prov.</label><input class="field__input" id="ta-province" name="province" type="text" maxlength="2" placeholder="SA"></div>
+        <div><label for="ta-postcode">CAP</label><input class="field__input" id="ta-postcode" name="postcode" type="text" inputmode="numeric" autocomplete="postal-code"></div>
+      </div>
+      <div class="trade-form__row trade-form__row--2">
+        <div>
+          <label for="ta-kg">Fabbisogno stimato (kg / settimana) *</label>
+          <input class="field__input" id="ta-kg" name="expected_kg_week" type="number" min="1" step="0.5" required placeholder="Es. 20">
+        </div>
+        <div>
+          <label for="ta-days">Giorni di consegna preferiti</label>
+          <input class="field__input" id="ta-days" name="preferred_days" type="text" placeholder="Es. martedì, giovedì, sabato">
+        </div>
+      </div>
+      <div class="trade-form__row">
+        <label for="ta-notes">Note (prodotti che usi, orari, codice SDI…)</label>
+        <textarea class="field__input text-area" id="ta-notes" name="notes" rows="3"></textarea>
+      </div>
+      <div class="trade-form__row trade-form__hp" aria-hidden="true"><label>Sito web</label><input name="website" type="text" tabindex="-1" autocomplete="off"></div>
+      <label class="trade-check">
+        <input type="checkbox" id="ta-consent" required>
+        <span>Ho letto l'<a href="/policies/privacy-policy" target="_blank" rel="noopener">informativa privacy</a> e acconsento al trattamento dei dati per attivare la fornitura.</span>
+      </label>
+      {%- if customer -%}<input type="hidden" name="shopify_customer_id" value="{{ customer.id }}">{%- endif -%}
+
+      <div class="trade-form__actions">
+        <button type="submit" class="button button--solid button--fullwidth"><span class="button__text">{{ section.settings.button_label | escape }}</span></button>
+        <p class="trade-form__msg" id="trade-apply-msg" role="status" aria-live="polite"></p>
+      </div>
+      <p class="trade-form__fine">{{ section.settings.fine_print | escape }}</p>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var f = document.getElementById('trade-apply-form'); if (!f) return;
+    var msg = document.getElementById('trade-apply-msg');
+    f.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (!f.reportValidity()) return;
+      var btn = f.querySelector('button[type=submit]'); btn.disabled = true; msg.className = 'trade-form__msg'; msg.textContent = 'Invio in corso…';
+      var body = {}; new FormData(f).forEach(function (v, k) { body[k] = v; }); body.source = 'web';
+      try {
+        var r = await fetch(f.dataset.edge + '?action=apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        var j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || 'Invio non riuscito');
+        msg.className = 'trade-form__msg ok'; msg.textContent = j.message_it || 'Richiesta ricevuta.';
+        f.querySelectorAll('input:not([type=hidden]), select, textarea').forEach(function (i) { i.disabled = true; });
+        btn.querySelector('.button__text').textContent = 'Richiesta inviata';
+      } catch (err) {
+        msg.className = 'trade-form__msg err'; msg.textContent = err.message || 'Invio non riuscito. Riprova o scrivici.'; btn.disabled = false;
+      }
+    });
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Trade · Richiesta",
+  "tag": "section",
+  "settings": [
+    { "type": "text", "id": "kicker", "label": "Sopratitolo", "default": "Ristoranti · Pizzerie · Hotel" },
+    { "type": "text", "id": "heading", "label": "Titolo", "default": "Mozzarella di bufala DOP per la tua cucina, ogni mattina" },
+    { "type": "richtext", "id": "intro", "label": "Introduzione", "default": "<p>Produciamo ad Agropoli con il latte delle nostre bufale e consegniamo direttamente ai professionisti del Cilento. Prezzi riservati, consegna programmata nei giorni che scegli, fattura mensile.</p>" },
+    { "type": "text", "id": "button_label", "label": "Testo del bottone", "default": "Invia la richiesta" },
+    { "type": "text", "id": "fine_print", "label": "Nota sotto il bottone", "default": "Valutiamo ogni richiesta entro un giorno lavorativo. Nessun vincolo: il piano consegne si cambia quando vuoi." },
+    { "type": "text", "id": "portal_handle", "label": "Handle della pagina portale", "default": "professionisti" },
+    { "type": "text", "id": "edge_url", "label": "Indirizzo funzione trade-portal", "default": "https://ojkquhzaeypsphncjqwy.supabase.co/functions/v1/trade-portal" }
+  ],
+  "blocks": [
+    { "type": "step", "name": "Passaggio", "settings": [
+      { "type": "text", "id": "title", "label": "Titolo", "default": "Compila la richiesta" },
+      { "type": "text", "id": "text", "label": "Testo", "default": "Bastano i dati della tua attività e una stima dei chili a settimana." } ] }
+  ],
+  "presets": [ { "name": "Trade · Richiesta", "blocks": [
+    { "type": "step", "settings": { "title": "Compila la richiesta", "text": "Bastano i dati della tua attività e una stima dei chili a settimana." } },
+    { "type": "step", "settings": { "title": "Ti attiviamo l'accesso", "text": "Entro un giorno lavorativo. Entri nel sito con la tua email e vedi il listino riservato." } },
+    { "type": "step", "settings": { "title": "Imposti le consegne", "text": "Giorni, quantità e fascia oraria. Cambi, salti o metti in pausa quando vuoi, entro le 18 del giorno prima." } }
+  ] } ]
+}
+{% endschema %}
