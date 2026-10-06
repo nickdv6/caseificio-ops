@@ -51,17 +51,16 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
   const err = H.get('error_description') || Q.get('error_description'), code = H.get('error_code') || Q.get('error_code');
   await new Promise(r => setTimeout(r, 300));   // let supabase-js read the token from the link
   let { data: { session } } = await sb.auth.getSession();
-  // v0.81: links built on the token hash (?token_hash=…&type=invite|recovery) are verified here, on our page, so a mail
-  // scanner that pre-opens the link cannot use it up.
-  if (!session && Q.get('token_hash')) {
-    const { data, error } = await sb.auth.verifyOtp({ token_hash: Q.get('token_hash'), type: Q.get('type') || 'invite' });
-    if (!error) { session = data.session; history.replaceState(null, '', location.pathname); }
-  }
-  if (!session) {
-    // v0.81: an expired or superseded invite no longer leaves the person stuck — they ask for a fresh link themselves.
-    const why = code === 'otp_expired' || /expired|invalid/i.test(err || '') || Q.get('token_hash')
-      ? 'Questo link non vale più: è scaduto oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
+  // v0.81e: links built on the token hash (?token_hash=…&type=invite|recovery, see the Supabase email templates) are NOT used
+  // when the page opens — only when the person saves the password. Opening the email twice, in Gmail's own browser and then in
+  // Safari/Chrome, or a mail scanner pre-opening it, no longer burns the link.
+  const TH = !session && Q.get('token_hash'), TYPE = Q.get('type') === 'recovery' ? 'recovery' : 'invite';
+  const showAgain = () => {
+    // an expired or superseded link no longer leaves the person stuck — they ask for a fresh link themselves.
+    const why = code === 'otp_expired' || /expired|invalid/i.test(err || '') || TH
+      ? 'Questo link non vale più: è scaduto, è già stato usato, oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
       : 'Il link è scaduto o è già stato usato.';
+    $('form').hidden = true; $('err').textContent = '';
     $('sub').textContent = why + ' Scrivi la tua email e ricevi subito un link nuovo (vale 24 ore).';
     $('again').hidden = false; $('em').focus();
     $('send').onclick = async () => {
@@ -70,19 +69,25 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
       $('send').disabled = true;
       const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
       if (error) { $('send').disabled = false; return $('err').textContent = /rate|seconds/i.test(error.message) ? 'Hai appena chiesto un link: aspetta un minuto e riprova.' : error.message; }
-      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email (vale 24 ore). Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
+      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email, una volta sola (vale 24 ore). Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
     };
     $('em').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').click(); });
-    return;
-  }
-  const P = await PERM.load(sb);
-  $('sub').textContent = P && P.staff_id ? `Ciao ${P.full_name}: scegli la password per entrare come ${P.role_name}.` : `Ciao ${session.user.email}: scegli la password.`;
+  };
+  if (!session && !TH) return showAgain();
+  let P = null;
+  if (session) { P = await PERM.load(sb); $('sub').textContent = P && P.staff_id ? `Ciao ${P.full_name}: scegli la password per entrare come ${P.role_name}.` : `Ciao ${session.user.email}: scegli la password.`; }
+  else $('sub').textContent = TYPE === 'recovery' ? 'Scegli la nuova password per entrare.' : 'Benvenuto! Scegli la password per entrare.';
   $('form').hidden = false; $('pw1').focus();
   $('go').onclick = async () => {
     const a = $('pw1').value, b = $('pw2').value; $('err').textContent = '';
     if (a.length < 8) return $('err').textContent = 'La password deve avere almeno 8 caratteri.';
     if (a !== b) return $('err').textContent = 'Le due password non coincidono.';
     $('go').disabled = true;
+    if (!session) {   // the link is used only now
+      const { data, error } = await sb.auth.verifyOtp({ token_hash: TH, type: TYPE });
+      if (error || !data.session) { $('go').disabled = false; return showAgain(); }
+      session = data.session; history.replaceState(null, '', location.pathname); P = await PERM.load(sb);
+    }
     const { error } = await sb.auth.updateUser({ password: a });
     if (error) { $('go').disabled = false; return $('err').textContent = /weak|easy to guess|pwned/i.test(error.message) ? 'Questa password è troppo comune (compare in elenchi di password rubate): scegline una diversa.' : /should be different/i.test(error.message) ? 'Scegli una password diversa da quella di prima.' : error.message; }
     const home = P && P.home && PERM.page(P.home) ? PERM.HOME[P.home] : 'console.html';
