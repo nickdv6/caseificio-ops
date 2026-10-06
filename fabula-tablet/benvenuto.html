@@ -62,7 +62,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
     const why = code === 'otp_expired' || /expired|invalid/i.test(err || '') || Q.get('token_hash')
       ? 'Questo link non vale più: è scaduto oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
       : 'Il link è scaduto o è già stato usato.';
-    $('sub').textContent = why + ' Scrivi la tua email e ricevi subito un link nuovo: aprilo entro un\'ora.';
+    $('sub').textContent = why + ' Scrivi la tua email e ricevi subito un link nuovo (vale 24 ore).';
     $('again').hidden = false; $('em').focus();
     $('send').onclick = async () => {
       const email = $('em').value.trim().toLowerCase(); $('err').textContent = '';
@@ -70,7 +70,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
       $('send').disabled = true;
       const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
       if (error) { $('send').disabled = false; return $('err').textContent = /rate|seconds/i.test(error.message) ? 'Hai appena chiesto un link: aspetta un minuto e riprova.' : error.message; }
-      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email, entro un'ora. Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
+      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email (vale 24 ore). Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
     };
     $('em').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').click(); });
     return;

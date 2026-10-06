@@ -358,7 +358,7 @@
         b('Salva', 'save', async () => { PERM.changed(await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id).select('id')); toast('Salvato'); loadUsers(); });
         const st = (LOGIN[p.id] || {}).state;
         if (p.active && p.email && p.id !== staff.id) b(st === 'attivo' ? 'Reimposta password' : p.auth_user_id ? 'Reinvia invito' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role });
-          toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : `Invito inviato a ${p.email}. Avvisa ${p.full_name.split(' ')[0]}: il link vale poco tempo e solo l'ultima email funziona (le precedenti non valgono più).`); loadUsers(); });
+          toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : `Invito inviato a ${p.email}. Avvisa ${p.full_name.split(' ')[0]}: il link vale 24 ore e funziona solo l'ultima email (le precedenti non valgono più).`); loadUsers(); });
         if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return false; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
       }
       tr.append(tda); tbl.append(tr);
@@ -396,7 +396,7 @@
     const b = $('inv-go'); b.disabled = true;
     if (!$('inv-name').value.trim() || !/^\S+@\S+\.\S+$/.test($('inv-email').value.trim())) { b.disabled = false; return toast('Scrivi nome e un\'email valida', 'err'); }
     try { const r = await callUsers({ action: 'invite', full_name: $('inv-name').value.trim(), email: $('inv-email').value.trim(), app_role: $('inv-role').value });
-      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password. Il link vale poco tempo: avvisala di aprirla subito.' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite')); loadUsers();
+      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password. Il link vale 24 ore.' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite')); loadUsers();
     } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
   };
   const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',
