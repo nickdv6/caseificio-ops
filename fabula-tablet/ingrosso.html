@@ -69,7 +69,7 @@ input[type=date],input[type=number],select{font:1rem var(--body);padding:6px 8px
     <div class="grid2">
       <div class="card"><h3>Scaglioni di quantità</h3><div class="hint">Da N kg in su: prezzo fisso oppure sconto %. "Tutti i prodotti" si calcola sui kg totali, un prodotto sui suoi kg. La base (per consegna o per settimana) e la regola di cumulo con lo sconto ricorrente sono in Configurazione → Parametri (trade.tier_basis, trade.discounts_combine).</div><div id="tiers"></div>
         <div class="row" data-scope><select id="tr-var" aria-label="Prodotto"><option value="">Tutti i prodotti</option></select><input type="number" id="tr-min" placeholder="da kg" min="0.5" step="0.5" style="width:90px"><input type="number" id="tr-price" placeholder="€/kg" min="0" step="0.01" style="width:90px"><input type="number" id="tr-pct" placeholder="sconto %" min="0" max="99" step="0.5" style="width:100px"><button class="btn sm save" id="tr-add">Aggiungi</button></div></div>
-      <div class="card"><h3>Regole in vigore</h3><div id="rules"></div><div class="hint" style="margin-top:8px">Si cambiano in <a class="lnk" href="admin.html#parametri">Configurazione → Parametri</a> (prefisso trade.).</div></div>
+      <div class="card"><h3>Regole in vigore</h3><div id="rules"></div><div class="hint" style="margin-top:8px">Si cambiano in <a class="lnk" href="admin.html#professionisti">Configurazione → Parametri</a> (prefisso trade.).</div></div>
     </div>
   </div>
 
@@ -77,7 +77,7 @@ input[type=date],input[type=number],select{font:1rem var(--body);padding:6px 8px
     <div class="grid2">
       <div class="card"><h3>Chiusure del caseificio</h3><div class="hint">Nei giorni di chiusura non si consegna a nessuno: i piani saltano da soli e riprendono dopo. I clienti le vedono nel portale.</div><div id="closures"></div>
         <div class="row" data-scope><input type="date" id="cl-from"><input type="date" id="cl-to"><input type="text" id="cl-note" placeholder="motivo (facoltativo)" style="flex:1;min-width:140px"><button class="btn sm save" id="cl-add">Aggiungi</button></div></div>
-      <div class="card"><h3>Giorni, fasce, ordine minimo, ora limite</h3><div id="rules2"></div><div class="hint" style="margin-top:8px">Si cambiano in <a class="lnk" href="admin.html#parametri">Configurazione → Parametri</a> (prefisso trade.).</div></div>
+      <div class="card"><h3>Giorni, fasce, ordine minimo, ora limite</h3><div id="rules2"></div><div class="hint" style="margin-top:8px">Si cambiano in <a class="lnk" href="admin.html#professionisti">Configurazione → Parametri</a> (prefisso trade.).</div></div>
     </div>
   </div>
 </section>

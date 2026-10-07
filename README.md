@@ -17,6 +17,35 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Configurazione: Panoramica e Parametri per sezione (v0.84)
+Front end only (`fabula-tablet/admin.html`, `admin.js`; sw perla-v53), no database changes.
+- **Panoramica** is the first tab: one status card per area — Parametri (values still empty, or that their own description calls
+  provisional: "da confermare", "STIMA", "ipotesi"), Macchine e scadenze (late / within 30 days / without dates), Prodotti Shopify
+  (variants with order lines waiting), Bot (errors, unread alarms, warnings), Utenti e accessi (expired links, invites to send),
+  Sistema (app version from `infra.sw_seen` + `public.fabula_health()`: pg_cron and backup). Each card opens its tab or section; the
+  headline counts the areas to fix; "Ultime modifiche" shows the last 6 audit rows. Tab badges: Panoramica = areas to fix, Bot =
+  unread alarms, Utenti = accesses to fix.
+- **Parametri**: 133 settings in 15 sections (new: Approvazioni automatiche, Professionisti · ingrosso B2B, Incassi e banca, Settimana
+  di prova, Sistema — before, 40 of them fell under "Altri parametri"). One section on screen at a time, section list on the left with
+  counts (phone: chips); search looks across every section. Empty values are tagged "da compilare", provisional ones "da confermare"
+  (an empty value whose description says "Vuoto = …" is a documented choice, not a gap). Ids, tokens and addresses are folded under
+  "Impostazioni tecniche" at the end of their section; `trade.job_secret` and `milk.farm_token` are masked; `infra.sw_seen` is read-only.
+  Save bar, previous value, Enter/Escape, validation and old `#azienda…#lavoro` links work as before; `#professionisti` etc. added
+  (Ingrosso now links there). Dirty counts show per section so nothing typed is lost when switching sections.
+- **No raw keys on screen** (v0.84a): parameter rows show only their description (the key is the row's tooltip); the Registro
+  modifiche and the Panoramica "Ultime modifiche" name a setting by its description; save errors too. Console's milk note and
+  Ingrosso's "Regole in vigore" no longer print `farm.*` / `trade.*` keys.
+- **Descriptions rewritten** (v0.84b, migration `20261007143441_v084b_settings_descriptions.sql`, applied live): all 133
+  `settings.description` in plain Italian — what the value is, unit, effect; no keys, no "(AAAA-MM-GG)" / "(1 = sì" hints, no
+  history notes. New column `settings.kind` (flag | date | month, null = by data_type) tells the page which field to draw; the page
+  still falls back to the old description hints. "Vuoto = …" marks an empty value as a documented choice; "da confermare" marks a
+  provisional one (DOP fee, water/sewer/gas tariffs, overtime premium, internet) — remove the phrase when the real figure is in.
+  Audit/touch triggers were off during the rewrite, so the Registro shows no 133 "modificato" rows. Repo and live history both at 140 migrations.
+- **Macchine e scadenze**: status strip on top (già scadute · entro 30 giorni · senza data · attive); machines and deadlines sorted
+  late → without date → by date.
+- Tested headless (desktop 1280 and phone 390) with the live settings rows plus synthetic rows: every tab loads with no JS errors and
+  no sideways scrolling; 82 checks pass (cards, section switching, tags, folded tech keys, search, save/undo/validation, hash links).
+
 ## Per i professionisti — Shopify B2B + piani consegne (v0.83)
 Shopify B2B is native on the Basic plan (verified 06/10/2026): companies, company locations, Net terms, B2B market + catalog with its
 own price list, quantity rules and price breaks. What Shopify does not do — application queue, weekly delivery plan with per-day

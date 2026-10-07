@@ -264,7 +264,7 @@
     const note = document.createElement('div'); note.className = 'status'; note.style.marginTop = '6px';
     note.innerHTML = (rows[0] ? `Resa usata ${num(rows[0].yield_pct, 1)}% (media 30 gg). ` : '') + (capDays ? `<span class="ko">${capDays} giorni oltre la capacità della caldaia (▲): anticipare produzione o aumentare i turni.</span> ` : '')
       + (shortDays ? `<span class="ko">${shortDays} giorni la Masseria non basta: serve latte da altri fornitori.</span> ` : 'La Masseria copre tutti i giorni. ')
-      + `"predefinito" = <a class="lnk" href="admin.html#produzione">farm.default_kg_per_day</a>.`;
+      + `"predefinito" = latte disponibile dalla Masseria quando non c'è un dato per il giorno (<a class="lnk" href="admin.html#produzione">Configurazione → Produzione e latte</a>).`;
     box.append(note);
   }
 

@@ -144,7 +144,7 @@
   }
   const RULE_T = { tier_basis: ['Base degli scaglioni', v => v === 'week' ? 'kg settimanali del piano' : 'kg della singola consegna (nativo Shopify)'], discounts_combine: ['Sconto ricorrente + scaglione', v => v ? 'si sommano' : 'solo il migliore'], recurring_discount_pct: ['Sconto piano consegne', v => v + ' %'], payment_terms_days: ['Pagamento', v => v + ' giorni (Net ' + v + ')'],
     min_order_kg: ['Ordine minimo per consegna', v => v + ' kg'], cutoff_time: ['Ora limite (giorno prima)', v => v], delivery_days: ['Giorni di consegna', v => v.map(x => WD[x]).join(', ')], windows: ['Fasce orarie', v => v.join(' · ')], default_window: ['Fascia proposta', v => v], horizon_days: ['Giorni mostrati nel portale', v => v], enabled: ['Sezione attiva', v => v ? 'sì' : 'no'] };
-  const rulesHtml = keys => '<table>' + keys.map(k => `<tr><td>${RULE_T[k][0]}</td><td><b>${esc(RULE_T[k][1](SET[k]))}</b> <span class="small mono">trade.${k}</span></td></tr>`).join('') + '</table>';
+  const rulesHtml = keys => '<table>' + keys.map(k => `<tr><td>${RULE_T[k][0]}</td><td><b>${esc(RULE_T[k][1](SET[k]))}</b></td></tr>`).join('') + '</table>';
 
   // ---------- REGOLE ----------
   async function loadRegole() {

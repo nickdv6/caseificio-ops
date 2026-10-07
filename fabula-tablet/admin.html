@@ -8,19 +8,102 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
 <link rel="stylesheet" href="ui.css">
 <style>
-/* Configuration page (v0.51): Parametri · Macchine e scadenze · Prodotti Shopify · Bot · Utenti e accessi · Registro modifiche. Shared look in ui.css. */
-.p-bar{position:sticky;top:46px;z-index:3;background:var(--bg);padding:8px 0 10px;display:flex;flex-direction:column;gap:8px}
+/* Configuration page (v0.84): Panoramica (status of every area) · Parametri (one section at a time, section list with what needs
+   attention) · Macchine e scadenze · Prodotti Shopify · Bot · Utenti e accessi · Registro modifiche. Shared look in ui.css. */
+
+/* ---- Panoramica: one status card per area, the headline says how many things need a hand ---- */
+.ov-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:2px 0 14px}
+.ov-head .big{font:600 1.45rem/1.2 var(--display);color:var(--fg)}
+.ov-head .big.ok{color:var(--good)}.ov-head .big.al{color:var(--warn)}.ov-head .big.wn{color:#7a5c14}
+.ov-head .when{font-size:.85rem;color:var(--muted)}
+.ov{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px}
+.ovc{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 10px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);color:inherit;text-decoration:none;cursor:pointer}
+.ovc:hover{border-color:var(--muted)}.ovc:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ovc.s-ok{border-left-color:var(--good)}.ovc.s-wn{border-left-color:var(--series-2)}.ovc.s-al{border-left-color:var(--warn)}.ovc.s-na{border-left-color:var(--rule)}
+.ovc .hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ovc .hd h3{margin:0;font-family:var(--display);font-size:1.05rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.ovc .big{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font:700 1.9rem/1.1 var(--display);font-variant-numeric:tabular-nums;color:var(--fg)}
+.ovc .big small{font:400 .9rem/1.3 var(--body);color:var(--muted);min-width:0}
+.ovc.s-al .big{color:var(--warn)}.ovc.s-wn .big{color:#7a5c14}.ovc.s-ok .big{color:var(--good)}
+.ovc ul{margin:2px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px}
+.ovc li{font-size:.9rem;line-height:1.3;color:var(--fg);display:flex;gap:7px;align-items:flex-start;min-width:0}
+.ovc li::before{content:"";flex:0 0 7px;width:7px;height:7px;border-radius:50%;background:var(--rule);margin-top:6px}
+.ovc li.al::before{background:var(--warn)}.ovc li.wn::before{background:var(--series-2)}.ovc li.ok::before{background:var(--good)}
+.ovc li span{min-width:0;overflow-wrap:anywhere}
+.ovc .ft{margin-top:auto;padding-top:6px;font:600 .85rem var(--body);color:var(--accent)}
+.ovc .ft::after{content:" →"}
+.ov-last{margin-top:18px}
+.ov-last table td{font-size:.9rem}
+.ov-last .nw{white-space:nowrap}
+#ov-empty{margin-top:4px}
+
+/* ---- Parametri: section list on the left (chips on the phone), one section at a time, search across all ---- */
+.p-bar{position:sticky;top:46px;z-index:3;background:var(--bg);padding:8px 0 10px}
 .p-bar input[type=search]{font:1rem var(--body);padding:9px 12px;border:1px solid var(--rule);border-radius:8px;background:var(--paper);width:100%}
-.p-jump{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.p-jump::-webkit-scrollbar{display:none}
-.p-jump a{white-space:nowrap;padding:4px 11px;border:1px solid var(--rule);border-radius:14px;background:var(--paper);color:var(--fg);text-decoration:none;font:600 .85rem var(--body)}
-.p-jump a .n{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:var(--warn);color:#fff;font-size:.72rem;text-align:center}
-.psec{scroll-margin-top:130px}
+.p-lay{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
+.p-nav{position:sticky;top:112px;display:flex;flex-direction:column;gap:2px;max-height:calc(100vh - 130px);overflow-y:auto;scrollbar-width:thin}
+.p-nav a{display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:6px;color:var(--fg);text-decoration:none;font:600 .92rem var(--body);min-width:0}
+.p-nav a span.t{flex:1;min-width:0;line-height:1.25}
+.p-nav a:hover{background:var(--tile)}
+.p-nav a.on{background:var(--accent);color:var(--accent-fg)}
+.p-nav a .n,.p-nav a .d{flex:0 0 auto;min-width:18px;padding:0 5px;border-radius:9px;font-size:.72rem;line-height:1.5;text-align:center;font-weight:700}
+.p-nav a .n{background:#f6ecd6;color:#6e5212}.p-nav a.on .n{background:rgba(255,255,255,.9)}
+.p-nav a .d{background:var(--warn);color:#fff}
+.p-nav .sep{margin:8px 10px 4px;font:700 .72rem var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.p-main{min-width:0}
+.psec{scroll-margin-top:130px;margin-bottom:14px}
+.psec>h3{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.psec>h3 .st{font:600 .8rem var(--body);text-transform:none;letter-spacing:0;color:var(--muted)}
+.psec>h3 .st.wn{color:#7a5c14}
+.set-row{grid-template-columns:minmax(0,1fr) auto;align-items:center}
+.set-row .lbl{min-width:0;overflow-wrap:anywhere}
+.set-row .lbl small{overflow-wrap:anywhere}
 .set-row select{font:1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg)}
 .set-row.dirty input,.set-row.dirty select{border-color:var(--warn)}
-.set-row.hit{background:#eef2f7}
+.set-row.att .lbl::before{content:attr(data-att);display:inline-block;margin:0 6px 2px 0;padding:0 7px;border-radius:9px;background:#f6ecd6;color:#6e5212;font-size:.72rem;font-weight:700;line-height:1.6;vertical-align:1px}
+.set-row.att-empty .lbl::before{background:#f6e1db;color:#9a3a22}
+.set-row .ro{font-size:.95rem;color:var(--muted);padding:6px 0;max-width:220px;overflow-wrap:anywhere}
+.set-row .row{gap:4px;flex-wrap:nowrap}.set-row.text .row input.wide{flex:1;width:auto;min-width:0}
+.set-row .eye{appearance:none;border:1px solid var(--rule);background:var(--paper);border-radius:6px;padding:5px 8px;font:600 .8rem var(--body);cursor:pointer;color:var(--fg)}
+details.tech{margin-top:8px;border-top:1px dashed var(--rule)}
+details.tech>summary{cursor:pointer;list-style:none;padding:8px 0 2px;font:600 .88rem var(--body);color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+details.tech>summary::-webkit-details-marker{display:none}
+details.tech>summary::after{content:"▸";color:var(--muted)}details.tech[open]>summary::after{content:"▾"}
+details.tech .hint{margin-top:4px}
 .savebar{position:sticky;bottom:0;z-index:6;margin:16px -16px 0;padding:10px 16px;background:var(--fg);color:var(--bg);display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 -4px 14px rgba(22,21,20,.18)}
 .savebar b{flex:1;min-width:160px}.savebar .btn.sec{background:transparent;color:var(--bg);border-color:#6b6762}
+@media (max-width:860px){
+  .p-lay{display:block}
+  .p-nav{position:static;max-height:none;overflow:visible;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:8px;margin-bottom:6px;scrollbar-width:none}
+  .p-nav::-webkit-scrollbar{display:none}
+  .p-nav a{flex:0 0 auto;white-space:nowrap;padding:4px 11px;border:1px solid var(--rule);border-radius:14px;background:var(--paper);font-size:.85rem}
+  .p-nav a span.t{flex:none;white-space:nowrap}
+  .p-nav a.on{border-color:var(--accent)}
+  .p-nav .sep{display:none}
+  .p-bar{top:46px}
+}
+@media (max-width:640px){
+  /* phone: label above the field, fields full width (numbers and dates keep their size) */
+  #p-secs .set-row,#p-secs .set-row.text{grid-template-columns:1fr;gap:4px}
+  #p-secs .set-row .row{justify-content:flex-start;width:100%}
+  #p-secs .set-row input.wide,#p-secs .set-row select{width:100%}
+  #p-secs .set-row input[inputmode=decimal]{width:140px}
+}
 #account{scroll-margin-top:64px}
+
+/* ---- status strips (Bot summary since v0.46, Macchine e scadenze since v0.84) ---- */
+.sum,.bd-sum{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 4px}
+.sum .sm,.bd-sum .sm{flex:1 1 130px;min-width:0;padding:10px 14px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);display:flex;flex-direction:column;gap:3px;color:inherit;text-decoration:none}
+.sum .sm b,.bd-sum .sm b{font:700 1.7rem/1 var(--display)}.sum .sm span,.bd-sum .sm span{font-size:.84rem;color:var(--muted)}
+.sum .sm.s-al,.bd-sum .sm.s-al{border-left-color:var(--warn)}.sum .sm.s-al b,.bd-sum .sm.s-al b{color:var(--warn)}
+.sum .sm.s-wn,.bd-sum .sm.s-wn{border-left-color:var(--series-2)}.sum .sm.s-wn b,.bd-sum .sm.s-wn b{color:#7a5c14}
+.sum .sm.s-ok,.bd-sum .sm.s-ok{border-left-color:var(--good)}.sum .sm.s-ok b,.bd-sum .sm.s-ok b{color:var(--good)}
+.sum .sm.zero,.bd-sum .sm.zero{border-left-color:var(--rule)}.sum .sm.zero b,.bd-sum .sm.zero b{color:var(--muted)}
+.bd-sum .sm.nx{flex:2 1 280px;flex-direction:row;align-items:center;gap:12px}.bd-sum .sm.nx>div{display:flex;flex-direction:column;min-width:0}
+.bd-sum .sm.nx b{font:700 1.05rem/1.2 var(--body);color:var(--fg)}
+#maint-sum{margin-bottom:12px}
+
+/* ---- Bot: notification feed and cards (v0.46) ---- */
 .msg{max-width:100%}.msg .t,.msg .b,.msg .who{overflow-wrap:anywhere;word-break:break-word}
 .bd-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
 .bd-day{margin:18px 0 8px;font:700 .78rem var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
@@ -47,22 +130,12 @@
 .msg .more,.msg .rd{appearance:none;border:0;background:none;padding:4px 0;font:600 .85rem var(--body);cursor:pointer;color:var(--accent)}
 .msg .rd{color:var(--muted)}.msg .rd:hover{color:var(--accent)}
 @media (max-width:520px){.msg{gap:10px;padding:10px 12px}.msg .bav{flex-basis:32px;width:32px;height:32px}.msg .hd{flex-wrap:wrap}}
-/* v0.46 bot cards: full-width grid, avatar slot (44 px), latest run + latest warning under the name */
-.bd-sum{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 4px}
-.bd-sum .sm{flex:1 1 130px;min-width:0;padding:10px 14px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);display:flex;flex-direction:column;gap:3px}
-.bd-sum .sm b{font:700 1.7rem/1 var(--display)}.bd-sum .sm span{font-size:.84rem;color:var(--muted)}
-.bd-sum .sm.s-al{border-left-color:var(--warn)}.bd-sum .sm.s-al b{color:var(--warn)}
-.bd-sum .sm.s-wn{border-left-color:var(--series-2)}.bd-sum .sm.s-wn b{color:#7a5c14}
-.bd-sum .sm.s-ok{border-left-color:var(--good)}.bd-sum .sm.s-ok b{color:var(--good)}
-.bd-sum .sm.zero{border-left-color:var(--rule)}.bd-sum .sm.zero b{color:var(--muted)}
-.bd-sum .sm.nx{flex:2 1 280px;flex-direction:row;align-items:center;gap:12px}.bd-sum .sm.nx>div{display:flex;flex-direction:column;min-width:0}
-.bd-sum .sm.nx b{font:700 1.05rem/1.2 var(--body);color:var(--fg)}
 .bd-grp{margin-top:18px}
 .bd-grp h4{margin:0 0 8px;font:700 .78rem var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
 .bd-grp h4 span{display:inline-block;min-width:20px;padding:0 7px;margin-left:4px;border-radius:10px;background:var(--rule);color:var(--fg);text-align:center;letter-spacing:0}
 .bd-grp.s-al h4{color:var(--warn)}.bd-grp.s-wn h4{color:#7a5c14}.bd-grp.s-ok h4{color:var(--good)}
 .bd-bots{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
-.botc{position:relative;display:flex;gap:12px;align-items:flex-start;min-width:0;padding:12px 14px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);cursor:pointer;text-align:left}
+.botc{position:relative;display:flex;gap:14px;align-items:flex-start;min-width:0;padding:12px 14px;border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:8px;background:var(--paper);cursor:pointer;text-align:left}
 .botc:hover{border-color:var(--muted)}.botc:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .botc.s-ok{border-left-color:var(--good)}.botc.s-wn{border-left-color:var(--series-2)}.botc.s-al{border-left-color:var(--warn)}
 .botc.sel{background:var(--tile);border-color:var(--accent)}.botc.s-off{opacity:.6}
@@ -71,12 +144,11 @@
 .botc .bav{flex:0 0 68px;width:68px;height:68px;border-width:3px;font-size:1.5rem;box-shadow:0 1px 4px rgba(22,21,20,.12)}
 .botc.s-al .bav{border-color:var(--warn)}.botc.s-wn .bav{border-color:var(--series-2)}.botc.s-ok .bav{border-color:var(--good)}
 .botc.s-off .bav img{filter:grayscale(1)}
-.botc{gap:14px}
 .botc .bi{flex:1;min-width:0}
 .botc .hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .botc .nm{font-weight:700;font-size:1.02rem;line-height:1.2;min-width:0;overflow-wrap:anywhere}
 .pill{flex:0 0 auto;font-size:.72rem;font-weight:700;line-height:1.5;padding:1px 8px;border-radius:10px;white-space:nowrap}
-.pill.s-al{background:#f6e1db;color:#9a3a22}.pill.s-wn{background:#f6ecd6;color:#6e5212}.pill.s-ok{background:#e1efe6;color:#276841}
+.pill.s-al{background:#f6e1db;color:#9a3a22}.pill.s-wn{background:#f6ecd6;color:#6e5212}.pill.s-ok{background:#e1efe6;color:#276841}.pill.s-na{background:var(--tile);color:var(--muted)}
 .botc .ti{display:inline-block;margin-top:4px;padding:1px 9px;border-radius:10px;background:var(--tile);color:var(--accent);font-size:.8rem;font-weight:700;letter-spacing:.01em;line-height:1.5}
 .botc .bl{font-size:.9rem;line-height:1.35;margin-top:6px;color:var(--fg);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .botc .ft{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;margin-top:8px;font-size:.78rem;color:var(--muted)}.botc .ft>span{white-space:nowrap}
@@ -95,26 +167,38 @@
 
 <section class="view" id="v-main">
   <nav class="tabs" role="tablist" id="tabs">
-    <button class="tab" role="tab" data-tab="parametri" aria-selected="true">Parametri <span class="n" id="n-par"></span></button>
-    <button class="tab" role="tab" data-tab="maint">Macchine e scadenze <span class="n" id="n-maint"></span></button>
-    <button class="tab" role="tab" data-tab="prodotti">Prodotti Shopify <span class="n" id="n-prod"></span></button>
-    <button class="tab" role="tab" data-tab="bots">Bot</button>
-    <button class="tab" role="tab" data-tab="utenti">Utenti e accessi</button>
-    <button class="tab" role="tab" data-tab="registro">Registro modifiche</button>
+    <button class="tab" role="tab" data-tab="panoramica" aria-selected="true">Panoramica <span class="n" id="n-ov"></span></button>
+    <button class="tab" role="tab" data-tab="parametri" aria-selected="false">Parametri <span class="n" id="n-par"></span></button>
+    <button class="tab" role="tab" data-tab="maint" aria-selected="false">Macchine e scadenze <span class="n" id="n-maint"></span></button>
+    <button class="tab" role="tab" data-tab="prodotti" aria-selected="false">Prodotti Shopify <span class="n" id="n-prod"></span></button>
+    <button class="tab" role="tab" data-tab="bots" aria-selected="false">Bot <span class="n" id="n-bots"></span></button>
+    <button class="tab" role="tab" data-tab="utenti" aria-selected="false">Utenti e accessi <span class="n" id="n-usr"></span></button>
+    <button class="tab" role="tab" data-tab="registro" aria-selected="false">Registro modifiche</button>
   </nav>
 
-  <!-- PARAMETRI: every fabula.settings row, grouped by key prefix; anything not in a known group shows under "Altri" -->
-  <div class="pane active" id="p-parametri">
-    <div class="p-bar nodirty"><input type="search" id="p-q" placeholder="Cerca un parametro: nome, chiave o valore (es. latte, prezzo, straordinario)" aria-label="Cerca un parametro"><div class="p-jump" id="p-jump"></div></div>
+  <!-- PANORAMICA (v0.84): the state of every area on one screen. Each card opens its tab; the list shows the first things to do. -->
+  <div class="pane active" id="p-panoramica">
+    <div class="ov-head"><span class="big" id="ov-big">Carico…</span><span class="when" id="ov-when"></span></div>
+    <div class="ov" id="ov"></div>
+    <div class="card ov-last" id="ov-last-card"><h3>Ultime modifiche <a class="lnk" href="#registro">Registro modifiche →</a></h3><div id="ov-last" style="overflow-x:auto"></div></div>
+  </div>
+
+  <!-- PARAMETRI: every fabula.settings row, grouped by key prefix. One section at a time; search looks across all of them.
+       Technical keys (ids, tokens, addresses) sit folded at the end of their section; anything not in a known group shows under "Altri". -->
+  <div class="pane" id="p-parametri">
+    <div class="p-bar nodirty"><input type="search" id="p-q" placeholder="Cerca in tutti i parametri: nome, chiave o valore (es. latte, prezzo, straordinario)" aria-label="Cerca un parametro"></div>
     <div class="hint" id="p-ro" hidden>Sola lettura: i parametri li modifica chi ha il livello "gestisce" in Sistema (titolare, socio).</div>
-    <div class="set-grid" id="p-secs"></div>
-    <div class="empty" id="p-none" hidden>Nessun parametro trovato.</div>
+    <div class="p-lay">
+      <nav class="p-nav nodirty" id="p-nav" aria-label="Sezioni"></nav>
+      <div class="p-main"><div id="p-secs"></div><div class="empty" id="p-none" hidden>Nessun parametro trovato.</div></div>
+    </div>
     <div class="savebar" id="p-save" hidden><b id="p-save-n"></b><button class="btn sec" id="p-undo">Annulla modifiche</button><button class="btn" id="p-go" style="background:var(--warn)">Salva tutto</button></div>
   </div>
 
   <div class="pane" id="p-maint">
+    <div class="sum" id="maint-sum"></div>
     <div class="set-grid">
-      <details class="card" open><summary><h3>Macchine · tarature e manutenzioni</h3></summary><div class="body"><div class="hint">Ultima data e intervallo: il bot Manutenzioni e scadenze (martedì) avvisa prima della prossima. Le macchine senza date sono in cima.</div><div id="set-equipment"></div></div></details>
+      <details class="card" open><summary><h3>Macchine · tarature e manutenzioni</h3></summary><div class="body"><div class="hint">Ultima data e intervallo: il bot Manutenzioni e scadenze (martedì) avvisa prima della prossima. Prima le macchine scadute o senza date.</div><div id="set-equipment"></div></div></details>
       <details class="card" open><summary><h3>Scadenze e adempimenti</h3></summary><div class="body"><div class="hint">Autorizzazioni, analisi, contratti e rinnovi. "Fatto oggi" chiude la scadenza e, se si ripete, apre la prossima.</div><div id="set-deadlines"></div>
         <div class="row" data-scope><input type="text" id="dl-new-subject" placeholder="Nuova scadenza (descrizione)" style="flex:2;min-width:180px"><input type="date" id="dl-new-due" aria-label="Data di scadenza"><input type="number" id="dl-new-int" placeholder="ogni N giorni" min="1" style="width:120px;font:1rem var(--body);padding:8px 10px;border:1px solid var(--rule);border-radius:6px"><button class="btn sm save" id="dl-add">Aggiungi</button></div></div></details>
     </div>

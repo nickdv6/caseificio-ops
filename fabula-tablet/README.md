@@ -19,7 +19,7 @@ Several tablets: open the app once with `?device=tablet-2` (remembered on that d
 - `haccp.html`, `haccp.js` — Sicurezza alimentare console; tab Registri (v0.57) lists the Manuale di Autocontrollo forms MOD-01…MOD-23
 - `registro.html`, `registro.js` — printable HACCP register of one MOD form for a period, with the manual header and signature box; `&blank=1` = empty paper form (v0.57)
 - `console.html`, `console.js` — owner console (Oggi · Operazioni · Andamento · Anagrafiche · Ricette · Personale)
-- `admin.html`, `admin.js` — Configurazione (Parametri · Macchine e scadenze · Prodotti Shopify · Bot · Utenti e accessi · Registro modifiche)
+- `admin.html`, `admin.js` — Configurazione (v0.84: Panoramica · Parametri · Macchine e scadenze · Prodotti Shopify · Bot · Utenti e accessi · Registro modifiche). Panoramica = one status card per area; Parametri shows one section at a time (list on the left, chips on the phone), tags empty or provisional values, folds ids/tokens under "Impostazioni tecniche"; `#<sezione>` links (e.g. `admin.html#professionisti`) open that section
 - `ui.js`, `ui.css` — shared shell for console and Configurazione since v0.51: login, header (page links, Bot bell, user menu with hide-hints and logout), lazy tabs with #hash, formatting helpers, unsaved-change guard (edited rows turn orange, Enter saves, leaving asks first)
 - `manifest.json`, `sw.js`, `icon.svg` — PWA shell
 
