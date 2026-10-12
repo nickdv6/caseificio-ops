@@ -300,7 +300,7 @@
     if (!data.length) { box.append('Tutto fatto ✓'); return; }
     data.forEach(t => {
       const d = document.createElement('div'); d.className = 'task ' + t.status;
-      d.innerHTML = `<div><div>${esc(t.title_it)}</div><div class="code">${esc(t.equipment_code || t.code)}</div></div><time>${new Date(t.due_at).toTimeString().slice(0, 5)}</time>`;
+      d.innerHTML = `<div><div>${esc(t.title_it)}</div><div class="code">${esc(t.equipment_code || t.code)}</div></div><time>${hhmm(t.due_at)}</time>`;
       d.onclick = () => t.equipment_code ? handleCode('EQ:' + t.equipment_code) : t.code === 'T-COUNT' ? stepStockCount() : t.code === 'T-CLEAN' ? handleCode('CLEAN:')
         : t.code === 'T-CL' ? handleCode('CCP:PRP-WATER-CL') : t.code === 'T-PEST' ? handleCode('PEST:')
         : t.control_point_code ? handleCode('CCP:' + t.control_point_code) : startScan();   // v0.57: valvola deviatrice, salamoia…
@@ -555,9 +555,13 @@
     try { const r = await cached('milk_ships_pending', () => sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, supplier_id, ddt_number, temperature_c').eq('status', 'shipped').order('shipped_at', { ascending: false }).limit(10)); ships = r.data || []; } catch {}
     const queuedShips = new Set(queue().flatMap(i => (i.ops || []).filter(o => o.table === 'milk_intake' && o.row && o.row.shipment_id).map(o => o.row.shipment_id)));
     ships = ships.filter(x => !queuedShips.has(x.id));                     // already confirmed offline, still in the queue
-    const shipLabel = x => `${new Date(x.shipped_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })} · ${Number(x.kg).toLocaleString('it-IT')} kg · lotto ${x.milk_lot}`;
-    const shipSel = ships.length ? field('ship', 'Spedizione dalla Masseria', 'select', { options: [...ships.map(x => [x.id, shipLabel(x)]), ['', '— nessuna: altro fornitore o latte non registrato —']], required: false,
-      limit: 'Il peso registrato alla Masseria è quello che vale: qui confermi solo l\'arrivo e fai i controlli.' }) : null;
+    // v0.93 (audit A-10/FARM-03): the newest load is no longer picked for you when there is a choice — with two loads in transit
+    // (or an old one) the wrong lot and kg were locked in. One fresh load (< 12 h) is still preselected.
+    const ageH = x => Math.max(0, Math.round((Date.now() - new Date(x.shipped_at)) / 36e5));
+    const shipLabel = x => `${new Date(x.shipped_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })} · ${Number(x.kg).toLocaleString('it-IT')} kg · lotto ${x.milk_lot} · partita ${ageH(x) < 1 ? 'da meno di 1 ora' : ageH(x) + ' h fa'}`;
+    const pickFirst = ships.length === 1 && ageH(ships[0]) < 12;
+    const shipSel = ships.length ? field('ship', 'Spedizione dalla Masseria', 'select', { options: [...(pickFirst ? [] : [['', `— scegli quale spedizione è arrivata (${ships.length}) —`]]), ...ships.map(x => [x.id, shipLabel(x)]), ['none', '— nessuna: altro fornitore o latte non registrato —']],
+      limit: 'Controlla lotto e kg sul DDT della Masseria: il peso registrato alla Masseria è quello che vale, qui confermi l\'arrivo e fai i controlli.' }) : null;
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
     const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
     const { data: cpT } = await cached('cp_CCP-MILK-TEMP', () => sb.from('haccp_control_points').select('*').eq('code', 'CCP-MILK-TEMP').maybeSingle());
@@ -582,7 +586,7 @@
       if (val('abx') === '') { toast('Registra l\'esito del test antibiotici', 'err'); throw new Error('abx'); }
       const ddtNo = String(val('ddtn') || '').trim().toUpperCase();
       // v0.59: lot labels are unique — a tank id used before (T1) gets the date (T1-0510, then T1-0510-2…) so intake never breaks
-      const shipId = (shipSel && shipSel.value) || null;
+      const shipId = (shipSel && shipSel.value && shipSel.value !== 'none') ? shipSel.value : null;
       let lotIn = String(val('lot') || '').trim();
       if (lotIn && !shipId) {
         const base = lotIn; let k = 0; const known = lotView().milk;
@@ -595,7 +599,7 @@
       const hot = val('temp') > tMax, abxPos = val('abx') === '1', accepted = !hot && !abxPos;
       const why = [hot ? `temperatura > ${tMax} °C` : null, abxPos ? 'test antibiotici positivo' : null].filter(Boolean).join(' · ');
       const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')), shipment_id: shipId } }),
-        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toTimeString().slice(0, 8), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo || null, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet', shipment_id: shipId } },
+        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour12: false }), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo || null, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet', shipment_id: shipId } },
         { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + lotIn, lot_number: lotIn, milk_intake_id: '$1.id', printed_by_id: staff.id } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: staff.id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
         { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: staff.id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
@@ -630,13 +634,27 @@
     }
     if (!milk) throw new Error('Lotto sconosciuto: ' + lot + (off ? ` (senza rete il tablet conosce i lotti degli ultimi ${LOT_DAYS} giorni)` : ''));
     if (milk.accepted === false) throw new Error(`Latte respinto (${milk.rejection_reason || 'non conforme'}): non si può usare in produzione`);   // v0.55
+    // v0.93 (audit A-02): one delivery can feed several vat loads. With more than one batch open on this milk the tank label
+    // cannot tell them apart, so the casaro picks the lot instead of the tablet taking an arbitrary one (was .limit(1), no order).
+    let opens = [];
     if (off) {
       const ids = new Set(view.inputs.filter(i => i.milk_intake_id === milk.id).map(i => i.batch_id));
-      const openB = view.batches.find(x => ids.has(x.id) && x.output_kg == null);
-      if (openB) return stepBatchWork(openB);
+      opens = view.batches.filter(x => ids.has(x.id) && x.output_kg == null);
     } else {
-      const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, preset_id, output_kg, milk_in_kg, input_kind)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null).limit(1);
-      if (open && open[0]) return stepBatchWork(open[0].production_batches);
+      const { data: open } = await sb.from('batch_milk_inputs').select('batch_id, production_batches!inner(id, batch_lot, product_id, preset_id, output_kg, milk_in_kg, input_kind, started_at)').eq('milk_intake_id', milk.id).is('production_batches.output_kg', null);
+      opens = (open || []).map(x => x.production_batches);
+    }
+    opens = [...new Map(opens.map(b => [b.id || b.batch_lot, b])).values()].sort((a, b) => String(a.started_at || a.batch_lot).localeCompare(String(b.started_at || b.batch_lot)));
+    if (opens.length === 1) return stepBatchWork(opens[0]);
+    if (opens.length > 1) {
+      field('pickb', 'Quale lotto stai lavorando?', 'select', { options: [['', '— scegli il lotto —'], ...opens.map(b => [b.batch_lot,
+        `${b.batch_lot}${b.started_at ? ' · avviato alle ' + hhmm(b.started_at) : ''}${b.milk_in_kg ? ' · ' + Number(b.milk_in_kg).toLocaleString('it-IT') + ' kg' : ''}`])],
+        limit: `Da questo latte ci sono ${opens.length} lotti aperti: scegli quello che hai in mano (la lettera è sul foglio della caldaia).` });
+      openForm('Più lotti aperti da questo latte', `latte ${milk.milk_lot}`, async () => {
+        const b = opens.find(x => x.batch_lot === val('pickb')); if (!b) { toast('Scegli il lotto', 'err'); throw new Error('Scegli il lotto'); }
+        $('form').innerHTML = ''; await stepBatchWork(b); return 'stay';
+      });
+      return;
     }
     return stepBatchStart(milk, lot);
   }

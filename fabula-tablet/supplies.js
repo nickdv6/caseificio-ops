@@ -173,7 +173,11 @@
       pr = document.createElement('input'); pr.type = 'text'; pr.inputMode = 'decimal'; pr.placeholder = `€ / ${it.unit || 'unità'}`; pr.className = 'pr'; pr.setAttribute('aria-label', 'Prezzo');
       sel.onchange = () => { const cur = sups.find(x => x.supplier_id === sel.value); pr.value = cur && cur.price_eur != null ? itNum(cur.price_eur) : ''; };
       const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn sm'; ok.textContent = 'Salva';
-      const save = () => act(ok, async () => { if (!sel.value) throw new Error('Scegli il fornitore'); const { error } = await sb.rpc('link_supplier_item', { p_product_id: it.id, p_supplier_id: sel.value, p_price_eur: nOrNull(pr.value), p_make_preferred: false }); if (error) throw error; await load(); }, 'Fornitore e prezzo salvati');
+      const save = () => act(ok, async () => { if (!sel.value) throw new Error('Scegli il fornitore');
+        // v0.93 (audit B-17): a price 10× off the current one is almost always a comma/dot slip
+        const p = nOrNull(pr.value), cur = sups.find(x => x.supplier_id === sel.value);
+        if (cur && UI.jump(cur.price_eur, p) && !confirm(`${it.name}: prezzo ${itNum(cur.price_eur)} € → ${itNum(p)} € (cambia di 10 volte o più).\n\nI decimali si scrivono con la virgola (0,085). Salvare comunque?`)) return false;
+        const { error } = await sb.rpc('link_supplier_item', { p_product_id: it.id, p_supplier_id: sel.value, p_price_eur: p, p_make_preferred: false }); if (error) throw error; await load(); }, 'Fornitore e prezzo salvati');
       ok.onclick = save; pr.onkeydown = e => { if (e.key === 'Enter') save(); };
       const no = document.createElement('button'); no.type = 'button'; no.className = 'btn sm sec'; no.textContent = 'Annulla'; no.onclick = () => { form.hidden = true; };
       form.append(sel, pr, ok, no); plus.onclick = () => { if (form.hidden) openForm(''); else form.hidden = true; };
@@ -383,6 +387,9 @@
       const sv = document.createElement('button'); sv.type = 'button'; sv.className = 'btn'; sv.textContent = 'Salva'; sv.disabled = !(add.length || drop.length) || bad > 0;
       sv.onclick = () => act(sv, async () => {
         if (drop.length && !confirm(`Togliere ${drop.length} ${drop.length === 1 ? 'articolo' : 'articoli'} da ${sup.legal_name}? Lo storico prezzi resta.`)) return false;
+        const jumps = add.filter(({ it, p }) => UI.jump(S.get(it.id).wasPrice, p));   // v0.93 (audit B-17)
+        if (jumps.length && !confirm('Controlla questi prezzi: cambiano di 10 volte o più.\n\n' + jumps.map(({ it, p }) => `${it.name}: ${itNum(S.get(it.id).wasPrice)} € → ${itNum(p)} €`).join('\n') +
+            '\n\nI decimali si scrivono con la virgola (0,085). Salvare comunque?')) return false;
         let n = 0;
         for (const { it, p } of add) { const { error } = await sb.rpc('link_supplier_item', { p_product_id: it.id, p_supplier_id: sid, p_price_eur: p, p_make_preferred: false }); if (error) throw new Error(`${it.name}: ${error.message}` + (n ? ` (salvati ${n} prima dell'errore)` : '')); n++; }
         for (const it of drop) { const { error } = await sb.rpc('unlink_supplier_item', { p_product_id: it.id, p_supplier_id: sid }); if (error) throw new Error(`${it.name}: ${error.message}`); n++; }

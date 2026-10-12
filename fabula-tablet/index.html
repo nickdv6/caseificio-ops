@@ -61,6 +61,8 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .notice{background:var(--paper);border:2px solid var(--warn);border-radius:10px;padding:12px 14px;margin-top:14px}
 .notice .nt{font-family:var(--display);font-size:1.25rem;font-weight:700;color:var(--warn);margin-bottom:6px}
 .notice.info{border-color:var(--rule)}.notice.info .nt{color:var(--muted)}
+.notice.alert{border-width:3px;background:#fdecea}.notice.alert .nt::before{content:"⚠ "}   /* v0.93: food-safety alerts stand out and come first */
+.notice.warn{border-color:#c98a1a}.notice.warn .nt{color:#8a5a00}
 .nitem{display:block;width:100%;text-align:left;border:0;background:var(--tile);border-radius:8px;padding:12px;margin-top:6px;font:600 1.1rem var(--body);color:var(--fg);cursor:pointer}
 .btn.attention{border:2px solid var(--warn);color:var(--warn);font-weight:700}
 </style>

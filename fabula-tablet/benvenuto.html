@@ -52,6 +52,11 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
   const err = H.get('error_description') || Q.get('error_description'), code = H.get('error_code') || Q.get('error_code');
   await new Promise(r => setTimeout(r, 300));   // let supabase-js read the token from the link
   let { data: { session } } = await sb.auth.getSession();
+  // v0.93 (audit C-11): a token_hash link opened on a device where someone else is already logged in (the shared floor tablet,
+  // the office PC) used to set the password of THAT person, and the newcomer then worked under their name. The link belongs to
+  // whoever it was sent to: this device is signed out first (this device only), and the link is used for the new person.
+  let wasEmail = null;
+  if (session && Q.get('token_hash')) { wasEmail = session.user && session.user.email; await sb.auth.signOut({ scope: 'local' }).catch(() => {}); session = null; }
   // v0.81e: links built on the token hash (?token_hash=…&type=invite|recovery, see the Supabase email templates) are NOT used
   // when the page opens — only when the person saves the password. Opening the email twice, in Gmail's own browser and then in
   // Safari/Chrome, or a mail scanner pre-opening it, no longer burns the link.
@@ -77,7 +82,8 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
   if (!session && !TH) return showAgain();
   let P = null;
   if (session) { P = await PERM.load(sb); $('sub').textContent = P && P.staff_id ? `Ciao ${P.full_name}: scegli la password per entrare come ${P.role_name}.` : `Ciao ${session.user.email}: scegli la password.`; }
-  else $('sub').textContent = TYPE === 'recovery' ? 'Scegli la nuova password per entrare.' : 'Benvenuto! Scegli la password per entrare.';
+  else $('sub').textContent = (TYPE === 'recovery' ? 'Scegli la nuova password per entrare.' : 'Benvenuto! Scegli la password per entrare.') +
+    (wasEmail ? ` (Questo dispositivo era collegato come ${wasEmail}: l'abbiamo scollegato, così la password vale per te. Chi usava il dispositivo dovrà rientrare con la sua password.)` : '');
   $('form').hidden = false; $('pw1').focus();
   $('go').onclick = async () => {
     const a = $('pw1').value, b = $('pw2').value; $('err').textContent = '';

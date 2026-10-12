@@ -185,14 +185,20 @@ class TxStatus(str, Enum):
     CANCELLED = "cancelled"              # cashier / customer abort
     TIMEOUT = "timeout"                  # customer walked away
     ERROR = "error"                      # hardware / protocol failure
-    CHANGE_SHORT = "change_short"        # cash collected but change incomplete
+    CHANGE_SHORT = "change_short"        # paid, but change incomplete: staff hands over the rest
+    PAID_NO_RECEIPT = "paid_no_receipt"  # v0.93: paid, but the RT did not print — NEVER charge again
 
     @property
     def terminal(self) -> bool:
         return self in {
             TxStatus.COMPLETED, TxStatus.CANCELLED, TxStatus.TIMEOUT,
-            TxStatus.ERROR, TxStatus.CHANGE_SHORT,
+            TxStatus.ERROR, TxStatus.CHANGE_SHORT, TxStatus.PAID_NO_RECEIPT,
         }
+
+    @property
+    def paid(self) -> bool:
+        """The customer's cash is in the machine: the sale must be closed, never retried."""
+        return self in {TxStatus.COMPLETED, TxStatus.CHANGE_SHORT, TxStatus.PAID_NO_RECEIPT}
 
 
 class TaxLineIn(BaseModel):
@@ -284,6 +290,8 @@ class TransactionOut(BaseModel):
     amount_inserted_cents: int = 0
     change_due_cents: int = 0
     change_dispensed_cents: int = 0
+    change_short_cents: int = 0          # v0.93: change the machine could not give — hand it over by hand
+    paid: bool = False                   # v0.93: cash collected → close the sale, never retry
     cashdro_operation_id: Optional[str] = None
     fiscal_receipt_number: Optional[str] = None
     fiscal_receipt_date: Optional[str] = None
@@ -303,6 +311,7 @@ class Transaction:
     amount_inserted_cents: int = 0
     change_due_cents: int = 0
     change_dispensed_cents: int = 0
+    change_short_cents: int = 0
     cashdro_operation_id: Optional[str] = None
     fiscal_receipt_number: Optional[str] = None
     fiscal_receipt_date: Optional[str] = None
@@ -321,6 +330,8 @@ class Transaction:
             amount_inserted_cents=self.amount_inserted_cents,
             change_due_cents=self.change_due_cents,
             change_dispensed_cents=self.change_dispensed_cents,
+            change_short_cents=self.change_short_cents,
+            paid=self.status.paid,
             cashdro_operation_id=self.cashdro_operation_id,
             fiscal_receipt_number=self.fiscal_receipt_number,
             fiscal_receipt_date=self.fiscal_receipt_date,
@@ -805,20 +816,27 @@ class CashEngine:
                 self._set(tx, TxStatus.TIMEOUT, "Tempo scaduto, contanti restituiti")
                 return
             except HardwareError as e:
-                self._set(tx, TxStatus.ERROR, f"Errore CashDro: {e}")
+                if tx.amount_inserted_cents > 0:
+                    # v0.93 (audit POS-01/04): cash may still be in the machine — say what to check, never "riprova" blindly
+                    self._set(tx, TxStatus.ERROR,
+                              f"Collegamento con la CashDro perso con {tx.amount_inserted_cents / 100:.2f} € inseriti. "
+                              "Guarda lo schermo della CashDro: se dice «operazione annullata» i contanti sono stati resi; "
+                              "altrimenti premi Annulla sulla CashDro. Non far pagare di nuovo prima di aver controllato.")
+                else:
+                    self._set(tx, TxStatus.ERROR, f"La CashDro non risponde, nessun contante inserito. Riprova. ({e})")
                 return
             except Exception as e:  # defensive: never leave a tx non-terminal
                 log.exception("Unexpected failure in tx %s", tx.id)
                 self._set(tx, TxStatus.ERROR, f"Errore interno: {e}")
                 return
 
-        if tx.status == TxStatus.CHANGE_SHORT:
-            # Cash is in the machine but change could not be fully dispensed.
-            # Still fiscalize (the sale happened); staff settles change by hand.
-            pass
+        # v0.93 (audit POS-03): change the machine could not give stays visible to the end (it used to be overwritten by
+        # "completed"), the cashier must confirm handing it over, and the day journal counts it.
+        short = f" · RESTO MANCANTE: dai {tx.change_short_cents / 100:.2f} € a mano." if tx.change_short_cents else ""
+        done_status = TxStatus.CHANGE_SHORT if tx.change_short_cents else TxStatus.COMPLETED
 
         if not self.s.epson_enabled:
-            self._set(tx, TxStatus.COMPLETED, "Pagato. Chiudi la vendita su Shopify: Contanti → importo esatto")
+            self._set(tx, done_status, f"Pagato{short} Chiudi la vendita su Shopify: Contanti → importo esatto")
             return
 
         self._set(tx, TxStatus.FISCALIZING, "Stampa documento commerciale…")
@@ -828,12 +846,15 @@ class CashEngine:
             tx.fiscal_receipt_date = info["date"]
             tx.fiscal_z_number = info["z"]
             self._set(
-                tx, TxStatus.COMPLETED,
-                f"Pagato, scontrino n. {info['number'] or '?'}. Chiudi la vendita su Shopify: Contanti → importo esatto",
+                tx, done_status,
+                f"Pagato, scontrino n. {info['number'] or '?'}{short} Chiudi la vendita su Shopify: Contanti → importo esatto",
             )
         except (HardwareError, HTTPException) as e:
-            # Cash is already collected: this is the one state that needs a human.
-            self._set(tx, TxStatus.ERROR, f"CONTANTI INCASSATI ma scontrino NON emesso: {e}. Emettere manualmente dalla stampante.")
+            # v0.93 (audit POS-01): the cash is collected — a terminal PAID state, so the till never offers "Riprova".
+            self._set(tx, TxStatus.PAID_NO_RECEIPT,
+                      f"IL CLIENTE HA PAGATO {tx.amount_due_cents / 100:.2f} €: NON incassare di nuovo. "
+                      f"Lo scontrino NON è stato stampato ({getattr(e, 'detail', e)}): emettilo a mano dalla stampante fiscale.{short} "
+                      "Poi chiudi la vendita su Shopify: Contanti → importo esatto.")
 
     async def _collect_cash(self, tx: Transaction) -> None:
         if tx.cancel_requested:
@@ -864,7 +885,17 @@ class CashEngine:
                 await self._safe_finish(tx, cancel=True)
                 raise OperationTimeout()
 
-            st = await self.cashdro.ask(tx.cashdro_operation_id)
+            # v0.93 (audit POS-04): one slow answer (a crumpled note being validated, a Wi-Fi blip) is retried before
+            # giving up; on a real loss the operation is cancelled so the machine returns the cash and is free again.
+            for attempt in range(3):
+                try:
+                    st = await self.cashdro.ask(tx.cashdro_operation_id)
+                    break
+                except HardwareError:
+                    if attempt == 2:
+                        await self._safe_finish(tx, cancel=True)
+                        raise
+                    await asyncio.sleep(1.0 + attempt)
             tx.amount_inserted_cents = st["total_in"]
             tx.change_dispensed_cents = st["total_out"]
             tx.change_due_cents = max(tx.amount_inserted_cents - tx.amount_due_cents, 0)
@@ -898,10 +929,11 @@ class CashEngine:
         await self._safe_finish(tx, cancel=False)
 
         if tx.change_dispensed_cents + 1 < tx.change_due_cents:
-            self._set(
-                tx, TxStatus.CHANGE_SHORT,
-                f"Resto incompleto: dovuti {tx.change_due_cents / 100:.2f} €, erogati {tx.change_dispensed_cents / 100:.2f} €. Integrare a mano.",
-            )
+            # Cash is in the machine but change could not be fully dispensed: still fiscalize (the sale happened);
+            # _run ends in CHANGE_SHORT so the cashier hands over the rest. Not set here: a terminal status now would
+            # stop the till polling before the receipt is printed.
+            tx.change_short_cents = tx.change_due_cents - tx.change_dispensed_cents
+            log.warning("tx %s: change short by %d cents", tx.id, tx.change_short_cents)
 
     async def _safe_finish(self, tx: Transaction, cancel: bool) -> None:
         """Always try to close the recycler operation; never mask the original error."""
@@ -1079,16 +1111,18 @@ async def journal_day(day: str) -> dict[str, Any]:
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
         raise HTTPException(422, "day must be YYYY-MM-DD")
     rows = engine.journal.day(day)
-    completed = [r for r in rows if r["status"] in {"completed", "change_short"}]
+    completed = [r for r in rows if r["status"] in {"completed", "change_short", "paid_no_receipt"}]
     return {
         "day": day,
         "count": len(rows),
         "completed": len(completed),
         "cash_collected_cents": sum(r["amount_due_cents"] for r in completed),
+        # v0.93: counted on every paid sale (a short-change sale whose receipt then failed is paid_no_receipt)
         "change_short_cents": sum(
-            r["change_due_cents"] - r["change_dispensed_cents"]
-            for r in rows if r["status"] == "change_short"
+            max((r["change_due_cents"] or 0) - (r["change_dispensed_cents"] or 0), 0)
+            for r in completed if (r["change_due_cents"] or 0) - (r["change_dispensed_cents"] or 0) > 1
         ),
+        "receipts_to_issue_by_hand": [r["id"] for r in rows if r["status"] == "paid_no_receipt"],
         "rows": rows,
     }
 

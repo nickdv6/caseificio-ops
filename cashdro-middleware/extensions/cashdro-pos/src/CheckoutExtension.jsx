@@ -147,7 +147,9 @@ async function api(path, { method = "GET", json } = {}) {
       body: json ? body : undefined,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    // v0.93: FastAPI validation errors are a list — show their text, never "[object Object]"
+    const detail = Array.isArray(data.detail) ? data.detail.map((d) => d.msg || String(d)).join("; ") : data.detail;
+    if (!res.ok) throw new Error(detail || `Errore del server cassa (HTTP ${res.status})`);
     return data;
   } finally {
     clearTimeout(timer);
@@ -171,10 +173,17 @@ function useCart() {
 // UI
 // ---------------------------------------------------------------------------
 
-const TERMINAL = new Set(["completed", "cancelled", "timeout", "error", "change_short"]);
+const TERMINAL = new Set(["completed", "cancelled", "timeout", "error", "change_short", "paid_no_receipt"]);
+// v0.93 (audit POS-01/02/03): states in which the customer's cash is in the machine — the sale is closed, never retried
+const PAID = new Set(["completed", "change_short", "paid_no_receipt"]);
 const TONE = {
-  completed: "success", change_short: "warning", cancelled: "info",
+  completed: "success", change_short: "warning", paid_no_receipt: "warning", cancelled: "info",
   timeout: "warning", error: "critical",
+};
+const STATUS_IT = {
+  pending: "IN ATTESA", collecting: "INSERIRE CONTANTI", dispensing_change: "EROGO IL RESTO", fiscalizing: "STAMPO LO SCONTRINO",
+  completed: "PAGATO", change_short: "PAGATO · RESTO MANCANTE", paid_no_receipt: "PAGATO · SCONTRINO NON STAMPATO",
+  cancelled: "ANNULLATO", timeout: "TEMPO SCADUTO", error: "ERRORE",
 };
 
 function Extension() {
@@ -183,14 +192,21 @@ function Extension() {
   const [phase, setPhase] = useState("idle"); // idle | starting | running | done
   const [err, setErr] = useState(null);
   const [lottery, setLottery] = useState("");
+  const [acked, setAcked] = useState(false); // v0.93: missing change handed over / receipt issued by hand
   const idemRef = useRef(null);
   const pollRef = useRef(null);
 
   const stopPolling = () => { if (pollRef.current) clearInterval(pollRef.current); pollRef.current = null; };
   useEffect(() => stopPolling, []);
 
+  // v0.93 (audit POS-02): a cart that already carries a CashDro payment is never charged again — close it in Shopify
+  const paidRef = cart?.properties?.cashdro_tx || null;
+
   async function start() {
     setErr(null);
+    if (paidRef) { setErr(`Questo carrello è già stato pagato in contanti (rif. ${paidRef}). Chiudi la vendita: Contanti → importo esatto.`); return; }
+    const code = lottery.trim().toUpperCase();
+    if (code && !/^[A-Z0-9]{8}$/.test(code)) { setErr("Codice lotteria: servono 8 caratteri, lettere e numeri (oppure lascialo vuoto)."); return; }
     setPhase("starting");
     idemRef.current = idemRef.current || crypto.randomUUID();
     try {
@@ -227,30 +243,39 @@ function Extension() {
 
   async function finish(t) {
     setPhase("done");
-    if (t.status === "completed" || t.status === "change_short") {
-      // Audit trail on the Shopify order: who paid where, and the fiscal doc.
+    setAcked(false);
+    if (PAID.has(t.status)) {
+      // Audit trail on the Shopify order: who paid where, and the fiscal doc. v0.93: written for every paid state,
+      // so reopening the modal (or adding the next customer's items) can never start a second charge on this cart.
       try {
         await shopify.cart.addCartProperties({
           cashdro_tx: t.id,
+          cashdro_pagato: eur(t.amount_due_cents),
           cashdro_operation: t.cashdro_operation_id || "",
           documento_commerciale: t.fiscal_receipt_number
-            ? `${t.fiscal_receipt_number} del ${t.fiscal_receipt_date}` : "",
+            ? `${t.fiscal_receipt_number} del ${t.fiscal_receipt_date}` : "DA EMETTERE A MANO",
         });
       } catch (e) { console.warn("addCartProperties failed", e); }
       shopify.toast.show(
         t.status === "completed"
           ? `CashDro: pagato ${eur(t.amount_due_cents)} — ora Contanti → importo esatto`
-          : `Resto incompleto: integrare ${eur(t.change_due_cents - t.change_dispensed_cents)} a mano`,
+          : t.status === "change_short"
+            ? `RESTO MANCANTE: dai ${eur(t.change_short_cents)} a mano`
+            : `PAGATO ma scontrino NON stampato: emettilo a mano`,
       );
     } else {
       shopify.toast.show(`CashDro: ${t.message}`);
     }
   }
 
-  function reset() { stopPolling(); setTx(null); setPhase("idle"); setErr(null); idemRef.current = null; }
+  function reset() { stopPolling(); setTx(null); setPhase("idle"); setErr(null); setAcked(false); idemRef.current = null; }
 
   const total = cart ? cents(cart.grandTotal) : 0;
-  const canStart = phase === "idle" && cart && total > 0;
+  const canStart = phase === "idle" && cart && total > 0 && !paidRef;
+  const paid = tx && PAID.has(tx.status);
+  // a paid sale with something left for the cashier to do by hand must be confirmed before "Chiudi"
+  const needsAck = paid && (tx.status === "paid_no_receipt" || tx.change_short_cents > 0) && !acked;
+  const cashInside = tx && !paid && tx.amount_inserted_cents > 0;
 
   return (
     <s-screen name="cashdro" title="Paga con CashDro">
@@ -266,7 +291,16 @@ function Extension() {
           </s-stack>
         </s-section>
 
-        {phase === "idle" && (
+        {phase === "idle" && paidRef && (
+          <s-section>
+            <s-banner tone="warning" heading="Carrello già pagato in contanti">
+              Rif. {paidRef}{cart?.properties?.cashdro_pagato ? ` · ${cart.properties.cashdro_pagato}` : ""}. NON incassare di nuovo:
+              chiudi la vendita su Shopify con Contanti → importo esatto. Per un nuovo cliente inizia un nuovo carrello.
+            </s-banner>
+          </s-section>
+        )}
+
+        {phase === "idle" && !paidRef && (
           <s-section heading="Lotteria degli scontrini (facoltativo)">
             <s-text-field
               label="Codice lotteria"
@@ -280,7 +314,7 @@ function Extension() {
         {tx && (
           <s-section heading="Stato CashDro">
             <s-stack direction="block" gap="base">
-              <s-badge tone={TONE[tx.status] || "info"}>{tx.status.toUpperCase()}</s-badge>
+              <s-badge tone={TONE[tx.status] || "info"}>{STATUS_IT[tx.status] || tx.status.toUpperCase()}</s-badge>
               <s-text type="h2">{tx.message}</s-text>
               <s-text>Inseriti: {eur(tx.amount_inserted_cents)}</s-text>
               {tx.change_due_cents > 0 && (
@@ -293,6 +327,31 @@ function Extension() {
               )}
               <s-text tone="subdued">Rif. {tx.id}</s-text>
             </s-stack>
+          </s-section>
+        )}
+
+        {phase === "done" && tx?.status === "paid_no_receipt" && (
+          <s-section>
+            <s-banner tone="critical" heading={`IL CLIENTE HA PAGATO ${eur(tx.amount_due_cents)} · NON incassare di nuovo`}>
+              1) Emetti lo scontrino a mano dalla stampante fiscale per {eur(tx.amount_due_cents)}.
+              {tx.change_short_cents > 0 ? ` 2) Dai ${eur(tx.change_short_cents)} di resto a mano.` : ""}
+              {" "}Poi chiudi la vendita su Shopify: Contanti → importo esatto.
+            </s-banner>
+          </s-section>
+        )}
+        {phase === "done" && tx?.status === "change_short" && (
+          <s-section>
+            <s-banner tone="critical" heading={`RESTO MANCANTE: dai ${eur(tx.change_short_cents)} a mano`}>
+              La CashDro non aveva abbastanza monete. Prendi {eur(tx.change_short_cents)} dalla cassetta di riserva e dalli al cliente.
+            </s-banner>
+          </s-section>
+        )}
+        {phase === "done" && cashInside && (
+          <s-section>
+            <s-banner tone="critical" heading={`Attenzione: risultano inseriti ${eur(tx.amount_inserted_cents)}`}>
+              Prima di riprovare guarda lo schermo della CashDro: se dice «operazione annullata» i contanti sono stati resi al cliente;
+              altrimenti premi Annulla sulla CashDro. Non far pagare di nuovo finché non è chiaro.
+            </s-banner>
           </s-section>
         )}
 
@@ -315,13 +374,24 @@ function Extension() {
                 Annulla e restituisci contanti
               </s-button>
             )}
-            {phase === "done" && (tx?.status === "completed" || tx?.status === "change_short") && (
+            {phase === "done" && paid && needsAck && (
+              <s-button variant="primary" onClick={() => setAcked(true)}>
+                {tx.status === "paid_no_receipt"
+                  ? (tx.change_short_cents > 0 ? `Fatto: scontrino emesso e ${eur(tx.change_short_cents)} dati a mano` : "Fatto: scontrino emesso a mano")
+                  : `Fatto: ho dato ${eur(tx.change_short_cents)} a mano`}
+              </s-button>
+            )}
+            {phase === "done" && paid && !needsAck && (
               <s-button variant="primary" onClick={() => shopify.navigation.dismiss()}>
                 Chiudi — poi Contanti → importo esatto
               </s-button>
             )}
-            {phase === "done" && !(tx?.status === "completed" || tx?.status === "change_short") && (
+            {/* v0.93 (audit POS-01): "Riprova" only when no cash went in; otherwise the cashier checks the machine first */}
+            {phase === "done" && !paid && !cashInside && (
               <s-button variant="primary" onClick={reset}>Riprova</s-button>
+            )}
+            {phase === "done" && cashInside && (
+              <s-button variant="secondary" onClick={reset}>Ho controllato: i contanti sono stati resi · riprova</s-button>
             )}
           </s-stack>
         </s-section>

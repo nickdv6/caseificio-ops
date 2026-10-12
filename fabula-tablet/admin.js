@@ -55,7 +55,9 @@
     if (!v) return /vuot[oa]\s*=|vuote\b/i.test(d) || READONLY.has(r.key) ? '' : 'da compilare';
     return /da confermare|\bSTIMA\b|\bipotesi\b|da sostituire/i.test(d) ? 'da confermare' : '';
   };
-  const shown = (r, v) => { const k = kindOf(r); if (v === '' || v == null) return 'vuoto'; if (k === 'flag') return Number(v) === 1 ? 'sì' : 'no'; if (k === 'date') return fmtD(v); return SECRET.has(r.key) ? '••••' : v; };
+  // v0.93 (audit C-01): number settings are shown with the decimal comma ("0,044"), so retyping what is on screen can never be read as thousands
+  const itNum = v => v === '' || v == null || !Number.isFinite(Number(v)) ? String(v ?? '') : String(v).trim().replace('.', ',');
+  const shown = (r, v) => { const k = kindOf(r); if (v === '' || v == null) return 'vuoto'; if (k === 'flag') return Number(v) === 1 ? 'sì' : 'no'; if (k === 'date') return fmtD(v); if (k === 'number') return itNum(v); return SECRET.has(r.key) ? '••••' : v; };
   async function loadParams() {
     const { data, error } = await sb.from('settings').select('*').order('key');
     if (error) { $('p-secs').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
@@ -119,7 +121,7 @@
     let inp;
     if (k === 'flag') { inp = document.createElement('select'); inp.innerHTML = '<option value="1">Sì</option><option value="0">No</option>'; inp.value = Number(r.value) === 1 ? '1' : '0'; }
     else { inp = document.createElement('input'); inp.type = k === 'date' ? 'date' : k === 'month' ? 'month' : SECRET.has(r.key) ? 'password' : 'text';
-      inp.value = k === 'month' ? String(r.value || '').slice(0, 7) : (r.value ?? '');
+      inp.value = k === 'month' ? String(r.value || '').slice(0, 7) : k === 'number' ? itNum(r.value) : (r.value ?? '');
       if (k === 'number') { inp.inputMode = 'decimal'; inp.style.textAlign = 'right'; }
       if (k === 'text') { inp.className = 'wide'; inp.placeholder = '—'; }
       if (SECRET.has(r.key)) inp.autocomplete = 'off'; }
@@ -128,7 +130,7 @@
     const sync = () => { r.value = val(); const dirty = isDirty(r);
       row.classList.toggle('dirty', dirty); const w = row.querySelector('.was'); w.hidden = !dirty; w.textContent = 'prima: ' + shown(r, r.orig); saveState(); };
     inp.oninput = sync; inp.onchange = sync;
-    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); saveParams().catch(err => toast(err.message || String(err), 'err')); } if (e.key === 'Escape') { inp.value = k === 'month' ? String(r.orig).slice(0, 7) : k === 'flag' ? (Number(r.orig) === 1 ? '1' : '0') : r.orig; sync(); } };
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); saveParams().catch(err => toast(err.message || String(err), 'err')); } if (e.key === 'Escape') { inp.value = k === 'month' ? String(r.orig).slice(0, 7) : k === 'flag' ? (Number(r.orig) === 1 ? '1' : '0') : k === 'number' ? itNum(r.orig) : r.orig; sync(); r.value = r.orig; row.classList.remove('dirty'); row.querySelector('.was').hidden = true; saveState(); } };
     right.append(inp);
     if (SECRET.has(r.key)) { const b = document.createElement('button'); b.type = 'button'; b.className = 'eye'; b.textContent = 'mostra'; b.onclick = () => { const on = inp.type === 'password'; inp.type = on ? 'text' : 'password'; b.textContent = on ? 'nascondi' : 'mostra'; }; right.append(b); }
     return row;
@@ -148,6 +150,11 @@
       if (k === 'number' && (r.value === '' || isNaN(Number(r.value)))) { focusRow(r.key); throw new Error(`"${r.description || r.key}": inserisci un numero`); }
       if ((k === 'date' || k === 'month') && r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": data non valida`); }
     }
+    // v0.93 (audit C-01/C-02): a number that changes 10× or more is almost always a comma/dot slip: say it before saving
+    const jumps = dirty.filter(r => kindOf(r) === 'number' && UI.jump(r.orig, r.value));
+    if (jumps.length && !confirm('Controlla questi valori: cambiano di 10 volte o più.\n\n' +
+        jumps.map(r => `${r.description || r.key}: ${itNum(r.orig)} → ${itNum(Number(r.value))}`).join('\n') +
+        '\n\nI decimali si scrivono con la virgola (0,044). Salvare comunque?')) { focusRow(jumps[0].key); return; }
     const res = await Promise.all(dirty.map(r => { const v = kindOf(r) === 'number' ? String(Number(r.value)) : r.value; return sb.from('settings').update({ value: v }).eq('key', r.key).select('key').then(x => ({ r, v, ...x })); }));
     const bad = res.filter(x => x.error || !(x.data || []).length);
     res.filter(x => !x.error && (x.data || []).length).forEach(({ r, v }) => { r.orig = v; r.value = v; if (r.key.startsWith('company.')) BRAND.set({ [r.key]: v }); });

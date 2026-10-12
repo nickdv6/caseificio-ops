@@ -203,17 +203,37 @@
 
   // ---------- Piano ----------
   function renderPlan(rows) {
-    const inp = (r, k) => `<input type="number" step="0.01" data-k="${k}" value="${r[k] ?? ''}" ${isManager ? '' : 'disabled'}>`;
+    // v0.93 (audit B-01): text field with the decimal comma, the old value kept to compare; a blank or mistyped limit is refused, not saved as "no limit"
+    const itNum = v => v == null || v === '' ? '' : String(Number(v)).replace('.', ',');
+    const inp = (r, k) => `<input type="text" inputmode="decimal" autocomplete="off" data-k="${k}" data-orig="${r[k] ?? ''}" value="${itNum(r[k])}" style="width:6.5em" ${isManager ? '' : 'disabled'}>`;
     $('plan').innerHTML = `<table><tr><th>Punto</th><th>Fase</th><th>Registro</th><th>Limite critico (testo)</th><th class="num">Min</th><th class="num">Max</th><th class="num">Allerta min</th><th class="num">Allerta max</th><th class="num">30 gg</th><th></th></tr>${rows.map(r => `
-      <tr data-code="${esc(r.code)}"><td>${pill(r.ccp_no || 'PRP', r.is_ccp ? 'ccp' : '')}<br><b>${esc(r.name)}</b>${r.applies_when !== 'sempre' ? `<br><small>${esc(r.applies_when.replace('_', ' '))}</small>` : ''}</td><td>${esc(r.process_step || '')}</td><td class="nw">${modChip(r.form_code)}</td>
+      <tr data-code="${esc(r.code)}" data-ccp="${r.is_ccp ? 1 : 0}" data-name="${esc((r.ccp_no ? r.ccp_no + ' · ' : '') + r.name)}" data-unit="${esc(r.unit || '')}"><td>${pill(r.ccp_no || 'PRP', r.is_ccp ? 'ccp' : '')}<br><b>${esc(r.name)}</b>${r.applies_when !== 'sempre' ? `<br><small>${esc(r.applies_when.replace('_', ' '))}</small>` : ''}</td><td>${esc(r.process_step || '')}</td><td class="nw">${modChip(r.form_code)}</td>
       <td style="min-width:240px">${esc(r.critical_limit_it || '')}
         <details class="more"><summary>Pericolo, monitoraggio, azioni</summary><dl><dt>Pericolo</dt><dd>${esc(r.hazard_it || '—')}</dd><dt>Monitoraggio</dt><dd>${esc(r.monitoring_it || '—')}</dd><dt>Azione correttiva</dt><dd>${esc(r.corrective_it || '—')}</dd><dt>Verifica</dt><dd>${esc(r.verification_it || '—')}</dd><dt>Registrazioni</dt><dd>${esc(r.records_it || '—')}</dd></dl></details></td>
       <td class="num">${inp(r, 'min_value')}</td><td class="num">${inp(r, 'max_value')}</td><td class="num">${inp(r, 'warn_min')}</td><td class="num">${inp(r, 'warn_max')}</td>
       <td class="num">${r.logs_30d}${r.nc_30d ? `<br><span class="ko">${r.nc_30d} NC</span>` : ''}</td><td>${isManager ? '<button class="btn sm sec" data-save>Salva</button>' : ''}</td></tr>`).join('')}</table>`;
     $('plan').querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
-      const tr = b.closest('tr'), v = {}; tr.querySelectorAll('input[data-k]').forEach(i => v[i.dataset.k] = i.value === '' ? null : Number(i.value));
+      const tr = b.closest('tr'), v = {}, changes = [], big = [], u = tr.dataset.unit ? ' ' + tr.dataset.unit : '';
+      const LBL = { min_value: 'Limite critico minimo', max_value: 'Limite critico massimo', warn_min: 'Allerta minima', warn_max: 'Allerta massima' };
+      for (const i of tr.querySelectorAll('input[data-k]')) {
+        const t = i.value.trim().replace(/\s/g, ''), k = i.dataset.k, was = i.dataset.orig === '' ? null : Number(i.dataset.orig);
+        if (t !== '' && !/^-?\d+([.,]\d+)?$/.test(t)) { toast(`${LBL[k]}: "${i.value}" non è un numero (es. 72 oppure 72,5)`, 'err'); i.focus(); return; }
+        const now = t === '' ? null : Number(t.replace(',', '.'));
+        if (now === was) continue;
+        if (was != null && now == null && (k === 'min_value' || k === 'max_value') && tr.dataset.ccp === '1') {
+          toast(`${LBL[k]} di ${tr.dataset.name}: non si cancella. Scrivi il nuovo valore (era ${itNum(was)}${u}).`, 'err'); i.focus(); return; }
+        v[k] = now;
+        changes.push(`${LBL[k]}: ${was == null ? '—' : itNum(was) + u} → ${now == null ? '—' : itNum(now) + u}`);
+        if (was && now != null && (k === 'min_value' || k === 'max_value') && Math.abs(now - was) / Math.abs(was) > 0.2)
+          big.push(`${LBL[k]} cambia del ${Math.round((now - was) / Math.abs(was) * 100)} %`);
+      }
+      if (!changes.length) { toast('Nessuna modifica da salvare'); return; }
+      if (tr.dataset.ccp === '1' && ['min_value', 'max_value'].every(k => (k in v ? v[k] : (tr.querySelector(`input[data-k="${k}"]`).dataset.orig || null)) == null)) {
+        toast(`${tr.dataset.name}: un punto critico deve avere almeno un limite (minimo o massimo)`, 'err'); return; }
+      const msg = `${tr.dataset.name}\n\n${changes.join('\n')}${big.length ? '\n\n⚠ ATTENZIONE: ' + big.join(' · ') + '. Controlla la virgola.' : ''}\n\n` +
+        'Vale da subito per tablet e bot. Fallo solo se deciso con il consulente HACCP, e aggiorna la revisione del Manuale (Configurazione → Parametri → Sicurezza alimentare e DOP).\n\nSalvare?';
+      if (!confirm(msg)) return;
       v.updated_at = new Date().toISOString();
-      if (!confirm(`Cambiare i limiti di ${tr.dataset.code}? Fallo solo se deciso con il consulente HACCP: vale da subito per tablet e bot.`)) return;
       failNone(await sb.from('haccp_control_points').update(v).eq('code', tr.dataset.code).select('code'), 'Limiti'); toast('Limiti aggiornati'); load();
     });
   }

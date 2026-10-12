@@ -42,5 +42,10 @@ every migration: the tests still run, after adding one milk supplier
     note); a card order with no payment marked as checked; a production login does not see the tab. Needs a replay with
     v0.82a (no backup needed). 06/10/2026: 18/18.
 
+13. `python3 audit_e2e.py` (v0.93, port 8768) — scanning a tank label when two open lots share the milk asks which lot (no
+    preselection, oldest first with its start time), refuses Salva without a choice, opens the lot picked; milk arrival with
+    two loads in transit preselects nothing, shows "partita N h fa" for each, a choice locks its kg and lot, «nessuna»
+    unlocks them. 12/10/2026: 10/10.
+
 Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
 paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

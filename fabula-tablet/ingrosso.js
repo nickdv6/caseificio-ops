@@ -100,7 +100,11 @@
     body.querySelector('[data-exadd]').appendChild(saveBtn(async () => {
       const k = body.querySelector('[data-exk]').value, p = { kind: k, date_from: body.querySelector('[data-exf]').value, date_to: body.querySelector('[data-ext]').value || null, variant_id: body.querySelector('[data-exv]').value, qty: Number(body.querySelector('[data-exq]').value), window: body.querySelector('[data-exw]').value };
       if (!p.date_from) throw new Error('Indica la data');
-      await sa('add_exception', p, true); reload();
+      const r = await sa('add_exception', p, true);
+      // v0.93 (audit B-20): «Salta» on a day already booked cancels that order; if it already went to Shopify, say so before anything else
+      if (r && r.cancel_on_shopify) alert(r.message_it);
+      else if (r && r.cancelled_orders) toast(r.message_it);
+      reload();
     }, 'Aggiungi'));
   }
 

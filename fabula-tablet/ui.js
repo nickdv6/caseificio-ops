@@ -20,9 +20,11 @@
     let t = String(v).trim().replace(/\s|€/g, '');
     if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.');
     else if (t.includes(',')) t = t.replace(',', '.');
-    else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    else if (/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');   // v0.93 (audit C-01): "0.044" is a decimal, not 44
     return /^-?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : NaN;
   };
+  // v0.93 (audit C-01/B-17): a new value 10× bigger or smaller than the old one is almost always a comma/dot slip ("1.325" read as 1325)
+  const jump = (was, now) => { const a = Number(was), b = Number(now); if (!a || !b || !Number.isFinite(a) || !Number.isFinite(b)) return 0; const r = b / a; return r >= 10 || r <= 0.1 ? r : 0; };
   const nOrNull = v => { if (v === '' || v == null) return null; if (typeof v === 'number') return v; const n = parseIt(v); if (!Number.isFinite(n)) throw new Error(`Numero non valido: "${v}"`); return n; };
   const dOrNull = v => v || null;
   // v0.60: phone → wa.me number. +39 / 0039 kept once; Italian mobiles (3…, including 390–393…) and landlines (0…) get 39
@@ -155,5 +157,5 @@
     return api;
   }
 
-  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, bellCount, get staff() { return staff; } };
+  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, bellCount, get staff() { return staff; } };
 })();

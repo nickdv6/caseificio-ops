@@ -17,6 +17,50 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Audit fixes, phase 0 (v0.93)
+From the 12/10/2026 usability & error-proofing audit (Claude Doc "Caseificio ops — usability & error-proofing audit",
+project doc `claude/audit-2026-10-12/`). 16 of the 17 phase-0 bugs; #9 (CCP 2 limit 72 °C vs vat 63 °C × 30 min) waits
+for the HACCP consultant.
+- **Database** (`v093a`–`v093d`):
+  - `log_ccp`, `hold_lot` and `record_lab_result` run as definer after `require_perm('haccp', 2)`, so a CCP out of limit
+    holds the lot from every profile that can record it (Banco/Spedizioni used to save the CCP but not the hold).
+  - A recall assessment no longer expires after 2 days; `ops_health_check` reports it as `recall_pending` until decided.
+  - Alerts sort first in `v_active_notices`.
+  - The `haccp_cp_limits_guard` trigger refuses a blank or inverted CCP limit, and alert thresholds outside the limits.
+  - A weighed POS sale (no variant, `sku`/`peso_kg` in the line properties) reduces stock instead of breaking the Shopify
+    sync; an unknown free sale lands in `shopify_unmapped_lines` as "vendita libera".
+  - `generate_daily_tasks` sets due times in Rome time (they were one or two hours late).
+  - Wholesale:
+    - A change that takes a day under the minimum order is refused with the reason.
+    - A day still under the minimum at the 18:20 booking is logged for the customer and posted to the office.
+    - «Salta» on a day already booked cancels the order and its Shopify queue entry; any other change to a booked day
+      is refused.
+    - Messages no longer show a stray `s`.
+    - `v_shipment_doc` gives the DDT the delivery address, window, instructions and PO number.
+- **Tablet and console**:
+  - Numbers: `1.234` with a dot is read as a thousands figure only when it really is one (`0.044` stays 0.044), and
+    a value that jumps ten-fold or more asks before saving (Parametri, supplier prices).
+  - The HACCP plan editor shows the diff and refuses blank or inverted CCP limits.
+  - Scanning a tank label when two lots share the milk asks which lot.
+  - Milk arrival no longer preselects one of several loads in transit, and shows how long ago each left.
+  - Task times are shown in Rome time.
+  - An invite link opened on a device already logged in signs that user out first.
+  - The DDT prints the delivery address.
+- **Till** (`cashdro-middleware`, POS extension):
+  - A paid sale whose receipt failed is `paid_no_receipt`, not `error`, and the tile refuses to charge the same cart again.
+  - Change the machine could not give stays visible to the end (`change_short_cents`) and must be acknowledged.
+  - Status polls are retried.
+  - See `cashdro-middleware/DEPLOYMENT.md` §4.
+- **Bot**: `tools/bots/prompts/shopify_orders.txt` also reads the line properties (needed for weighed sales); the live
+  "Ordini Shopify" scheduled task must get the same change.
+- Tests (12/10/2026, all pass on a fresh replay):
+  - `prod-test/test_audit_food_safety.sql` 18/18
+  - `test_audit_weighed_sales.sql` 6/6
+  - `test_audit_task_times.sql` 4/4
+  - `test_audit_wholesale.sql` 16/16
+  - `tablet-test/audit_e2e.py` 10/10
+  - `cashdro-middleware/test_engine.py` 12/12
+
 ## Configurazione: Panoramica e Parametri per sezione (v0.84)
 Front end only (`fabula-tablet/admin.html`, `admin.js`; sw perla-v53), no database changes.
 - **Panoramica** is the first tab: one status card per area — Parametri (values still empty, or that their own description calls

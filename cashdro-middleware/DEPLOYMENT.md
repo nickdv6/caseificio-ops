@@ -149,9 +149,13 @@ npm i preact
 
 **Abort** — **Annulla e restituisci contanti** in the modal (or the customer presses cancel on the CashDro screen). The middleware sends `finishOperation` with the cancel type; inserted cash is returned and slots lock. The POS cart is untouched.
 
-**Change short** (`change_short`) — coins ran out: the sale is complete and fiscalized, the modal says how much to hand over by hand. Reload the recycler (float-in) and check `GET /cash/journal/<day>` → `change_short_cents`.
+**Change short** (`change_short`) — coins ran out: the sale is complete and fiscalized, the modal says how much to hand over by hand (`change_short_cents`) and the cashier must tap "Fatto: ho dato … a mano" before the tile lets them close. Reload the recycler (float-in) and check `GET /cash/journal/<day>` → `change_short_cents`.
 
-**Cash collected but no receipt** (`error` after `fiscalizing`) — the only state that needs a human: the money is in the machine. Print the documento commerciale manually from the RT keypad for the same amount, then close the sale in POS. The journal row keeps the CashDro operation id.
+**Cash collected but no receipt** (`paid_no_receipt`, v0.93; before it was `error`) — the money is in the machine, so the sale counts as **paid**: the tile shows "PAGATO" and refuses to start a second charge on the same cart. Print the documento commerciale manually from the RT keypad for the same amount, tap "Fatto: scontrino emesso a mano", then close the sale in POS as Cash. The journal row keeps the CashDro operation id, and `GET /cash/journal/<day>` → `receipts_to_issue_by_hand` lists them.
+
+**Machine error with cash inside** (`error` after notes went in) — the tile no longer offers "Riprova": it says to check the machine display first and only then tap "Ho controllato…". Status calls to the CashDro are retried three times before the operation is cancelled and the cash returned.
+
+**Tests** (no hardware): `AUTH_MODE=none python3 test_engine.py` — 12 checks on the payment engine with a fake CashDro and Epson (change short, receipt failure, double-start, retries).
 
 **End of day** — `GET https://pos-bridge…/cash/journal/YYYY-MM-DD` gives `cash_collected_cents`; compare with Shopify POS payment-session `totalCashSales` (the `pos_daily_closings` reconciliation already planned in the ops system). Any gap > €0.50 → look for sales closed in POS as Cash without going through the tile.
 
