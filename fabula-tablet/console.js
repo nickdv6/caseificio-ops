@@ -187,13 +187,21 @@
   async function renderFarm() {
     const box = $('approvals'); if (!box) return;
     let el = $('farm-status'); if (!el) { el = document.createElement('div'); el.id = 'farm-status'; el.className = 'status'; el.style.margin = '0 0 10px'; box.parentNode.insertBefore(el, box); }
-    const [pl, sh] = await Promise.all([
+    const [pl, sh, road] = await Promise.all([
       sb.from('milk_plans').select('plan_date, milk_kg, farm_seen_at').eq('status', 'approved').gte('plan_date', UI.romeISO()).order('plan_date').limit(1),
-      sb.from('milk_shipments').select('milk_lot, kg, shipped_at, status, received_at').order('shipped_at', { ascending: false }).limit(1)]);   // v0.65
-    const m = pl.data && pl.data[0], s = sh.data && sh.data[0];
+      sb.from('milk_shipments').select('milk_lot, kg, shipped_at, status, received_at').neq('status', 'cancelled').order('shipped_at', { ascending: false }).limit(1),   // v0.65
+      sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, original_kg').eq('status', 'shipped').order('shipped_at').limit(20)]);              // v0.94
+    const m = pl.data && pl.data[0], s = sh.data && sh.data[0], onRoad = road.data || [];
     const when = t => new Date(t).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    const ageH = t => Math.round((Date.now() - new Date(t)) / 36e5);
     const parts = [];
-    if (s) parts.push(`🚚 Ultima spedizione Masseria: ${num(s.kg, 1)} kg (${esc(s.milk_lot)}, partita ${when(s.shipped_at)}) · ${s.status === 'received' ? 'ricevuta ' + when(s.received_at) : s.status === 'rejected' ? '<b class="ko">respinta</b>' : '<b class="ko">in viaggio: confermala all\'arrivo dal tablet</b>'}`);
+    if (s && !(s.status === 'shipped' && onRoad.length)) parts.push(`🚚 Ultima spedizione Masseria: ${num(s.kg, 1)} kg (${esc(s.milk_lot)}, partita ${when(s.shipped_at)}) · ${s.status === 'received' ? 'ricevuta ' + when(s.received_at) : s.status === 'rejected' ? '<b class="ko">respinta</b>' : '<b class="ko">in viaggio: confermala all\'arrivo dal tablet</b>'}`);
+    // v0.94 (audit A-10/FARM-03): every load still «in viaggio», the stale ones (> 36 h) in red with a way to close them
+    const canCancel = PERM.can('produzione', 2);
+    onRoad.forEach(x => { const stale = ageH(x.shipped_at) > 36;
+      parts.push(`🚚 ${stale ? '<b class="ko">' : ''}In viaggio da ${ageH(x.shipped_at) < 1 ? 'meno di 1 ora' : ageH(x.shipped_at) + ' h'}: ${num(x.kg, 1)} kg (${esc(x.milk_lot)}, partita ${when(x.shipped_at)})${stale ? '</b> · mai confermata all\'arrivo: se il latte è arrivato confermala dal tablet, altrimenti annullala' : ' · confermala all\'arrivo dal tablet'}`
+        + (x.original_kg != null ? ` · peso corretto dalla Masseria (prima ${num(x.original_kg, 1)} kg)` : '')
+        + (canCancel ? ` · <a href="#" data-cancel-ship="${esc(x.id)}" data-lot="${esc(x.milk_lot)}">annulla</a>` : '')); });
     if (m) parts.push(`🥛 Ordine ${esc(dShort(m.plan_date))}: ${num(m.milk_kg, 0)} kg · ${m.farm_seen_at ? 'visto ' + when(m.farm_seen_at) : '<b class="ko">non ancora visto</b>'}`);
     if (FARM_LINK) parts.push(`<a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina Masseria</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a> · <a href="${esc(FARM_LINK)}&stampa=1" target="_blank" rel="noopener">stampa QR spedizioni</a>`);
     el.innerHTML = (s || m) ? parts.join('<br>') : (FARM_LINK ? parts.join('') : '');
@@ -477,6 +485,15 @@
   // ---------- Tier 2: send POs, wholesale confirmations ----------
   const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Copiato'); } catch { toast('Copia non riuscita', 'err'); } };
   document.addEventListener('click', e => { const a = e.target.closest && e.target.closest('[data-copy]'); if (a) { e.preventDefault(); copyText(a.dataset.copy); } });   // v0.64
+  // v0.94: the office closes a farm load that will never arrive (registered twice, never left) — reason required, the farm page shows it
+  document.addEventListener('click', async e => {
+    const a = e.target.closest && e.target.closest('[data-cancel-ship]'); if (!a) return; e.preventDefault();
+    const why = (prompt(`Annullare la spedizione ${a.dataset.lot}? Non comparirà più sul tablet e la Masseria la vedrà annullata.\nMotivo (obbligatorio):`) || '').trim();
+    if (!why) return;
+    const { error } = await sb.rpc('milk_shipment_cancel', { p_id: a.dataset.cancelShip, p_reason: why });
+    if (error) return toast(error.message, 'err');
+    toast(`Spedizione ${a.dataset.lot} annullata`); renderFarm();
+  });
   const waLink = (phone, text) => 'https://wa.me/' + UI.waNumber(phone) + '?text=' + encodeURIComponent(text);   // v0.60: local numbers get 39 (they opened French numbers)
   async function renderPoSend() {
     const box = $('po-send');

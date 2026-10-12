@@ -13,7 +13,10 @@
    v0.65: the farm records the kg it ships (its weight is the source of truth); the page shows the latest shipment with
    its status at the dairy, the last 30 days and the month total. Orders from the dairy (v0.64) stay below.
    ?azione=spedizione opens the shipment form straight away (that is what the QR at the farm points to).
-   ?stampa=1 prints the QR poster for the farm. */
+   ?stampa=1 prints the QR poster for the farm.
+   v0.94 (audit A-10/FARM-02b): a load still «in viaggio» can be corrected (kg) or cancelled from here, with a reason; the dairy
+   is told in its Bot feed and the tablet stops offering a cancelled load. The lot is shown big after registering, because the
+   dairy now checks it on the DDT or the tank when two loads are on the road. */
 :root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--ok:#1f6b3a;--warn:#b3261e;--amber:#8a5a00;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.5 var(--body)}
@@ -46,6 +49,9 @@ input.kgin{font-family:var(--display);font-size:2rem;font-weight:600;padding:10p
 .tot{display:flex;gap:10px}.tot .card{flex:1;margin:0}
 .empty{color:var(--muted);padding:6px 2px}
 .err{color:var(--warn);margin-top:12px}.okmsg{color:var(--ok);font-weight:600}
+.lotbig{font-family:var(--display);font-size:1.6rem;font-weight:600;letter-spacing:.02em;margin-top:6px}
+.btn.warn{background:var(--warn)}.lnk{color:var(--accent);background:none;border:0;padding:0;font:inherit;font-size:.9rem;text-decoration:underline;cursor:pointer}
+#amend-form{border-color:var(--amber)}
 footer{color:var(--muted);font-size:.85rem;margin-top:26px}
 /* print poster */
 .poster{display:none;text-align:center;padding:40px 20px}
@@ -73,6 +79,15 @@ body.print .box{display:none}body.print .poster{display:block}
       <div class="err" id="ship-err"></div>
     </div>
     <div id="ship-ok" class="card" hidden></div>
+    <div class="card" id="amend-form" hidden>
+      <div class="day" id="am-title">Correggi la spedizione</div>
+      <div class="meta">Si può cambiare solo finché il caseificio non l'ha ricevuta. Il caseificio vede la correzione e il motivo.</div>
+      <label for="am-kg">Peso giusto (kg)</label><input id="am-kg" class="kgin" type="number" inputmode="decimal" step="any" min="1" max="5000">
+      <label for="am-why">Motivo (obbligatorio)</label><input id="am-why" type="text" maxlength="300" placeholder="es. peso sbagliato · registrata due volte">
+      <div class="row" style="margin-top:14px"><button class="btn sec" id="am-close">Chiudi</button><button class="btn grow" id="am-save">Salva il peso giusto</button></div>
+      <button class="btn warn big" id="am-cancel" style="margin-top:10px">Annulla questa spedizione (registrata per errore)</button>
+      <div class="err" id="am-err"></div>
+    </div>
 
     <h2>Ultima spedizione</h2><div id="latest"></div>
     <h2>Questo mese</h2><div class="tot" id="totals"></div>
@@ -104,7 +119,10 @@ body.print .box{display:none}body.print .poster{display:block}
   const dd = (d, today) => { const diff = Math.round((new Date(d + 'T12:00:00Z') - new Date(today + 'T12:00:00Z')) / 864e5);
     return diff === 0 ? 'Oggi' : diff === 1 ? 'Domani' : diff === -1 ? 'Ieri' : new Date(d + 'T12:00:00Z').toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
   const pill = s => s.status === 'received' ? `<span class="pill p-ok">Ricevuto ${s.received_at ? tm(s.received_at) : ''}</span>`
-    : s.status === 'rejected' ? `<span class="pill p-ko">Respinto</span>` : '<span class="pill p-road">In viaggio</span>';
+    : s.status === 'rejected' ? `<span class="pill p-ko">Respinto</span>` : s.status === 'cancelled' ? '<span class="pill p-ko">Annullata</span>' : '<span class="pill p-road">In viaggio</span>';
+  // v0.94: what changed on a load (corrected weight, cancellation) — shown on the latest card and in the list
+  const changes = s => (s.original_kg != null ? `<div class="meta">Peso corretto: prima ${kg(s.original_kg)} kg${s.correction_reason ? ' · ' + esc(s.correction_reason) : ''}</div>` : '')
+    + (s.status === 'cancelled' ? `<div class="meta">Annullata${s.cancelled_by && s.cancelled_by !== 'Masseria' ? ' dal caseificio' : ''}: ${esc(s.cancel_reason || '')}</div>` : '');
   const post = async body => { const r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body: JSON.stringify({ t: token, ...body }) });
     const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'non salvato'); return d; };
 
@@ -133,12 +151,46 @@ body.print .box{display:none}body.print .poster{display:block}
       try { history.replaceState(null, '', location.pathname + '?t=' + encodeURIComponent(token)); } catch {}   // a reload doesn't reopen the form
       ['kg', 'temp', 'ddt', 'note'].forEach(i => $(i).value = '');
       $('ship-ok').hidden = false;
-      $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="meta">Lotto <b>${esc(d.shipment.milk_lot)}</b> · scrivilo sul DDT o sulla cisterna. Il caseificio conferma all'arrivo.</div>`;
+      $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="lotbig">Lotto ${esc(d.shipment.milk_lot)}</div><div class="meta"><b>Scrivi il lotto sul DDT e sulla cisterna</b>: all'arrivo il caseificio lo controlla per sapere quale cisterna è. Sbagliato qualcosa? «Correggi o annulla» qui sotto.</div>`;
       load();
     } catch (e) { $('ship-err').textContent = 'Non registrata: ' + e.message + '. Riprova.'; }
     finally { $('ship-go').disabled = false; $('ship-go').textContent = 'Registra spedizione'; confirmKg = null; }
   };
   $('kg').addEventListener('input', () => { confirmKg = null; $('ship-go').textContent = 'Registra spedizione'; });
+
+  // ---- v0.94: correct or cancel a load still in transit ----
+  let amendLot = null, amendKg = null, confirmAm = null;
+  const openAmend = sh => {
+    amendLot = sh.milk_lot; amendKg = Number(sh.kg); confirmAm = null;
+    $('am-title').textContent = `Spedizione ${sh.milk_lot} · ${kg(sh.kg)} kg · partita alle ${tm(sh.shipped_at)}`;
+    $('am-kg').value = ''; $('am-kg').placeholder = kg(sh.kg); $('am-why').value = ''; $('am-err').textContent = '';
+    $('am-save').textContent = 'Salva il peso giusto'; $('am-cancel').textContent = 'Annulla questa spedizione (registrata per errore)';
+    $('amend-form').hidden = false; $('ship-ok').hidden = true; $('amend-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  const closeAmend = () => { $('amend-form').hidden = true; amendLot = null; confirmAm = null; };
+  $('am-close').onclick = closeAmend;
+  ['am-kg', 'am-why'].forEach(i => $(i).addEventListener('input', () => { confirmAm = null; $('am-save').textContent = 'Salva il peso giusto'; $('am-cancel').textContent = 'Annulla questa spedizione (registrata per errore)'; }));
+  const amend = async (cancel, btn) => {
+    const why = $('am-why').value.trim(), v = $('am-kg').value.trim().replace(',', '.'), k = Number(v);
+    if (!cancel && (!v || !(k > 0) || k > 5000)) { $('am-err').textContent = 'Scrivi il peso giusto in kg (tra 1 e 5.000).'; return; }
+    if (!cancel && k === amendKg) { $('am-err').textContent = `Il peso è già ${kg(k)} kg.`; return; }
+    if (why.length < 3) { $('am-err').textContent = 'Scrivi il motivo (es. «peso sbagliato», «registrata due volte»).'; $('am-why').focus(); return; }
+    const key = cancel ? 'cancel' : 'kg:' + k;
+    if (confirmAm !== key) { confirmAm = key; $('am-err').textContent = '';                      // second tap confirms
+      btn.textContent = cancel ? `Confermo: annulla ${amendLot}` : `Confermo ${kg(k)} kg (prima ${kg(amendKg)})`; return; }
+    btn.disabled = true;
+    try {
+      await post({ action: 'amend', lot: amendLot, kg: cancel ? null : k, cancel, reason: why });
+      const lot = amendLot; closeAmend();
+      $('ship-ok').hidden = false;
+      $('ship-ok').innerHTML = cancel ? `<div class="okmsg">✓ Spedizione ${esc(lot)} annullata</div><div class="meta">Il caseificio lo vede subito; sul tablet non compare più.</div>`
+        : `<div class="okmsg">✓ Peso corretto</div><div class="kg">${kg(k)} <small>kg</small></div><div class="meta">Lotto ${esc(lot)} · il caseificio vede la correzione.</div>`;
+      load();
+    } catch (e) { $('am-err').textContent = 'Non salvato: ' + e.message; confirmAm = null; }
+    finally { btn.disabled = false; }
+  };
+  $('am-save').onclick = () => amend(false, $('am-save'));
+  $('am-cancel').onclick = () => amend(true, $('am-cancel'));
 
   async function seen(d, btn) {
     btn.disabled = true;
@@ -161,12 +213,15 @@ body.print .box{display:none}body.print .poster{display:block}
           <div class="meta">Lotto ${esc(L.milk_lot)}${L.temperature_c != null ? ' · ' + kg(L.temperature_c) + ' °C alla partenza' : ''}${L.ddt_number ? ' · DDT ' + esc(L.ddt_number) : ''}</div>
           ${L.status === 'received' && L.arrival_temp_c != null ? `<div class="meta">All'arrivo: ${kg(L.arrival_temp_c)} °C</div>` : ''}
           ${L.status === 'rejected' ? `<div class="err" style="margin-top:4px">Respinto: ${esc(L.rejection_reason || 'non conforme')}</div>` : ''}
+          ${changes(L)}
+          ${L.status === 'shipped' ? '<button class="btn sec" style="margin-top:10px" data-amend="0">Correggi o annulla</button>' : ''}
           </div>${pill(L)}</div></div>`;
       const m = d.month || {};
       $('totals').innerHTML = `<div class="card"><div class="meta">Ricevuto dal caseificio</div><div class="kg">${kg(m.received_kg || 0)} <small>kg</small></div><div class="meta">${m.shipments || 0} ${m.shipments === 1 ? 'spedizione' : 'spedizioni'}</div></div>
         <div class="card"><div class="meta">Mese scorso</div><div class="kg">${kg(m.prev_received_kg || 0)} <small>kg</small></div></div>`;
-      $('hist').innerHTML = sh.length ? sh.map(s => `<tr><td>${esc(dd(s.ship_date, d.today))} ${tm(s.shipped_at)}<div class="meta">${esc(s.milk_lot)}</div></td><td class="n">${kg(s.kg)} kg</td><td class="n">${pill(s)}</td></tr>`).join('')
+      $('hist').innerHTML = sh.length ? sh.map((s, i) => `<tr><td>${esc(dd(s.ship_date, d.today))} ${tm(s.shipped_at)}<div class="meta">${esc(s.milk_lot)}</div>${changes(s)}</td><td class="n">${kg(s.kg)} kg</td><td class="n">${pill(s)}${s.status === 'shipped' ? `<div><button class="lnk" data-amend="${i}">correggi</button></div>` : ''}</td></tr>`).join('')
         : '<tr><td class="empty">Ancora niente.</td></tr>';
+      document.querySelectorAll('[data-amend]').forEach(b => { b.onclick = () => openAmend(sh[Number(b.dataset.amend)]); });
       // orders from the dairy
       const o = $('orders'); o.innerHTML = '';
       (d.orders || []).forEach(x => {
@@ -187,8 +242,8 @@ body.print .box{display:none}body.print .poster{display:block}
     } catch (e) { $('err').textContent = 'Pagina non disponibile: ' + e.message + '.'; }
   }
   load().then(() => { if (q.get('azione') === 'spedizione') openForm(); });
-  setInterval(() => { if ($('ship-form').hidden) load(); }, 2 * 60000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && $('ship-form').hidden) load(); });
+  setInterval(() => { if ($('ship-form').hidden && $('amend-form').hidden) load(); }, 2 * 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && $('ship-form').hidden && $('amend-form').hidden) load(); });
 })();
 </script>
 </body>

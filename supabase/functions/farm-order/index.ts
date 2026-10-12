@@ -6,8 +6,11 @@
 //                                                        month totals, approved milk orders and orders awaiting approval
 //   POST { t, action: "ship", kg, temp?, ddt?, note? } → fabula.farm_milk_ship(...): the farm records the kg it shipped
 //                                                        (the farm's weight is the source of truth)
+//   POST { t, action: "amend", lot, kg?, cancel?, reason }
+//                                                    → fabula.farm_milk_amend(...) (v0.94): the farm corrects the kg of, or
+//                                                        cancels, a load still in transit (reason required)
 //   POST { t, plan_date: "YYYY-MM-DD" }                → fabula.farm_milk_seen(token, date): the farm has seen that order
-// All three functions are executable by service_role only, so the page never touches the database directly.
+// All these functions are executable by service_role only, so the page never touches the database directly.
 // Deploy with verify_jwt = false (the page has no Supabase login).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -47,6 +50,18 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await fab.rpc("farm_milk_ship", {
         p_token: t, p_kg: kg, p_temp: temp,
         p_ddt: b.ddt ? String(b.ddt).slice(0, 40) : null, p_note: b.note ? String(b.note).slice(0, 300) : null,
+      });
+      if (error) return json({ error: error.code === "22023" ? error.message : "errore del server" }, error.code === "22023" ? 400 : 500);
+      if (!data) return json({ error: "link non valido o scaduto" }, 403);
+      return json({ ok: true, shipment: data });
+    }
+
+    if (b.action === "amend") {
+      const lot = String(b.lot ?? ""), cancel = b.cancel === true, kg = cancel ? null : num(b.kg);
+      if (!/^[A-Za-z0-9-]{3,40}$/.test(lot)) return json({ error: "spedizione non valida" }, 400);
+      if (!cancel && (kg === null || !Number.isFinite(kg) || kg <= 0 || kg > 5000)) return json({ error: "peso non valido" }, 400);
+      const { data, error } = await fab.rpc("farm_milk_amend", {
+        p_token: t, p_lot: lot, p_kg: kg, p_cancel: cancel, p_reason: b.reason ? String(b.reason).slice(0, 300) : null,
       });
       if (error) return json({ error: error.code === "22023" ? error.message : "errore del server" }, error.code === "22023" ? 400 : 500);
       if (!data) return json({ error: "link non valido o scaduto" }, 403);

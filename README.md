@@ -33,6 +33,23 @@ What it does with that entry:
 
 Front end only, so it needs no database change. `tablet-test/audit_e2e.py` 22/22.
 
+**v0.94a: wrong or stale farm loads can be put right** (FARM-03, FARM-02b; migration `v094a`, edge function `farm-order`
+action `amend`):
+- **Farm page** (`latte.html`):
+  - «Correggi o annulla» on a load still «in viaggio»: fix the kg, or cancel a load registered by mistake.
+  - A reason is required, and a second tap confirms.
+  - The first kg is kept (`original_kg`), and the office gets a message in the Bot feed (agent `masseria`).
+  - After registering, the lot is shown big with «scrivi il lotto sul DDT e sulla cisterna».
+- **Console → Oggi:**
+  - Every load still in transit is listed; one older than 36 h is in red.
+  - Produzione level 2 or higher (Titolare, Socio, Responsabile produzione, Produzione, Qualità) can cancel a load, giving a reason.
+- **`ops_health_check`** reports a load in transit for more than 36 h (`milk_shipments_stale`) every evening.
+- **A cancelled load:**
+  - the tablet no longer offers it;
+  - the intake trigger refuses it ("già stata annullata (motivo)");
+  - re-entering the same kg right after a cancel is no longer taken as a double tap.
+- **Tests:** `prod-test/test_audit_farm_shipments.sql` 18/18 (12 fail on v0.93), `tablet-test/farm_amend_e2e.py` 16/16.
+
 ## Audit fixes, phase 0 (v0.93)
 From the 12/10/2026 usability & error-proofing audit (Claude Doc "Caseificio ops — usability & error-proofing audit",
 project doc `claude/audit-2026-10-12/`). 16 of the 17 phase-0 bugs; #9 (CCP 2 limit 72 °C vs vat 63 °C × 30 min) waits

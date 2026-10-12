@@ -54,5 +54,14 @@ every migration: the tests still run, after adding one milk supplier
     - `DDT:<number>` from a QR picks its load.
     12/10/2026: 22/22.
 
+14. `python3 farm_amend_e2e.py` (v0.94a, port 8772; needs v094a in the DB) — farm page on a phone:
+    - registers a load and the lot is shown big;
+    - «Correggi o annulla» needs a reason and a second tap, then the corrected kg and the first one are shown;
+    - a load registered twice is cancelled and shown «Annullata» with the reason, and the office gets both messages.
+
+    Tablet: the cancelled load is not offered, and the corrected one comes at 1.050 kg.
+    Console → Oggi as the owner: every load in transit is listed and the 40 h one is flagged; «annulla» asks for a
+    reason, cancels it with the owner's name, and the list updates. 12/10/2026: 16/16.
+
 Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
 paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

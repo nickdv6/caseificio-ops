@@ -32,7 +32,7 @@ same transaction as the close counts, simulation batches skipped; `prod_watch` o
 # Audit fixes, phase 0 (v0.93)
 ```
 tools/go-live/drill/infra-test/replay.sh audit_test     # one fresh replay per file: they add test rows
-for t in food_safety weighed_sales task_times wholesale; do
+for t in food_safety weighed_sales task_times wholesale farm_shipments; do
   su postgres -c "psql -d audit_test -f tools/go-live/drill/prod-test/test_audit_$t.sql" | grep -E "PASS|FAIL"
 done
 ```
@@ -54,3 +54,16 @@ done
 
 12/10/2026: 18/18, 6/6, 4/4, 16/16 PASS. Before the fixes, 12 food-safety and 12 wholesale checks failed, the weighed sale
 broke the sync and task times came out at 07:45/08:45 instead of 06:45.
+- `test_audit_farm_shipments.sql` (v0.94a):
+  - The farm corrects the kg of a load in transit, with a reason required; the first kg is kept and a Bot feed message is
+    posted. A wrong token changes nothing.
+  - The farm cancels a load, after which it can't be changed again. The farm page shows the cancellation and the
+    correction.
+  - The same kg re-entered after a cancel makes a new load.
+  - A cancelled load is refused at intake with the reason; a received one is taken at the corrected kg and is locked
+    for the farm.
+  - The health check reports loads in transit for more than 36 h. Banco can't cancel; the owner must give a reason, then
+    cancels and the report clears.
+  - Grants.
+
+  12/10/2026: 18/18 PASS; on v0.93 12 fail.
