@@ -8,7 +8,7 @@
   --bg:#f6f4ef; --panel:#fffdf8; --ink:#161514; --muted:#5d6470; --line:#e4e0d6;
   --navy:#1e3a5f; --gold:#b8882c; --gold-soft:#f3e7cc;
   --ok:#2e7d4f; --ok-bg:#e3f1e8; --warn:#a36a00; --warn-bg:#fbefd6; --bad:#b3362c; --bad-bg:#f8e1de;
-  --human:#c9c3b6; --track:#ebe7dd;
+  --human:#c9c3b6; --track:#ebe7dd; --ux:#a36a00;
   --display:"Fraunces",Georgia,"Times New Roman",serif;
   --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
   --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
@@ -17,12 +17,12 @@
   --bg:#0f1824; --panel:#152234; --ink:#ece7dc; --muted:#9aa6b6; --line:#24344a;
   --navy:#9cc0ea; --gold:#e0b45e; --gold-soft:#3a2f1a;
   --ok:#6cc495; --ok-bg:#163326; --warn:#f0b54a; --warn-bg:#3a2c10; --bad:#f08a7e; --bad-bg:#3d1c19;
-  --human:#4a5466; --track:#22324a; color-scheme:dark}}
+  --human:#4a5466; --track:#22324a; --ux:#f0b54a; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0f1824; --panel:#152234; --ink:#ece7dc; --muted:#9aa6b6; --line:#24344a;
   --navy:#9cc0ea; --gold:#e0b45e; --gold-soft:#3a2f1a;
   --ok:#6cc495; --ok-bg:#163326; --warn:#f0b54a; --warn-bg:#3a2c10; --bad:#f08a7e; --bad-bg:#3d1c19;
-  --human:#4a5466; --track:#22324a; color-scheme:dark}
+  --human:#4a5466; --track:#22324a; --ux:#f0b54a; color-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font:16px/1.5 var(--body);padding-inline:16px;padding-block:20px 40px}
 .wrap{max-width:1180px;margin:0 auto;display:grid;gap:20px}
@@ -46,7 +46,7 @@ button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
 button:disabled{opacity:.5;cursor:default}
 .banner{border:1.5px solid var(--warn);background:var(--warn-bg);color:var(--ink);border-radius:8px;padding:12px 14px;font-size:.95rem}
 .banner.bad{border-color:var(--bad);background:var(--bad-bg)}
-.gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px}
 .gauge{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:8px;min-width:0}
 .gauge.lead{border:2px solid var(--navy)}
 .gauge .label{font-size:.85rem;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
@@ -78,7 +78,7 @@ ul.checks li:first-child{border-top:0}
 .alert{font-size:.88rem;padding:7px 10px;border-radius:6px;border-left:4px solid var(--warn);background:var(--warn-bg);border-top-left-radius:0;border-bottom-left-radius:0}
 .alert.alert-alert{border-left-color:var(--bad);background:var(--bad-bg)}
 .tablewrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:.92rem;min-width:640px}
+table{width:100%;border-collapse:collapse;font-size:.92rem;min-width:780px}
 th{font:600 .72rem var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1.5px solid var(--line)}
 td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
 td.area{font-weight:600;min-width:220px}
@@ -161,6 +161,12 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
       <div class="bar" id="g-auto-bar"></div>
       <div class="muted" style="font-size:.85rem" id="g-auto-sub">Share of the work the system does</div>
     </div>
+    <div class="gauge">
+      <div class="label"><span>User-friendly</span><span class="tag est">Estimate</span></div>
+      <div class="big num" id="g-ux">–</div>
+      <div class="bar" id="g-ux-bar"></div>
+      <div class="muted" style="font-size:.85rem" id="g-ux-sub">Out of 100 · 100 = a best-in-class commercial production &amp; fulfilment suite</div>
+    </div>
   </section>
 
   <div class="grid2">
@@ -207,12 +213,13 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
         <span><b style="background:var(--ok)"></b>Reliable</span>
         <span><b style="background:var(--gold)"></b>Automated</span>
         <span><b style="background:var(--human)"></b>Human</span>
+        <span><b style="background:var(--ux)"></b>User-friendly</span>
       </div>
     </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Area · evidence</th><th>Built</th><th>Reliable</th><th>Automated · human</th><th>Next step</th></tr></thead>
-        <tbody id="areas"><tr><td colspan="5" class="skeleton">Each area of the ops system, scored for build, reliability and automation, with the evidence behind the score.</td></tr></tbody>
+        <thead><tr><th>Area · evidence</th><th>Built</th><th>Reliable</th><th>Automated · human</th><th>User-friendly</th><th>Next step</th></tr></thead>
+        <tbody id="areas"><tr><td colspan="6" class="skeleton">Each area of the ops system, scored for build, reliability, automation and user-friendliness, with the evidence behind the score.</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -226,7 +233,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
   </section>
 
   <footer>
-    Live tags are computed from the Supabase "Caseificio" database each time the board refreshes (every minute while open). Estimates are per-area scores kept in the <span style="font-family:var(--mono)">dash_areas</span> table and updated as work lands; <span id="areas-updated"></span>
+    Live tags are computed from the Supabase "Caseificio" database each time the board refreshes (every minute while open). Estimates (including User-friendly, scored 0–100 against a best-in-class commercial production and order-fulfilment program) are per-area scores kept in the <span style="font-family:var(--mono)">dash_areas</span> table and updated as work lands; <span id="areas-updated"></span>
   </footer>
 </div>
 
@@ -410,6 +417,12 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     $("g-auto").innerHTML = `${s.automated}<small>/ ${100 - s.automated}</small>${pv ? dl(s.automated, pv.automated) : ""}`;
     $("g-auto-bar").innerHTML = bar([[s.automated, "var(--gold)"], [100 - s.automated, "var(--human)"]]);
     $("g-auto-sub").textContent = `${s.automated}% done by the system, ${100 - s.automated}% by people`;
+    if (s.usable != null) {
+      $("g-ux").innerHTML = `${s.usable}<small>/ 100</small>${pv && pv.usable != null ? dl(s.usable, pv.usable) : ""}`;
+      $("g-ux-bar").innerHTML = bar([[s.usable, uxColor(s.usable)]]);
+      const ranked = (data.areas || []).filter(a => a.usable != null).sort((a, b) => a.usable - b.usable);
+      $("g-ux-sub").textContent = `vs a best-in-class production & fulfilment suite (100)` + (ranked.length ? ` · weakest: ${ranked[0].area} ${ranked[0].usable}` : "");
+    }
     const auditDay = (iso) => new Date(iso).toLocaleDateString("en-GB", { timeZone: "Europe/Rome", day: "numeric", month: "short" });
     $("d-built").textContent = pv ? ` · was ${pv.built}% on ${auditDay(pv.at)}` : "";
     $("d-rel").textContent = pv ? ` · was ${pv.reliable}% on ${auditDay(pv.at)}` : "";
@@ -447,6 +460,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
         <td><div class="meter"><div class="bar">${bar([[a.built, "var(--navy)"]])}</div><span>${a.built}${d("built")}</span></div></td>
         <td><div class="meter"><div class="bar">${bar([[a.reliable, "var(--ok)"]])}</div><span>${a.reliable}${d("reliable")}</span></div></td>
         <td><div class="meter"><div class="bar">${bar([[a.automated, "var(--gold)"], [100 - a.automated, "var(--human)"]])}</div><span>${a.automated}/${100 - a.automated}${d("automated")}</span></div></td>
+        <td><div class="meter" title="${esc(a.usable_why || "")}"><div class="bar">${bar([[a.usable ?? 0, uxColor(a.usable)]])}</div><span>${a.usable ?? "–"}${d("usable")}</span></div>${a.usable_why ? `<div class="why">${esc(a.usable_why)}</div>` : ""}</td>
         <td class="next">${esc(a.next_step)}</td>
       </tr>`;
     }).join("");
@@ -478,6 +492,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     $("bots-sub").textContent = `${bots.filter(b => b.active).length} active` + (lateCount ? ` · ${lateCount} missed today` : "");
   }
 
+  function uxColor(v) { return v >= 75 ? "var(--ok)" : v >= 55 ? "var(--warn)" : "var(--bad)"; }
   function fmtKg(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString("en-GB", { maximumFractionDigits: 1 }) : "–"; }
   function fmtDay(iso) { return romeDay.format(new Date(iso + "T12:00:00Z")); }
   function weekdaysText(w) {
