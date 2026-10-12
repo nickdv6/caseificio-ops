@@ -59,7 +59,8 @@
       <div class="hd">
         <div class="co">
           <div class="name">${esc(h.legal_name || h.company || '')}</div>
-          <div>${h.legal_name && h.company && h.legal_name !== h.company ? esc(h.company) + ' · ' : ''}${esc(h.address || 'indirizzo da compilare')}${h.piva ? ' · P.IVA ' + esc(h.piva) : ''}</div>
+          <div>${h.piva ? 'P.IVA ' + esc(h.piva) : ''}</div>
+          <div>Stabilimento: <b>${esc(h.company || '')}</b> · ${esc(h.address || 'indirizzo da compilare')}</div>
           <div>Riconoscimento CE n. ${h.ce_no ? '<b>' + esc(h.ce_no) + '</b>' : '<span class="draft">da compilare</span>'} (Reg. CE 853/2004)</div>
           <div>Responsabile dell'autocontrollo: ${h.responsabile ? esc(h.responsabile) : '<span class="draft">da nominare</span>'}</div>
         </div>
@@ -73,7 +74,7 @@
       ${blank ? '' : `<p class="sum">${rows.length} registrazioni${ko ? ` · <b class="draft">${ko} non conformi o mancanti</b>` : ''}${warn ? ` · ${warn} in allerta` : ''} · righe in rosso = fuori limite o controllo non registrato, vedi MOD-12 per le azioni correttive.</p>`}
       <table class="reg">
         <thead>
-          <tr class="ref"><th colspan="${cols.length}">${esc(r.ref)} · ${esc(h.company || '')} · ${blank ? 'modulo vuoto' : esc(period)}</th></tr>
+          <tr class="ref"><th colspan="${cols.length}">${esc(r.ref)} · ${esc(h.legal_name || '')}${h.company && h.company !== h.legal_name ? ' · ' + esc(h.company) : ''} · ${blank ? 'modulo vuoto' : esc(period)}</th></tr>
           <tr>${cols.map(([, label]) => `<th>${esc(label)}</th>`).join('')}</tr>
         </thead>
         <tbody>${tbody}</tbody>
