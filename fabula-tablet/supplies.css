@@ -43,3 +43,4 @@ td.sup-act{white-space:nowrap}td.sup-act .btn+.btn{margin-left:6px}
 }
 .sup-chips .pchip{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
 @media (max-width:640px){.sup-chips{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:4px;-webkit-overflow-scrolling:touch}.sup-chips .pchip{flex:none;margin:0;white-space:nowrap}.sup-top .btn{flex:1 1 auto}}
+.sup-tag.rec{border-color:var(--muted);color:var(--muted);font-weight:600;margin-left:4px}

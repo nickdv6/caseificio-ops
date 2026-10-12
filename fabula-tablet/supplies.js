@@ -23,18 +23,24 @@
   let LAST_MADE = null;          // PO numbers created by the last "Crea ordini", shown with the jump to Operazioni
   const PENDING = [];            // prefill requests that arrived before the data (from Operazioni → Segnali acquisti)
   const ORDER = new Map();       // product_id → { qty, supplier_id } — kept across re-renders, cleared after "Crea ordini"
+  let REC = new Map();           // v0.90b: product_id → names of the products whose current recipe uses it (Ricette)
 
   async function load() {
     const box = $('supplies'); if (!box) return;
     W = PERM.can('acquisti', 3); O = PERM.can('acquisti', 2);
     if (!W) mode = 'order';
-    const [c, i, s] = await Promise.all([
+    const [c, i, s, r, f] = await Promise.all([
       sb.from('supply_categories').select('*').eq('active', true).order('sort'),
       sb.from('v_supply_catalog').select('*').order('category_sort').order('name'),
-      sb.from('parties').select('id, legal_name, email, phone').in('type', ['supplier', 'both']).eq('active', true).order('legal_name')]);
+      sb.from('parties').select('id, legal_name, email, phone').in('type', ['supplier', 'both']).eq('active', true).order('legal_name'),
+      sb.from('recipes').select('component_product_id, finished_product_id, valid_to'),
+      sb.from('products').select('id, name').eq('kind', 'finished_good')]);
     const err = c.error || i.error;
     if (err) { box.innerHTML = `<div class="empty">${/does not exist|schema cache/.test(err.message) ? 'Il catalogo forniture non è ancora attivo: esegui la migrazione <b>v0.89a</b> nel SQL editor di Supabase.' : esc(err.message)}</div>`; return; }
     CATS = c.data || []; ITEMS = i.data || []; SUPS = s.data || []; loaded = true;
+    // recipes point at these same product records: the item's unit and stock tracking are what the doses are written in
+    const today = UI.romeISO(), fin = new Map((f.data || []).map(x => [x.id, x.name]));
+    REC = new Map(); (r.data || []).filter(x => !x.valid_to || x.valid_to >= today).forEach(x => { const n = fin.get(x.finished_product_id) || 'un prodotto'; if (!REC.has(x.component_product_id)) REC.set(x.component_product_id, new Set()); REC.get(x.component_product_id).add(n); });
     while (PENDING.length) applyPrefill(...PENDING.shift());
     render();
   }
@@ -176,6 +182,7 @@
     return td;
   }
 
+  const recTag = it => { const n = REC.get(it.id); return n ? ` <span class="sup-tag rec" title="Si scarica dal magazzino a ogni lotto, secondo la ricetta">ricetta: ${esc([...n].join(', '))}</span>` : ''; };
   function stockText(it) {
     if (!it.track_stock) return '<small class="status">solo ordine, non si conta</small>';
     const low = it.reorder_point != null && Number(it.on_hand) <= Number(it.reorder_point);
@@ -188,7 +195,7 @@
     const tr = document.createElement('tr');
     const t1 = document.createElement('td');
     const meta = [it.spec_it && it.spec_it !== 'elenco di partenza' ? esc(it.spec_it) : '', esc(it.unit || ''), it.last_ordered_on ? 'ultimo ordine ' + fmtD(it.last_ordered_on) : ''].filter(Boolean).join(' · ');
-    t1.innerHTML = `<b>${esc(it.name)}</b>${it.open_po ? ' <span class="sup-tag">ordine aperto</span>' : ''}<br><small class="status">${meta}</small>`;
+    t1.innerHTML = `<b>${esc(it.name)}</b>${it.open_po ? ' <span class="sup-tag">ordine aperto</span>' : ''}${recTag(it)}<br><small class="status">${meta}</small>`;
     const t3 = document.createElement('td'); t3.innerHTML = stockText(it);
     tr.append(t1, supplierCell(it, W), t3, qtyCell(it)); return tr;
   }
@@ -236,9 +243,15 @@
     const cs = document.createElement('select'); cs.setAttribute('aria-label', 'Categoria'); cs.innerHTML = CATS.map(k => `<option value="${k.code}" ${k.code === it.category ? 'selected' : ''}>${esc(k.name_it)}</option>`).join('');
     const l2 = document.createElement('div'); l2.className = 'sup-l2'; l2.append(unit, cs);
     const meta = document.createElement('small'); meta.className = 'status'; meta.textContent = it.sku + (it.spec_it === 'elenco di partenza' ? ' · elenco di partenza' : '') + (it.last_ordered_on ? ' · ultimo ordine ' + fmtD(it.last_ordered_on) : '') + (it.open_po ? ' · ordine aperto' : '');
+    const inRec = REC.get(it.id), recNames = inRec ? [...inRec].join(', ') : '';
+    if (inRec) {   // v0.90b: changing the unit would silently rescale every dose; untracking would leave recipe deductions on an item nobody counts
+      unit.disabled = true; unit.title = `Usato nella ricetta di ${recNames}: le dosi sono scritte in «${it.unit}». Per cambiare unità cambia prima le dosi in Ricette.`;
+      t1.insertAdjacentHTML('beforeend', recTag(it));
+    }
     t1.append(name, l2, spec, meta);
     const t3 = document.createElement('td');
     const tk = document.createElement('label'); tk.className = 'status'; const tkc = document.createElement('input'); tkc.type = 'checkbox'; tkc.checked = it.track_stock; tk.append(tkc, document.createTextNode(' conta in magazzino'));
+    if (inRec && tkc.checked) { tkc.disabled = true; tk.title = `Si scarica a ogni lotto dalla ricetta di ${recNames}: deve restare in magazzino`; }
     const rp = inp('text', itNum(it.reorder_point), 'soglia', 'n', 'Soglia di riordino'), rq = inp('text', itNum(it.reorder_qty), 'riordino', 'n', 'Quantità di riordino');
     rp.inputMode = rq.inputMode = 'decimal'; rp.title = 'Sotto questa giacenza il bot Acquisti propone un ordine'; rq.title = 'Quantità che il bot propone di ordinare';
     const stk = document.createElement('div'); stk.className = 'sup-stk';
@@ -259,7 +272,8 @@
     }));
     const ar = document.createElement('button'); ar.type = 'button'; ar.className = 'btn sm sec';
     ar.textContent = it.active ? 'Archivia' : 'Ripristina'; ar.title = it.active ? 'Non compare più negli ordini e nel conteggio; lo storico resta' : '';
-    ar.onclick = () => { if (it.active && !confirm(`Archiviare «${it.name}»?`)) return; act(ar, async () => { await upd('products', { id: it.id }, { active: !it.active, updated_at: new Date().toISOString() }); ORDER.delete(it.id); await load(); }, it.active ? 'Articolo archiviato' : 'Articolo ripristinato'); };
+    ar.onclick = () => { if (it.active && inRec) { toast(`«${it.name}» è nella ricetta di ${recNames}: toglilo prima in Ricette, poi archivialo`, 'err'); return; }
+      if (it.active && !confirm(`Archiviare «${it.name}»?`)) return; act(ar, async () => { await upd('products', { id: it.id }, { active: !it.active, updated_at: new Date().toISOString() }); ORDER.delete(it.id); await load(); }, it.active ? 'Articolo archiviato' : 'Articolo ripristinato'); };
     t5.append(ar);
     tr.append(t1, supplierCell(it, true), t3, t5); return tr;
   }
