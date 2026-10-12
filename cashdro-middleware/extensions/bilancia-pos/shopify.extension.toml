@@ -1,0 +1,15 @@
+api_version = "2025-10"
+
+[[extensions]]
+type = "ui_extension"
+name = "Bilancia (vendita a peso)"
+handle = "bilancia-pos"
+description = "Legge il peso dalla bilancia omologata e aggiunge la riga al carrello"
+
+  [[extensions.targeting]]
+  module = "./src/Tile.jsx"
+  target = "pos.home.tile.render"
+
+  [[extensions.targeting]]
+  module = "./src/WeighExtension.jsx"
+  target = "pos.home.modal.render"

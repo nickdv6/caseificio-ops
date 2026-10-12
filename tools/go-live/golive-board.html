@@ -90,6 +90,12 @@ td.area{font-weight:600;min-width:220px}
 .delta{font:600 .7rem var(--body);margin-left:3px}
 .delta.up{color:var(--ok)}
 .delta.down{color:var(--bad)}
+.sf-phase{font:600 .72rem/1 var(--body);letter-spacing:.1em;text-transform:uppercase;color:var(--gold);padding:14px 0 4px;display:flex;justify-content:space-between;gap:8px}
+.sf-phase:first-child{padding-top:0}
+.sf-due{font-size:.78rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sf-due.late{color:var(--bad);font-weight:600}
+.sf-link{font:500 .7rem var(--mono);color:var(--muted)}
+@media (max-width:560px){#store li:not(.sf-phase){grid-template-columns:22px minmax(0,1fr)} #store .check-side{grid-column:2;justify-content:space-between}}
 .delta.new{color:var(--gold)}
 .audit{font-size:.82rem;color:var(--muted)}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.8rem;color:var(--muted)}
@@ -185,6 +191,14 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     </section>
   </div>
 
+  <section class="panel" aria-labelledby="h-store">
+    <div class="panel-head">
+      <h2 id="h-store">Storefront · curb appeal &amp; exposure</h2>
+      <span class="muted num" id="store-count"></span>
+    </div>
+    <ul class="checks" id="store"><li class="skeleton" style="display:block">Storefront tasks for Via Salvo D'Acquisto 17 appear here, grouped by deadline. Due dates follow the opening date; items linked to a signage or local-ad line tick themselves when that line is installed or live.</li></ul>
+  </section>
+
   <section class="panel" aria-labelledby="h-areas">
     <div class="panel-head">
       <div><h2 id="h-areas">By area</h2><div class="audit" id="audit"></div></div>
@@ -223,7 +237,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
   const TOOL = "execute_sql";
   const REFRESH_MS = 60000;
   const $ = (id) => document.getElementById(id);
-  let mcp = null, data = null, timer = null, busy = false, lastOkAt = null;
+  let mcp = null, store = null, data = null, timer = null, busy = false, lastOkAt = null;
 
   const romeFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const romeDay = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", weekday: "short", day: "numeric", month: "short" });
@@ -298,6 +312,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
       data = rows[0] && rows[0].d;
       if (!data) throw { code: "tool_error", message: "empty dashboard" };
       lastOkAt = new Date();
+      try { const sr = await runSql("select fabula.storefront_board() as s"); store = sr[0] && sr[0].s; } catch { store = store || null; }
       render();
       showBanner(null);
       setConn("live", "Live · updated " + romeFmt.format(lastOkAt));
@@ -328,7 +343,47 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
     }
   }
 
+  async function toggleStore(key, done, btn) {
+    if (!mcp || !/^[a-z_]+$/.test(key)) return;
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      await runSql(`select fabula.dash_set_storefront('${key}', ${done ? "true" : "false"})`);
+      await refresh();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = done ? "Mark done" : "Undo";
+      showBanner("Couldn't save that storefront item. " + errorCopy(e), false);
+    }
+  }
+
+  function renderStore() {
+    if (!store) return;
+    const items = store.items || [];
+    const today = (() => { const p = romeParts(new Date()); return `${p.year}-${p.month}-${p.day}`; })();
+    $("store-count").textContent = `${store.done} of ${store.total} done` + (store.overdue ? ` · ${store.overdue} overdue` : "") + (store.opening ? ` · opening ${fmtDay(store.opening)}` : "");
+    let last = null, html = "";
+    for (const it of items) {
+      if (it.phase !== last) {
+        const ph = items.filter(x => x.phase === it.phase);
+        html += `<li class="sf-phase" style="display:flex;border-top:0"><span>${esc(it.phase)}</span><span class="muted">${ph.filter(x => x.done).length}/${ph.length}</span></li>`;
+        last = it.phase;
+      }
+      const late = !it.done && it.due_on && it.due_on < today;
+      const link = it.local_code ? `<span class="sf-link">${esc(it.local_code)} · ${esc(String(it.local_status || "").replace(/_/g, " "))}${it.permit_status && it.permit_status !== "n/a" ? " · permit " + esc(String(it.permit_status).replace(/_/g, " ")) : ""}</span>` : "";
+      html += `
+      <li>
+        <span class="box ${it.done ? "on" : ""}" aria-hidden="true">${it.done ? "✓" : ""}</span>
+        <div><div class="check-label">${esc(it.label)}</div>${it.detail ? `<div class="check-detail">${esc(it.detail)}</div>` : ""}${link}</div>
+        <div class="check-side">
+          ${it.due_on ? `<span class="sf-due ${late ? "late" : ""}">${late ? "Overdue · " : "by "}${fmtDay(it.due_on)}</span>` : ""}
+          ${it.linked_done ? `<span class="tag live">Live</span>` : `<button type="button" data-skey="${esc(it.key)}" data-done="${it.manual_done ? "0" : "1"}">${it.manual_done ? "Undo" : "Mark done"}</button>`}
+        </div>
+      </li>`;
+    }
+    $("store").innerHTML = html;
+  }
+
   function render() {
+    renderStore();
     if (!data) return;
     const s = data.scores || {}, checks = data.checks || [], h = data.bot_health || {}, o = data.ops || {};
     if (data.company) { $("brand").textContent = data.company + " · Ops system"; document.title = "Go-Live Board · " + data.company; }
@@ -436,6 +491,10 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
   $("checks").addEventListener("click", (ev) => {
     const btn = ev.target.closest("button[data-key]");
     if (btn) toggleCheck(btn.dataset.key, btn.dataset.done === "1", btn);
+  });
+  $("store").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-skey]");
+    if (btn) toggleStore(btn.dataset.skey, btn.dataset.done === "1", btn);
   });
   $("refresh").addEventListener("click", () => refresh());
   document.addEventListener("visibilitychange", () => { if (!document.hidden && mcp) refresh(); });

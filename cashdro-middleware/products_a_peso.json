@@ -1,0 +1,6 @@
+[
+  {"sku": "MOZ-DOP-KG",   "title": "Mozzarella di Bufala Campana DOP", "price_per_kg": 16.80, "vat_rate": 4},
+  {"sku": "RIC-BUF-KG",   "title": "Ricotta di Bufala",                "price_per_kg": 9.00,  "vat_rate": 4},
+  {"sku": "TRE-BUF-KG",   "title": "Treccia di Bufala",                "price_per_kg": 16.80, "vat_rate": 4},
+  {"sku": "SCA-BUF-KG",   "title": "Scamorza di Bufala",               "price_per_kg": 18.00, "vat_rate": 4}
+]

@@ -1,0 +1,17 @@
+api_version = "2025-10"
+
+[[extensions]]
+type = "ui_extension"
+name = "CashDro cash payment"
+handle = "cashdro-pos"
+description = "Incasso contanti con CashDro S e documento commerciale su Epson RT"
+
+  # Smart Grid tile
+  [[extensions.targeting]]
+  module = "./src/Tile.jsx"
+  target = "pos.home.tile.render"
+
+  # Full-screen modal opened by the tile
+  [[extensions.targeting]]
+  module = "./src/CheckoutExtension.jsx"
+  target = "pos.home.modal.render"
