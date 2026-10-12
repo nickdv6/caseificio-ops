@@ -1,6 +1,6 @@
 /* Owner console (v0.51) — operations only. Oggi: daily_brief() tiles + approvals gate + compliance; Operazioni: PO send, purchase signals,
    wholesale, Shopify orders, milk for the next 7 days (demand + Masseria availability in one table), effluent; Andamento: charts + monthly pack;
-   Anagrafiche: Fornitori (parties + terms/prices) | Clienti (Shopify customers + standing orders); Ricette: doses + process presets;
+   Anagrafiche: Fornitori (parties + supply catalogue in supplies.js + terms/prices) | Clienti (Shopify customers + standing orders); Ricette: doses + process presets;
    Personale: rota, hours/overtime, people (contract hours, safety roles, certificates). Shared shell (login, header, tabs, helpers) in ui.js;
    parameters, machines, bots and users in admin.html. */
 (() => {
@@ -303,7 +303,7 @@
       oggi: loadOggi,
       ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders()]); },
       trend: loadTrend,
-      anag: () => Promise.all([loadParties(), loadTerms(), loadStanding()]),
+      anag: () => Promise.all([loadParties(), loadTerms(), loadStanding(), window.SUPPLIES.load()]),
       ricette: () => Promise.all([loadRecipes(), loadPresets()]),
       personale: () => Promise.all([loadRota(), loadStaffCard()]),
       incassi: () => window.INCASSI.load()
@@ -544,7 +544,8 @@
       const name = mk('text', 'legal_name', p.legal_name), email = mk('email', 'email', p.email, '—'), phone = mk('tel', 'phone', p.phone, '+39 …');
       const t1 = document.createElement('td'); t1.append(name); if (p.is_placeholder) { const s = document.createElement('small'); s.className = 'status ko'; s.textContent = 'segnaposto'; t1.append(document.createElement('br'), s); }
       const t2 = document.createElement('td'); t2.append(email); const t3 = document.createElement('td'); t3.append(phone); const t4 = document.createElement('td'); t4.className = 'num'; t4.append(days);
-      const t5 = document.createElement('td'); t5.className = 'status'; t5.textContent = p.products_supplied ? p.products_supplied + ' articoli' : '—';
+      const t5 = document.createElement('td'); t5.className = 'status';
+      if (p.products_supplied) { const a = document.createElement('button'); a.type = 'button'; a.className = 'btn sm sec'; a.textContent = p.products_supplied + ' articoli'; a.title = 'Mostra gli articoli di questo fornitore'; a.onclick = () => window.SUPPLIES.showSupplier(p.id); t5.append(a); } else t5.textContent = '—';   // v0.89
       const t6 = document.createElement('td'); t6.style.whiteSpace = 'nowrap';
       t6.append(saveBtn(async () => {
         const v = {}; tr.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });

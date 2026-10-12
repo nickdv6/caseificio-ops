@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
 <link rel="stylesheet" href="ui.css">
 <link rel="stylesheet" href="touch.css">
+<link rel="stylesheet" href="supplies.css">
 </head>
 <body>
 <!-- Owner console (v0.51): Oggi (numbers + approval gate) · Operazioni · Andamento · Anagrafiche · Ricette · Personale · Incassi (v0.82). Parameters, machines, bots and users live in admin.html. -->
@@ -69,6 +70,7 @@
     <div class="subtabs" id="party-tabs"><button class="sub" data-type="supplier" aria-selected="true">Fornitori <span class="n" id="n-sup"></span></button><button class="sub" data-type="customer" aria-selected="false">Clienti <span class="n" id="n-cus"></span></button></div>
     <div class="card"><div class="hint" id="party-hint"></div><div id="set-parties" style="overflow-x:auto"></div></div>
     <div data-show="supplier">
+      <div class="card" id="c-supplies" style="margin-top:16px"><h3>Articoli che compriamo</h3><div class="hint">Tutto quello che compriamo, diviso per categoria, con i fornitori e il prezzo di ciascuno. ★ = fornitore preferito (lo usa il bot Acquisti). Scrivi le quantità in "Da ordinare" e premi "Crea ordini": nasce un ordine per fornitore, già approvato, da inviare in Operazioni → Ordini da inviare ai fornitori. "Conta in magazzino" = l'articolo compare nella conta settimanale; pulizia, ufficio e simili sono "solo ordine".</div><div id="supplies"></div></div>
       <div class="card" style="margin-top:16px"><h3>Condizioni e prezzi per articolo</h3><div class="hint">Per ogni fornitore × articolo: giorni di consegna, minimo d'ordine, multipli e pagamento. Il bot Acquisti li usa per data prevista e quantità. "Pagato" viene dai DDT ricevuti sul tablet; tocca ↗ per lo storico prezzi.</div><div id="set-terms" style="overflow-x:auto"></div></div>
     </div>
     <div data-show="customer" hidden>
@@ -132,6 +134,7 @@
 <script src="ui.js"></script>
 <script src="recon.js"></script>
 <script src="incassi.js"></script>
+<script src="supplies.js"></script>
 <script src="console.js"></script>
 </body>
 </html>
