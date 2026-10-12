@@ -1,0 +1,10 @@
+/* v0.88b: touch screens (iPad, phone) only — desktop with a mouse is unchanged.
+   1. Text under 16px makes iOS Safari zoom into every field on tap: fields get 16px.
+   2. Tap targets at least 44px tall (Apple HIG), so a finger hits the right button. */
+@media (pointer:coarse){
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),select,textarea{font-size:16px!important}
+  .btn,button:not(.x),.sub,.tab,.pchip{min-height:44px}
+  .btn.sm{min-height:40px;padding-left:12px;padding-right:12px}
+  input[type=checkbox],input[type=radio]{min-width:22px;min-height:22px}
+  input[type=text],input[type=email],input[type=password],input[type=number],input[type=tel],input[type=date],input[type=search],select{min-height:40px}
+}
