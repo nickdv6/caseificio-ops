@@ -10,3 +10,36 @@ table.sup select.os{max-width:150px;margin-top:4px}.sup-l2{display:flex;flex-wra
 .sup-add{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.sup-add select{max-width:180px}
 table.sup tr.sup-new td{background:var(--tile)}
 .sup-order{position:sticky;bottom:0;z-index:5;margin-top:12px;padding:10px 12px;border:2px solid var(--accent);border-radius:8px;background:var(--paper);box-shadow:0 -4px 12px rgba(0,0,0,.08)}.sup-order ul{margin:4px 0 6px;padding-left:18px;font-size:.9rem}.sup-order input.sp{flex:1;min-width:180px;font:.9rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}
+/* v0.90: Ordina / Modifica elenco modes, bulk "Assegna articoli", order helpers */
+.sup-top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}
+.sup-seg{display:inline-flex;gap:4px}
+.sup-note{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 2px;padding:8px 10px;border:1px solid var(--warn);border-left-width:4px;border-radius:6px;background:var(--paper);font-size:.92rem}.sup-note span{flex:1;min-width:220px}
+.sup-wrap{overflow-x:auto}
+.sup-tag{display:inline-block;font-size:.72rem;font-weight:600;padding:0 6px;border-radius:9px;border:1px solid var(--accent);color:var(--accent);vertical-align:1px}
+table.sup.ord td{vertical-align:middle}table.sup.ord td:first-child{min-width:170px}
+table.sup.ord td.num{min-width:110px}table.sup.ord select.os{display:block;margin:4px 0 0 auto}
+.sup-est{display:block;margin-top:2px;white-space:nowrap}
+.schip .lab{appearance:none;border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left;flex:1;cursor:pointer}
+.schip button.lab:hover b,.schip button.lab:focus-visible b{text-decoration:underline}
+.schip .st{color:var(--accent)}
+td.sup-act{white-space:nowrap}td.sup-act .btn+.btn{margin-left:6px}
+.sup-order.done{border-color:var(--good,#2e7d4f)}
+.sup-assign{border:2px solid var(--accent);border-radius:8px;padding:10px 12px;background:var(--paper)}
+.sup-assign .sup-top select{font:600 1rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg);max-width:100%}
+.sup-assign .sup-filters input[type=search]{flex:1}
+.sup-arow{display:grid;grid-template-columns:28px minmax(0,1fr) 110px;gap:8px;align-items:center;padding:6px 4px;border-top:1px solid var(--rule);cursor:pointer;text-transform:none;font-weight:400;color:inherit;margin:0}
+.sup-arow:first-of-type{border-top:0}.sup-arow.on{background:var(--tile)}
+.sup-arow input[type=checkbox]{width:20px;height:20px;margin:0}
+.sup-arow input.pr{width:100%;font:.95rem var(--body);padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:var(--paper);color:var(--fg)}
+.sup-alist .sup-cat h4{margin:12px 0 2px}
+.sup-assign .sup-order{position:sticky;bottom:0}
+@media (max-width:640px){
+  table.sup.ord,table.sup.ord tbody,table.sup.ord tr,table.sup.ord td{display:block;width:100%}
+  table.sup.ord tr:first-child{display:none}
+  table.sup.ord tr{border-top:1px solid var(--rule);padding:8px 0}
+  table.sup.ord td{border:0;padding:2px 0}table.sup.ord td.num{text-align:left}
+  table.sup.ord select.os{margin-left:0}
+  .sup-arow{grid-template-columns:28px minmax(0,1fr) 92px}
+}
+.sup-chips .pchip{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
+@media (max-width:640px){.sup-chips{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:4px;-webkit-overflow-scrolling:touch}.sup-chips .pchip{flex:none;margin:0;white-space:nowrap}.sup-top .btn{flex:1 1 auto}}

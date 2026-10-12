@@ -97,6 +97,10 @@
       if (error) { toast(error.code === 'PGRST116' ? 'Non hai il permesso di decidere questa richiesta, o è già stata decisa' : error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
       if (row.related_table === 'purchase_orders' && row.related_id) { const r2 = await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id).select('id'); const e2 = r2.error || (!(r2.data || []).length && { message: PERM.NOT_SAVED }); if (e2) toast('Approvazione salvata, ma l\'ordine non si è aggiornato: ' + e2.message, 'err'); }
       APPR = APPR.filter(x => String(x.id) !== id); card.remove(); apprCount();
+      if (act === 'approved' && row.related_table === 'purchase_orders') {   // v0.90: approved is not sent: show the next step
+        let done = $('appr-done'); if (!done) { done = document.createElement('div'); done.id = 'appr-done'; $('approvals').before(done); }
+        done.insertAdjacentHTML('beforeend', `<div class="status" style="margin:0 0 8px">✓ ${esc((a.payload || {}).po_number || 'Ordine')} approvato · <a href="#ops" class="lnk">invialo al fornitore in Operazioni →</a></div>`);
+      }
       if (!APPR.length) renderApprovals(today);
       toast(act === 'approved' ? 'Approvato' : 'Rifiutato');
       if (row.related_table === 'purchase_orders' && T.isLoaded('ops')) renderPoSend();
@@ -326,7 +330,10 @@
     $('stock').innerHTML = soon.length ? '<table><tr><th>Lotto</th><th>Prodotto</th><th class="num">kg</th><th>Scade</th></tr>' + soon.map(s => `<tr><td>${esc(s.lot)}</td><td>${esc((PRODUCTS[s.sku] || {}).name || s.sku)}</td><td class="num">${num(s.kg)}</td><td class="${s.expires <= date ? 'ko' : ''}">${fmtD(s.expires)}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessun lotto in scadenza entro 2 giorni.</div>';
   }
   function renderProcurement(list) {
-    $('procurement').innerHTML = (list && list.length) ? '<table><tr><th>Articolo</th><th class="num">Giacenza</th><th class="num">Copertura</th><th class="num">Riordino</th></tr>' + list.map(p => `<tr><td>${esc(p.name)}</td><td class="num">${num(p.on_hand, 0)}</td><td class="num ${p.days_cover != null && p.days_cover < 5 ? 'ko' : ''}">${p.days_cover != null ? num(p.days_cover) + ' gg' : '–'}</td><td class="num">${num(p.reorder_qty, 0)}</td></tr>`).join('') + '</table>' : '<div class="empty">Scorte consumabili sopra il punto di riordino.</div>';
+    // v0.90: each signal has an "Ordina" button: it opens Anagrafiche → Fornitori with the reorder quantity already in the order bar
+    const canOrder = PERM.can('acquisti', 2);
+    $('procurement').innerHTML = (list && list.length) ? '<table><tr><th>Articolo</th><th class="num">Giacenza</th><th class="num">Copertura</th><th class="num">Riordino</th><th></th></tr>' + list.map(p => `<tr><td>${esc(p.name)}${p.supplier ? `<br><small class="status">${esc(p.supplier)}</small>` : ''}</td><td class="num">${num(p.on_hand, 0)}</td><td class="num ${p.days_cover != null && p.days_cover < 5 ? 'ko' : ''}">${p.days_cover != null ? num(p.days_cover) + ' gg' : '–'}</td><td class="num">${num(p.reorder_qty, 0)}</td><td>${canOrder ? `<button type="button" class="btn sm sec" data-order-sku="${esc(p.sku)}" data-order-qty="${esc(p.reorder_qty ?? '')}">Ordina</button>` : ''}</td></tr>`).join('') + '</table>' : '<div class="empty">Scorte consumabili sopra il punto di riordino.</div>';
+    $('procurement').querySelectorAll('[data-order-sku]').forEach(b => b.onclick = () => { window.SUPPLIES.prefill(b.dataset.orderSku, Number(b.dataset.orderQty) || null); T.show('anag'); });
   }  async function loadTerms() {
     const box = $('set-terms'); box.innerHTML = '<div class="status">Carico…</div>';
     const { data, error } = await sb.from('v_supplier_terms').select('*').order('supplier').order('sku');
@@ -483,13 +490,21 @@
       c.innerHTML = `<div class="h"><b>${esc(po.po_number)}</b><span class="status">${esc(pk?.supplier || po.supplier)} · ${eur(pk?.total_eur)} · consegna ${fmtD(pk?.expected_date)}</span></div>
         <pre style="white-space:pre-wrap;font:inherit;font-size:13px;background:var(--bg,#f6f3ee);padding:8px;border-radius:6px;margin:6px 0">${esc(pk?.body_it || '')}</pre>`;
       const row = document.createElement('div'); row.className = 'row';
+      // v0.90: a supplier without email or phone can't receive the order from here: say so and point to the fix
+      const email = pk?.email || po.email, phone = pk?.phone || po.phone;
+      if (!email || !phone) c.insertAdjacentHTML('beforeend', `<div class="status ${!email && !phone ? 'ko' : ''}">${!email && !phone ? 'Questo fornitore non ha né email né telefono' : !email ? 'Manca l\'email del fornitore' : 'Manca il telefono del fornitore'}: <a href="#anag" class="lnk">aggiungili in Anagrafiche → Fornitori</a>${!email && !phone ? ', oppure stampa il PO o copia il testo.' : '.'}</div>`);
       const mail = document.createElement('a'); mail.className = 'btn sm sec'; mail.style.textDecoration = 'none'; mail.textContent = '✉️ Email';
-      mail.href = 'mailto:' + encodeURIComponent(pk?.email || '') + '?subject=' + encodeURIComponent(pk?.subject || '') + '&body=' + encodeURIComponent(pk?.body_it || ''); mail.target = '_blank';
-      const wa = document.createElement('a'); wa.className = 'btn sm sec'; wa.style.textDecoration = 'none'; wa.textContent = '💬 WhatsApp'; wa.href = waLink(pk?.phone, pk?.whatsapp_it || ''); wa.target = '_blank';
+      mail.href = 'mailto:' + encodeURIComponent(email || '') + '?subject=' + encodeURIComponent(pk?.subject || '') + '&body=' + encodeURIComponent(pk?.body_it || ''); mail.target = '_blank';
+      const wa = document.createElement('a'); wa.className = 'btn sm sec'; wa.style.textDecoration = 'none'; wa.textContent = '💬 WhatsApp'; wa.href = waLink(phone, pk?.whatsapp_it || ''); wa.target = '_blank';
+      if (!email) { mail.removeAttribute('href'); mail.setAttribute('aria-disabled', 'true'); mail.style.opacity = '.45'; mail.title = 'Manca l\'email del fornitore'; }
+      if (!phone) { wa.removeAttribute('href'); wa.setAttribute('aria-disabled', 'true'); wa.style.opacity = '.45'; wa.title = 'Manca il telefono del fornitore'; }
       const cp = document.createElement('button'); cp.className = 'btn sm sec'; cp.textContent = 'Copia testo'; cp.onclick = () => copyText(pk?.body_it || '');
       const pr = document.createElement('a'); pr.className = 'btn sm sec'; pr.style.textDecoration = 'none'; pr.textContent = '🖨 Stampa PO'; pr.href = 'ordine.html?po=' + encodeURIComponent(po.po_number); pr.target = '_blank';
       const sent = document.createElement('button'); sent.className = 'btn sm'; sent.textContent = '✓ Segna inviato';
       sent.onclick = async () => { sent.disabled = true; const { error } = await sb.rpc('mark_po_sent', { p_po_number: po.po_number, p_via: 'console' }); if (error) { toast(error.message, 'err'); sent.disabled = false; return; } toast('Ordine segnato come inviato'); renderPoSend(); refreshBadges(); };
+      // v0.90: after opening the e-mail / WhatsApp / print, the next step is "Segna inviato": make it obvious
+      const nudge = () => { sent.textContent = '✓ Inviato? Segna inviato'; sent.classList.add('save'); sent.closest('.eq').classList.add('dirty'); };
+      [mail, wa, pr].forEach(a => a.addEventListener('click', () => { if (a.hasAttribute('href')) nudge(); })); cp.addEventListener('click', nudge);
       row.append(mail, wa, cp, pr, sent); c.append(row); box.append(c);
     });
   }
@@ -545,7 +560,10 @@
       const t1 = document.createElement('td'); t1.append(name); if (p.is_placeholder) { const s = document.createElement('small'); s.className = 'status ko'; s.textContent = 'segnaposto'; t1.append(document.createElement('br'), s); }
       const t2 = document.createElement('td'); t2.append(email); const t3 = document.createElement('td'); t3.append(phone); const t4 = document.createElement('td'); t4.className = 'num'; t4.append(days);
       const t5 = document.createElement('td'); t5.className = 'status';
-      if (p.products_supplied) { const a = document.createElement('button'); a.type = 'button'; a.className = 'btn sm sec'; a.textContent = p.products_supplied + ' articoli'; a.title = 'Mostra gli articoli di questo fornitore'; a.onclick = () => window.SUPPLIES.showSupplier(p.id); t5.append(a); } else t5.textContent = '—';   // v0.89
+      if (p.products_supplied) { const a = document.createElement('button'); a.type = 'button'; a.className = 'btn sm sec'; a.textContent = p.products_supplied + (p.products_supplied === 1 ? ' articolo' : ' articoli'); a.title = 'Mostra gli articoli di questo fornitore'; a.onclick = () => window.SUPPLIES.showSupplier(p.id); t5.append(a); }   // v0.89
+      if (PERM.can('acquisti', 3)) { const g = document.createElement('button'); g.type = 'button'; g.className = 'btn sm sec'; g.textContent = p.products_supplied ? 'Assegna' : 'Assegna articoli'; g.title = 'Spunta gli articoli che compri da questo fornitore e scrivi i prezzi, tutto insieme'; if (p.products_supplied) g.style.marginLeft = '6px'; g.onclick = () => window.SUPPLIES.assign(p.id); t5.append(g); }   // v0.90
+      else if (!p.products_supplied) t5.textContent = '—';
+      if (!p.is_placeholder && !p.email && !p.phone) { const w = document.createElement('small'); w.className = 'status ko'; w.textContent = 'senza email né telefono: servono per inviare gli ordini'; t1.append(document.createElement('br'), w); }   // v0.90
       const t6 = document.createElement('td'); t6.style.whiteSpace = 'nowrap';
       t6.append(saveBtn(async () => {
         const v = {}; tr.querySelectorAll('input[data-k]').forEach(i => { v[i.dataset.k] = i.type === 'number' ? nOrNull(i.value) : (i.value.trim() || null); });
