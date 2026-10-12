@@ -4,6 +4,10 @@ A-02: one delivery feeds two open vat loads → scanning the tank label asks whi
       go on without a choice, and opens the lot that was picked.
 A-10: two farm loads in transit → milk arrival no longer preselects the newest one; it asks which load arrived, shows how long ago
       each left, and a choice locks that load's kg and lot.
+A-10 (v0.94): with a choice, the list and the card show departure, age and kg but not lot or DDT; the load picked must be confirmed
+      from the driver's paper (end of the lot or last 3 DDT digits) — a wrong or unknown value is refused and says which load it is;
+      the right one saves at the farm's kg and lot. A load older than 36 h sits behind «mostra». One fresh load left is preselected
+      with no check; a DDT number read from the paper's QR picks its load (even an old one) with no check.
 Expect "FAILURES: none"."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
@@ -29,7 +33,7 @@ for lot, mins in ((L1, 180), (L2, 40)):
     bid = sql(f"insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values ((now() at time zone 'Europe/Rome')::date, '{lot}', '{moz}', 600, 'milk', now() - interval '{mins} minutes', 'tablet') returning id").splitlines()[0]
     sql(f"insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('{bid}', '{mid}', 600)")
 sql("update fabula.milk_shipments set status = 'received' where status = 'shipped'")   # only this test's loads in transit
-sql(f"insert into fabula.milk_shipments (shipped_at, supplier_id, kg, milk_lot, status) values (now() - interval '5 hours', '{sup}', 1050, 'MS{RUN}-1', 'shipped'), (now() - interval '1 hour', '{sup}', 980, 'MS{RUN}-2', 'shipped')")
+sql(f"insert into fabula.milk_shipments (shipped_at, supplier_id, kg, milk_lot, ddt_number, status) values (now() - interval '5 hours', '{sup}', 1050, 'MS{RUN}-1', null, 'shipped'), (now() - interval '1 hour', '{sup}', 980, 'MS{RUN}-2', 'B/{RUN}', 'shipped'), (now() - interval '40 hours', '{sup}', 1111, 'MS{RUN}-0', 'OLD{RUN}', 'shipped')")
 
 srv = subprocess.Popen(['python3', '-m', 'http.server', '8768'], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(1)
@@ -74,18 +78,51 @@ try:
     where = pg.evaluate("(document.querySelector('.view.active #d-title')||{}).textContent || document.getElementById('f-title').textContent")
     check('…the lot that was picked opens (working steps or close)', L2 in where and L1 not in where, f"{view()} · {where}")
 
-    # A-10 · two farm loads in transit
+    # A-10 · two farm loads in transit (and one 40 h old)
     pg.goto('http://localhost:8768/index.html'); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(1500)
     scan('DDT:')
-    s = pg.evaluate("(() => { const s = document.getElementById('ship'); return s ? { v: s.value, req: s.required, opts: [...s.options].map(o => o.value + '|' + o.textContent), kgRO: document.getElementById('kg').readOnly } : null; })()")
+    ship = lambda: pg.evaluate("""(() => { const s = document.getElementById('ship'), c = document.getElementById('shipchk'); return s ? { v: s.value, req: s.required,
+        opts: [...s.options].map(o => o.value + '|' + o.textContent), kgRO: document.getElementById('kg').readOnly, kg: document.getElementById('kg').value,
+        lot: document.getElementById('lot').value, ddt: document.getElementById('ddtn').value, card: document.getElementById('shipcard').innerText,
+        chkShown: !!c && c.style.display !== 'none', chkReq: !!c && c.required } : null; })()""")
+    pick = lambda txt: pg.evaluate("t => { const s = document.getElementById('ship'); s.value = [...s.options].find(o => o.textContent.includes(t)).value; s.dispatchEvent(new Event('change')); }", txt)
+    def fill_and_save(chk):
+        pg.evaluate("""c => { const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change')); };
+            if (c !== null) set('shipchk', c); set('temp', '4'); set('abx', '0'); document.getElementById('btn-form-save').click(); }""", chk)
+        pg.wait_for_timeout(1800)
+    s = ship()
     check('milk arrival with two loads in transit: nothing preselected, the choice is required',
           s and s['v'] == '' and s['req'] and not s['kgRO'] and '(2)' in s['opts'][0], json.dumps(s, ensure_ascii=False))
     check('…each load shows how long ago it left', s and any('partita 5 h fa' in o for o in s['opts']) and any('partita 1 h fa' in o for o in s['opts']), json.dumps(s and s['opts'], ensure_ascii=False))
-    pg.evaluate(f"(() => {{ const s = document.getElementById('ship'); s.value = [...s.options].find(o => o.textContent.includes('MS{RUN}-1')).value; s.dispatchEvent(new Event('change')); }})()")
-    picked = pg.evaluate("({ kg: document.getElementById('kg').value, lot: document.getElementById('lot').value, ro: document.getElementById('kg').readOnly })")
-    check('…picking a load locks its kg and lot', picked['kg'] == '1050' and picked['lot'] == f'MS{RUN}-1' and picked['ro'], json.dumps(picked))
-    pg.evaluate("(() => { const s = document.getElementById('ship'); s.value = 'none'; s.dispatchEvent(new Event('change')); })()")
-    check('…«nessuna» unlocks the fields again', pg.evaluate("!document.getElementById('kg').readOnly && document.getElementById('kg').value === ''"))
+    check('…lot and DDT are not in the list (they are read from the paper)', s and not any(('MS' + RUN) in o or ('B/' + RUN) in o for o in s['opts']), json.dumps(s and s['opts'], ensure_ascii=False))
+    check('…the 40 h old load is behind «mostra»', s and not any('1.111 kg' in o for o in s['opts']) and any(o.startswith('old|') and '(1)' in o for o in s['opts']), json.dumps(s and s['opts'], ensure_ascii=False))
+    pg.evaluate("(() => { const s = document.getElementById('ship'); s.value = 'old'; s.dispatchEvent(new Event('change')); })()")
+    s = ship()
+    check('…«mostra» lists it too and still asks for a choice', s and s['v'] == '' and any('1.111 kg' in o for o in s['opts']) and '(3)' in s['opts'][0], json.dumps(s and s['opts'], ensure_ascii=False))
+    pick('980 kg'); s = ship()
+    check('…picking a load locks its kg; the card shows kg and departure big; the lot waits for the paper check',
+          s['kg'] == '980' and s['kgRO'] and s['lot'] == '' and '980 kg' in s['card'] and '1 h fa' in s['card'] and ('MS' + RUN) not in s['card'] and s['ddt'] == '' and s['chkShown'] and s['chkReq'],
+          json.dumps(s, ensure_ascii=False))
+    fill_and_save(RUN[-2:] + '-1')
+    err = pg.evaluate("document.getElementById('shipchk-err').textContent")
+    check('…the other load\'s lot on the paper is refused and names that load', view() == 'v-form' and '1.050 kg' in err and 'non quella scelta' in err, err)
+    fill_and_save('999')
+    err = pg.evaluate("document.getElementById('shipchk-err').textContent")
+    check('…an unknown value is refused, the message stays on screen', view() == 'v-form' and 'non corrisponde alla spedizione scelta' in err, err)
+    check('…nothing saved so far', sql(f"select count(*) from fabula.milk_intake where milk_lot like 'MS{RUN}-%'") == '0')
+    fill_and_save(RUN[-3:])
+    row = sql(f"select mi.qty_kg||'|'||mi.milk_lot||'|'||coalesce(mi.ddt_number,'')||'|'||s.status from fabula.milk_intake mi join fabula.milk_shipments s on s.id = mi.shipment_id where s.milk_lot = 'MS{RUN}-2'")
+    check('…the last 3 DDT digits from the paper save it at the farm\'s kg and lot', row == f'980.000|MS{RUN}-2|B/{RUN}|received', row)
+
+    pg.goto('http://localhost:8768/index.html'); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(1500)
+    scan('DDT:'); s = ship()
+    check('one fresh load left: preselected, lot shown, no paper check', s and s['v'] and ('MS' + RUN + '-1') in s['card'] and s['lot'] == f'MS{RUN}-1' and not s['chkShown'], json.dumps(s, ensure_ascii=False))
+    fill_and_save(None)
+    check('…saves', sql(f"select status from fabula.milk_shipments where milk_lot = 'MS{RUN}-1'") == 'received')
+
+    pg.goto('http://localhost:8768/index.html'); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(1500)
+    scan('DDT:OLD' + RUN); s = ship()
+    check('a DDT number from the paper\'s QR picks its load, even an old one, with no check', s and '1.111 kg' in s['card'] and s['kg'] == '1111' and not s['chkShown'], json.dumps(s, ensure_ascii=False))
     check('no page errors', not logs, '; '.join(logs))
     b.close()
 finally:

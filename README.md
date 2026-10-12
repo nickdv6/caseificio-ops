@@ -17,6 +17,22 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Milk arrival: the load is checked against the driver's paper (v0.94)
+Rest of audit A-10. When more than one farm load is in transit, the tablet:
+- lists them by departure time, age and kg, without lot or DDT;
+- shows the picked load big (kg, departure, age);
+- asks for the end of the lot written on the DDT or the tank (e.g. `12-2`), or the last 3 digits of the DDT number.
+
+What it does with that entry:
+- A value belonging to another load is refused and names that load. An unknown value is refused, and the reason stays
+  on screen.
+- The lot and kg are only locked in once the entry matches.
+- A load older than 36 h is listed only after «mostra le spedizioni più vecchie».
+- One fresh load (< 12 h) is still preselected with no check, as in v0.93.
+- A DDT number read from the paper's QR picks its load directly.
+
+Front end only, so it needs no database change. `tablet-test/audit_e2e.py` 22/22.
+
 ## Audit fixes, phase 0 (v0.93)
 From the 12/10/2026 usability & error-proofing audit (Claude Doc "Caseificio ops — usability & error-proofing audit",
 project doc `claude/audit-2026-10-12/`). 16 of the 17 phase-0 bugs; #9 (CCP 2 limit 72 °C vs vat 63 °C × 30 min) waits

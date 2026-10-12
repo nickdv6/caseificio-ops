@@ -46,6 +46,13 @@ every migration: the tests still run, after adding one milk supplier
     preselection, oldest first with its start time), refuses Salva without a choice, opens the lot picked; milk arrival with
     two loads in transit preselects nothing, shows "partita N h fa" for each, a choice locks its kg and lot, «nessuna»
     unlocks them. 12/10/2026: 10/10.
+    v0.94 adds the paper check:
+    - with a choice, the list and card hide lot/DDT and the 40 h load sits behind «mostra»;
+    - the other load's lot or an unknown value is refused with the reason on screen;
+    - the last 3 DDT digits save the load at the farm's kg and lot;
+    - one fresh load left is preselected with no check;
+    - `DDT:<number>` from a QR picks its load.
+    12/10/2026: 22/22.
 
 Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
 paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

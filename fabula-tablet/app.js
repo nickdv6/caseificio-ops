@@ -557,11 +557,38 @@
     ships = ships.filter(x => !queuedShips.has(x.id));                     // already confirmed offline, still in the queue
     // v0.93 (audit A-10/FARM-03): the newest load is no longer picked for you when there is a choice — with two loads in transit
     // (or an old one) the wrong lot and kg were locked in. One fresh load (< 12 h) is still preselected.
-    const ageH = x => Math.max(0, Math.round((Date.now() - new Date(x.shipped_at)) / 36e5));
-    const shipLabel = x => `${new Date(x.shipped_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })} · ${Number(x.kg).toLocaleString('it-IT')} kg · lotto ${x.milk_lot} · partita ${ageH(x) < 1 ? 'da meno di 1 ora' : ageH(x) + ' h fa'}`;
-    const pickFirst = ships.length === 1 && ageH(ships[0]) < 12;
-    const shipSel = ships.length ? field('ship', 'Spedizione dalla Masseria', 'select', { options: [...(pickFirst ? [] : [['', `— scegli quale spedizione è arrivata (${ships.length}) —`]]), ...ships.map(x => [x.id, shipLabel(x)]), ['none', '— nessuna: altro fornitore o latte non registrato —']],
-      limit: 'Controlla lotto e kg sul DDT della Masseria: il peso registrato alla Masseria è quello che vale, qui confermi l\'arrivo e fai i controlli.' }) : null;
+    // v0.94 (audit A-10, rest): when there is a choice, the load picked is confirmed from the driver's paper — the end of the lot the
+    // Masseria writes on the DDT or the tank (or the DDT's last 3 digits) must match it, so a wrong pick is refused before its lot and
+    // kg are locked in; the list and the card do not show lot or DDT then, so the check is read from the paper, not copied from the
+    // screen. Departure time, age and kg are shown big. Loads older than 36 h (past the DOP window) sit behind «mostra».
+    const norm = s => String(s || '').toUpperCase().replace(/\s+/g, '');
+    const ageMin = x => Math.max(0, Math.round((Date.now() - new Date(x.shipped_at)) / 6e4));
+    const ageH = x => Math.round(ageMin(x) / 60);
+    const ageTxt = x => ageMin(x) < 60 ? 'da meno di 1 ora' : ageH(x) + ' h fa';
+    const when = x => new Date(x.shipped_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    const kgTxt = x => Number(x.kg).toLocaleString('it-IT');
+    const fresh = ships.filter(x => ageH(x) <= 36), old = ships.filter(x => ageH(x) > 36);
+    const pickFirst = fresh.length === 1 && ageH(fresh[0]) < 12;
+    const byDdt = ddt ? ships.filter(x => x.ddt_number && norm(x.ddt_number) === norm(ddt)) : [];   // a DDT number read from the paper's QR
+    const needCheck = x => !!x && !(pickFirst && x.id === fresh[0].id) && !(byDdt.length === 1 && byDdt[0].id === x.id);
+    const shipLabel = x => `${when(x)} · ${kgTxt(x)} kg · partita ${ageTxt(x)}` + (needCheck(x) ? '' : ` · lotto ${x.milk_lot}`);
+    const shipOpts = list => [...(pickFirst && list === fresh ? [] : [['', list.length ? `— scegli quale spedizione è arrivata (${list.length}) —` : '— scegli —']]),
+      ...list.map(x => [x.id, shipLabel(x)]), ...(list === fresh && old.length ? [['old', `— mostra le spedizioni più vecchie di 36 h (${old.length}) —`]] : []),
+      ['none', '— nessuna: altro fornitore o latte non registrato —']];
+    const shipSel = ships.length ? field('ship', 'Spedizione dalla Masseria', 'select', { options: shipOpts(fresh),
+      limit: 'Scegli la cisterna arrivata guardando ora di partenza e kg sul foglio dell\'autista: il peso registrato alla Masseria è quello che vale, qui confermi l\'arrivo e fai i controlli.' }) : null;
+    const setShipOpts = list => { shipSel.innerHTML = ''; shipOpts(list).forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; shipSel.appendChild(o); }); };
+    let card = null, chk = null, chkErr = null, chkEls = [];
+    if (shipSel) {
+      card = document.createElement('div'); card.id = 'shipcard'; card.className = 'shipcard'; $('form').append(card);
+      chk = field('shipchk', 'Controllo sul foglio dell\'autista', 'text', { required: false,
+        limit: 'Scrivi la fine del lotto che la Masseria ha scritto sul DDT o sulla cisterna (es. «12-2»), oppure le ultime 3 cifre del numero DDT.' });
+      chk.autocomplete = 'off'; chk.autocapitalize = 'characters'; chk.placeholder = 'come lo leggi sul foglio';
+      chkErr = document.createElement('div'); chkErr.className = 'shipchk-err'; chkErr.id = 'shipchk-err'; $('form').append(chkErr);
+      chkEls = [chk.previousElementSibling, chk, chk.nextElementSibling, chkErr];
+      chk.addEventListener('input', () => { chkErr.textContent = ''; });
+      if (byDdt.length === 1) { if (!fresh.includes(byDdt[0])) setShipOpts(ships); shipSel.value = byDdt[0].id; }
+    }
     field('supplier', 'Fornitore', 'select', { options: sup.map(s => [s.id, s.legal_name]) });
     const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
     const { data: cpT } = await cached('cp_CCP-MILK-TEMP', () => sb.from('haccp_control_points').select('*').eq('code', 'CCP-MILK-TEMP').maybeSingle());
@@ -570,12 +597,21 @@
     field('abx', 'Test antibiotici (CCP 1b)', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Test rapido prima dello scarico' });
     field('fat', 'Grasso % (se noto)', 'number', { step: '0.01', required: false }); field('prot', 'Proteine % (se note)', 'number', { step: '0.01', required: false }); field('scc', 'Cellule somatiche /ml (da analisi, se note)', 'number', { step: '1000', required: false }); field('photo', 'Foto DDT', 'file', { required: false });
     const applyShip = () => {                                              // a chosen shipment fixes supplier, lot and kg
-      const x = ships.find(y => y.id === (shipSel && shipSel.value)), kgIn = $('kg'), lotF = $('lot');
+      if (shipSel && shipSel.value === 'old') { setShipOpts(ships); shipSel.value = ''; }
+      const x = ships.find(y => y.id === (shipSel && shipSel.value)), kgIn = $('kg'), lotF = $('lot'), need = needCheck(x);
+      if (ddtIn.dataset.auto && ddtIn.value === ddtIn.dataset.auto) ddtIn.value = '';   // a DDT number filled in for the previous pick
+      delete ddtIn.dataset.auto;
       if (x) { if (x.supplier_id && sup.some(y => y.id === x.supplier_id)) $('supplier').value = x.supplier_id;
-        kgIn.value = x.kg; lotF.value = x.milk_lot; if (x.ddt_number && !ddtIn.value) ddtIn.value = x.ddt_number; }
-      else if (kgIn.readOnly) { kgIn.value = ''; lotF.value = ''; }
+        kgIn.value = x.kg; lotF.value = need ? '' : x.milk_lot; lotF.placeholder = need ? 'dal controllo sul foglio' : '';
+        if (!need && x.ddt_number && !ddtIn.value) { ddtIn.value = x.ddt_number; ddtIn.dataset.auto = x.ddt_number; } }
+      else if (kgIn.readOnly) { kgIn.value = ''; lotF.value = ''; lotF.placeholder = ''; }
       [kgIn, lotF].forEach(e => { e.readOnly = !!x; e.style.background = x ? '#f1efe9' : ''; });
       ddtIn.required = !x;                                                 // the farm may not have a DDT number for it
+      if (chk) { chk.required = need; chkEls.forEach(e => { if (e) e.style.display = need ? '' : 'none'; }); if (!need) chk.value = ''; chkErr.textContent = ''; }
+      if (card) { card.style.display = x ? '' : 'none';
+        card.innerHTML = x ? `<div class="sc-kg">${esc(kgTxt(x))} kg</div><div class="sc-when">partita ${esc(when(x))} · ${esc(ageTxt(x))}</div>` +
+          (need ? '<div class="sc-note">Controlla sul foglio dell\'autista: stessa ora di partenza e stessi kg? Poi scrivi qui sotto il lotto o il DDT che leggi sul foglio.</div>'
+                : `<div class="sc-note">lotto ${esc(x.milk_lot)}${x.ddt_number ? ' · DDT ' + esc(x.ddt_number) : ''}</div>`) : ''; }
     };
     if (shipSel) { shipSel.onchange = applyShip; applyShip(); }
     // today's milk plan, if the planning bot made one (approved or still proposed)
@@ -587,7 +623,21 @@
       const ddtNo = String(val('ddtn') || '').trim().toUpperCase();
       // v0.59: lot labels are unique — a tank id used before (T1) gets the date (T1-0510, then T1-0510-2…) so intake never breaks
       const shipId = (shipSel && shipSel.value && shipSel.value !== 'none') ? shipSel.value : null;
-      let lotIn = String(val('lot') || '').trim();
+      const shipX = ships.find(y => y.id === shipId);
+      if (needCheck(shipX)) {                                             // v0.94 (A-10): the paper must match the load picked
+        const t = norm(val('shipchk'));
+        const fits = y => t.length >= 3 && ((y.ddt_number && (norm(y.ddt_number) === t || norm(y.ddt_number).endsWith(t)))
+                                             || norm(y.milk_lot) === t || (t.includes('-') && norm(y.milk_lot).endsWith(t)));
+        if (!fits(shipX)) {                                               // the reason stays on screen under the field, not only in the toast
+          const other = ships.filter(y => y.id !== shipX.id && fits(y)), o = other.length === 1 ? other[0] : null;
+          const msg = o ? `Sul foglio c'è «${t}»: è la spedizione partita ${when(o)} (${kgTxt(o)} kg), non quella scelta. Scegli quella${old.includes(o) ? ' (è tra le più vecchie di 36 h: «mostra»)' : ''} e salva di nuovo.`
+            : t.length < 3 ? 'Scrivi la fine del lotto (es. «12-2») o le ultime 3 cifre del DDT, come le leggi sul foglio dell\'autista.'
+            : `«${t}» non corrisponde alla spedizione scelta (partita ${when(shipX)}, ${kgTxt(shipX)} kg). Controlla il foglio dell'autista; se questo latte non è registrato dalla Masseria scegli «nessuna».`;
+          chkErr.textContent = msg; chkErr.scrollIntoView({ block: 'center' }); throw new Error(msg);
+        }
+        $('lot').value = shipX.milk_lot;
+      }
+      let lotIn = shipX ? shipX.milk_lot : String(val('lot') || '').trim();   // with a load, its lot (the database sets it too)
       if (lotIn && !shipId) {
         const base = lotIn; let k = 0; const known = lotView().milk;
         while (k < 9) { const { count, error } = await live(sb.from('labels').select('id', { count: 'exact', head: true }).ilike('code', likeSafe('LOT:' + lotIn)));
