@@ -223,6 +223,8 @@ details.tech .hint{margin-top:4px}
       <div class="row"><input id="inv-name" type="text" placeholder="Nome e cognome" style="flex:1;min-width:180px"><input id="inv-email" type="email" placeholder="email" style="flex:1;min-width:200px"><select id="inv-role" aria-label="Profilo"></select><button class="btn save" id="inv-go">Invita</button></div></div>
     <div class="card" style="margin-top:16px"><h3>Persone e accessi</h3><div class="hint" id="usr-ro">Sola lettura: utenti e profili li gestisce il titolare.</div><div id="users" style="overflow-x:auto"></div>
       <div class="hint" style="margin-top:8px">Ore di contratto, nomine e attestati: <a class="lnk" href="console.html#personale">Console → Personale</a>.</div></div>
+    <div class="card" style="margin-top:16px" id="telegram"><h3>📱 Avvisi su Telegram</h3><div class="hint">Gli allarmi (sicurezza alimentare, sistema, decisioni) arrivano sul telefono dal bot del caseificio. Sotto ogni avviso «✋ Me ne occupo io» avvisa gli altri che ci pensi tu; se nessuno lo fa entro 30 minuti, l'avviso arriva anche a titolare, soci e responsabile HACCP.</div>
+      <div id="notify-me"></div><div id="notify-all" style="overflow-x:auto"></div></div>
     <div class="card" style="margin-top:16px" data-scope id="roles-card"><h3>Profili e permessi</h3><div class="hint"><b>vede</b> = legge · <b>registra</b> = inserisce i dati di tutti i giorni · <b>gestisce</b> = cambia la configurazione e approva. Il database applica le stesse regole: quello che un profilo non vede, non lo riceve proprio. Il titolare ha sempre tutto.</div>
       <div id="roles-matrix" style="overflow-x:auto"></div><div class="row"><button class="btn save" id="roles-save">Salva permessi</button></div></div>
     <div class="card" style="margin-top:16px;max-width:520px" id="account" data-scope><h3>Il mio account</h3><div class="hint">Cambia la tua password (vale per console, configurazione e tablet).</div>
@@ -243,6 +245,7 @@ details.tech .hint{margin-top:4px}
 <script src="brand.js"></script>
 <script src="perm.js"></script>
 <script src="ui.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>

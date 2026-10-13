@@ -428,6 +428,8 @@
       sb.from('app_roles').select('*').order('sort'), sb.from('app_areas').select('*').neq('code', 'comune').order('sort'), sb.from('role_permissions').select('*')]);
     // v0.81: real login state from auth (an invite sent is not a login). Titolare only; others fall back to the staff row.
     const LOGIN = {}; if (admin) { const { data: lg } = await sb.rpc('staff_logins'); (lg || []).forEach(r => { LOGIN[r.staff_id] = r; }); }
+    // v0.96 (audit A-01): who has a tablet PIN (the PIN itself is never readable: only set or removed here)
+    const HASPIN = {}; if (admin) { const { data: fo } = await sb.rpc('floor_operators'); (fo || []).forEach(r => { HASPIN[r.id] = r.has_pin; }); }
     const fmtT = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
     const loginLabel = p => { const L = LOGIN[p.id];
       if (!L) return !p.active ? 'disattivato' : p.auth_user_id ? 'account creato' : p.email ? 'invito da inviare' : 'senza email';
@@ -461,6 +463,24 @@
           toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : `Invito inviato a ${p.email}. Avvisa ${p.full_name.split(' ')[0]}: il link vale 24 ore e funziona solo l'ultima email (le precedenti non valgono più).`); loadUsers(); });
         // v0.81f: a one-time link without e-mail (Supabase's built-in e-mail allows only a few messages an hour)
         if (p.active && p.email && p.id !== staff.id) b('Link WhatsApp', 'sec', async () => { const r = await callUsers({ action: 'link', staff_id: p.id }); showLink(p, r.link); });
+        if (p.active) {   // v0.96 (A-01): the 4-digit PIN that, with the badge, says who is recording on the floor tablet
+          const pb = document.createElement('button'); pb.className = 'btn sm sec'; pb.style.marginRight = '4px'; pb.textContent = HASPIN[p.id] ? 'PIN ✓' : 'PIN';
+          pb.title = HASPIN[p.id] ? 'PIN del tablet impostato: tocca per cambiarlo o toglierlo' : 'Imposta il PIN di 4 cifre per scegliersi sul tablet senza badge';
+          pb.onclick = () => {
+            if (pb.nextSibling && pb.nextSibling.dataset && pb.nextSibling.dataset.pin) { pb.nextSibling.remove(); return; }
+            const w = document.createElement('span'); w.dataset.pin = '1'; w.style.cssText = 'display:inline-flex;gap:4px;align-items:center;margin-right:6px';
+            w.innerHTML = '<input type="password" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="4 cifre" style="width:80px"><button class="btn sm save">Salva PIN</button>' + (HASPIN[p.id] ? '<button class="btn sm warn">Togli</button>' : '');
+            const [inp, ok, del] = w.querySelectorAll('input, button');
+            const run = async pin => { try { if (pin !== null && !/^\d{4}$/.test(pin)) throw new Error('Il PIN è di 4 cifre');
+                const { error } = await sb.rpc('staff_set_pin', { p_staff_id: p.id, p_pin: pin }); if (error) throw error;
+                toast(pin === null ? `PIN di ${p.full_name} tolto` : `PIN di ${p.full_name} impostato: diglielo a voce, non scriverlo da nessuna parte`); loadUsers(); }
+              catch (err) { toast(err.message || String(err), 'err'); } };
+            ok.onclick = () => run(inp.value.trim()); inp.onkeydown = e => { if (e.key === 'Enter') run(inp.value.trim()); };
+            if (del) del.onclick = () => { if (confirm(`Togliere il PIN di ${p.full_name}? Sul tablet potrà registrare solo passando il badge.`)) run(null); };
+            pb.after(w); inp.focus();
+          };
+          tda.append(pb);
+        }
         if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return false; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
       }
       tr.append(tda); tbl.append(tr);
@@ -470,6 +490,7 @@
     if (withBadge.length) { const q = new URLSearchParams(); withBadge.forEach(p => q.append('l', badgeLine(p)));
       const all = document.createElement('a'); all.className = 'btn sm sec'; all.style.cssText = 'text-decoration:none;display:inline-block;margin-top:8px'; all.target = '_blank';
       all.textContent = `Stampa tutti i badge (${withBadge.length})`; all.href = 'labels.html?' + q; box.append(all); }
+    loadNotify().catch(e => toast(e.message || String(e), 'err'));   // v0.96 (E-01)
     // matrix
     const mbox = $('roles-matrix'); const lv = {}; (perms || []).forEach(x => { lv[x.role_code + '|' + x.area] = x.level; });
     const mt = document.createElement('table');
@@ -716,10 +737,69 @@
       : `<table><tr><th>Quando</th><th>Chi</th><th>Dove</th><th>Cosa</th></tr>${rows.map(r => `<tr><td class="nw">${new Date(r.at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })}</td><td>${esc(r.actor)}</td><td>${esc(AUD_T[r.table_name] || r.table_name)}</td><td>${esc(label(r))} <small class="status">${esc(AUD_A[r.action] || r.action)}</small></td></tr>`).join('')}</table>`;
   }
 
+  // ---------- Avvisi su Telegram (v0.96, audit E-01) ----------
+  // Each person links their own Telegram (or the owner makes the link for them); the alerts then reach the phone with
+  // «Me ne occupo io». Owner/partners also see who is linked and the last alerts with who took them.
+  const NT_TOPICS = [['food_safety', 'Sicurezza alimentare', 'a qualsiasi ora'], ['infra', 'Sistema: backup, bot, tablet', 'a qualsiasi ora'], ['decisions', 'Decisioni da prendere', 'non nelle ore di silenzio']];
+  const NT_TZ = [['Europe/Rome', 'ora italiana'], ['America/New_York', 'ora della costa est USA']];
+  const ntTime = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  function ntLinkBox(box, d, forOther) {
+    const exp = new Date(d.expires).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    const text = `Ciao ${String(d.staff || '').split(' ')[0]}, per ricevere gli avvisi del caseificio su Telegram apri questo link sul telefono e tocca «Avvia» (vale fino a ${exp}, una volta sola):\n${d.url}`;
+    box.innerHTML = `<div class="hint">${forOther ? `Collegamento per <b>${esc(d.staff)}</b>: mandaglielo.` : 'Inquadra il codice col telefono, oppure apri il link <b>sul telefono</b>,'} poi in Telegram tocca <b>Avvia</b> (Start). Vale fino a ${esc(exp)}, una volta sola.</div>
+      <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div class="nt-qr" style="background:#fff;padding:6px"></div>
+      <div style="flex:1;min-width:220px"><input readonly style="width:100%" value="${esc(d.url)}"><div class="row" style="gap:6px;margin-top:6px">
+      <button class="btn sm sec" data-copy>Copia</button><a class="btn sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">Manda su WhatsApp</a>
+      <a class="btn sm sec" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(d.url)}">Apri</a></div></div></div>`;
+    try { if (window.QRCode) new QRCode(box.querySelector('.nt-qr'), { text: d.url, width: 132, height: 132 }); } catch {}
+    box.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(d.url); toast('Link copiato'); } catch { box.querySelector('input').select(); } };
+  }
+  async function loadNotify() {
+    const meBox = $('notify-me'), allBox = $('notify-all'); if (!meBox) return;
+    const { data: ov, error } = await sb.rpc('notify_overview');
+    if (error) { meBox.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const me = ov.me;
+    if (!me || !me.linked) {
+      meBox.innerHTML = `<p style="margin:6px 0">${me && me.link_pending ? 'Collegamento creato ma non ancora aperto sul telefono.' : 'Il tuo Telegram non è ancora collegato: gli allarmi arrivano solo qui in Configurazione.'}</p>
+        <button class="btn save" id="nt-link">Collega il mio Telegram</button><div id="nt-linkout" style="margin-top:8px"></div>`;
+      $('nt-link').onclick = async () => { const { data, error } = await sb.rpc('notify_link_code'); if (error) return toast(error.message, 'err'); ntLinkBox($('nt-linkout'), data, false); };
+    } else {
+      const tzs = NT_TZ.some(([v]) => v === me.tz) ? NT_TZ : [...NT_TZ, [me.tz, me.tz]];
+      meBox.innerHTML = `<p style="margin:6px 0"><span class="ok">Collegato</span>${me.tg_name ? ' (' + esc(me.tg_name) + ')' : ''}${me.linked_at ? ' dal ' + esc(ntTime(me.linked_at)) : ''}. Ricevo:</p>
+        ${NT_TOPICS.map(([k, l, h]) => `<label style="display:block;text-transform:none;letter-spacing:0;font-weight:400;margin:4px 0"><input type="checkbox" data-topic="${k}"${(me.topics || []).includes(k) ? ' checked' : ''}> ${l} <small class="status">· ${h}</small></label>`).join('')}
+        <div class="hint">Il responsabile HACCP e chi è in turno ricevono comunque la sicurezza alimentare.</div>
+        <div class="row" style="align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px">Silenzio dalle <input type="time" id="nt-qf" value="${esc(me.quiet_from)}"> alle <input type="time" id="nt-qt" value="${esc(me.quiet_to)}">
+          <select id="nt-tz" aria-label="Fuso orario">${tzs.map(([v, l]) => `<option value="${esc(v)}"${v === me.tz ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="row" style="gap:6px;margin-top:8px"><button class="btn save" id="nt-save">Salva</button><button class="btn sec" id="nt-test">Manda un messaggio di prova</button><button class="btn warn" id="nt-unlink">Scollega</button></div>`;
+      $('nt-save').onclick = async () => {
+        const topics = [...meBox.querySelectorAll('[data-topic]')].filter(x => x.checked).map(x => x.dataset.topic);
+        const { error } = await sb.rpc('notify_set_prefs', { p_topics: topics, p_quiet_from: $('nt-qf').value || null, p_quiet_to: $('nt-qt').value || null, p_tz: $('nt-tz').value });
+        if (error) return toast(error.message, 'err'); toast('Salvato'); loadNotify();
+      };
+      $('nt-test').onclick = async () => { const { error } = await sb.rpc('notify_test'); if (error) return toast(error.message, 'err'); toast('Messaggio di prova in partenza: arriva entro un minuto'); };
+      $('nt-unlink').onclick = async () => { if (!confirm('Scollegare il tuo Telegram? Non riceverai più gli allarmi sul telefono.')) return; const { error } = await sb.rpc('notify_unlink'); if (error) return toast(error.message, 'err'); toast('Scollegato'); loadNotify(); };
+    }
+    if (!ov.people) { allBox.innerHTML = ''; return; }
+    const TL = { food_safety: 'sicurezza', infra: 'sistema', decisions: 'decisioni' };
+    allBox.innerHTML = `<h4 style="margin:10px 0 4px">Chi riceve gli avvisi</h4><table><tr><th>Persona</th><th>Telegram</th><th>Riceve</th><th>Ultimo avviso</th><th></th></tr>${ov.people.map(p => `
+      <tr><td><b>${esc(p.full_name)}</b>${p.haccp_resp ? '<br><small>responsabile HACCP</small>' : ''}</td>
+      <td>${p.linked ? '<span class="ok">collegato</span>' : '<span class="ko">non collegato</span>'}${p.failed_24h ? `<br><small class="ko">${p.failed_24h} non consegnati</small>` : ''}</td>
+      <td>${p.linked ? esc((p.topics || []).map(t => TL[t] || t).join(', ')) : '—'}</td><td class="nw">${p.last_sent ? esc(ntTime(p.last_sent)) : '—'}</td>
+      <td>${p.linked ? '' : `<button class="btn sm sec" data-ntlink="${p.staff_id}">Link da mandare</button>`}</td></tr>`).join('')}</table><div id="nt-otherlink" style="margin-top:8px"></div>
+      <h4 style="margin:14px 0 4px">Ultimi allarmi</h4>${(ov.recent || []).length ? `<table><tr><th>Quando</th><th>Cosa</th><th>Inviati</th><th>Chi se ne occupa</th></tr>${ov.recent.map(r => `
+      <tr><td class="nw">${esc(ntTime(r.created_at))}</td><td><small class="status">${esc(TL[r.topic] || r.topic)}</small> ${esc(r.title)}</td>
+      <td>${r.sent}${r.waiting ? ` <small>(+${r.waiting} in attesa)</small>` : ''}${r.failed ? ` <small class="ko">${r.failed} non consegnati</small>` : ''}</td>
+      <td>${r.taken_by ? esc(r.taken_by) + ' · ' + esc(ntTime(r.acked_at)) : r.topic === 'infra' ? '—' : '<span class="ko">nessuno</span>'}</td></tr>`).join('')}</table>` : '<div class="empty">Nessun allarme inviato finora.</div>'}`;
+    allBox.querySelectorAll('[data-ntlink]').forEach(b => b.onclick = async () => {
+      const { data, error } = await sb.rpc('notify_link_code', { p_staff_id: b.dataset.ntlink }); if (error) return toast(error.message, 'err');
+      ntLinkBox($('nt-otherlink'), data, true);
+    });
+  }
+
   // ---------- tabs + start ----------
   const SEC_IDS = SECTIONS.map(s => s[0]).concat('altro');
   const T = UI.tabs({
-    def: 'panoramica', alias: Object.assign({ account: 'utenti' }, Object.fromEntries(SEC_IDS.map(s => [s, 'parametri']))),
+    def: 'panoramica', alias: Object.assign({ account: 'utenti', telegram: 'utenti' }, Object.fromEntries(SEC_IDS.map(s => [s, 'parametri']))),
     loaders: { panoramica: loadOverview, parametri: loadParams, maint: loadMaint, prodotti: loadVariantMap, bots: loadBotFeed, utenti: loadUsers, registro: loadAudit },
     onShow: n => { if (n === 'panoramica' && T.isLoaded('panoramica') && (ovStale || Date.now() - ovAt > 120000)) loadOverview().catch(err => toast(err.message || String(err), 'err')); }
   });

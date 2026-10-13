@@ -1,0 +1,88 @@
+<title>Sistema giù: cosa fare</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* v0.96 (audit E-23): one A4 card for the partners and whoever is on shift when the tablet, the console or the internet stop.
+   The developer runbook (backups, restore) is tools/go-live/BACKUP-RESTORE.md: nobody on the floor needs it. */
+:root{
+  --bg:#f7f5f0; --paper:#ffffff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb;
+  --accent:#0f6b4f; --warn:#b4472c; --tile:#eef3ef;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#4fbf93; --warn:#f08a6a; --tile:#232a27; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#4fbf93; --warn:#f08a6a; --tile:#232a27; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--body);padding-block:24px;padding-inline:16px;margin:0;line-height:1.38}
+.sheet{max-width:1040px;margin:0 auto;background:var(--paper);border:1px solid var(--rule);padding:28px 32px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;border-bottom:3px solid var(--warn);padding-bottom:12px;margin-bottom:18px}
+h1{font-family:var(--display);font-size:2.7rem;font-weight:700;margin:0;line-height:1}
+.sub{color:var(--muted);font-size:.98rem;margin-top:4px}
+.meta{font-family:var(--display);font-size:1rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:right}
+.meta b{color:var(--fg);display:block;font-size:1.3rem}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.grid{grid-template-columns:1fr}}
+.box{border:1px solid var(--rule);background:var(--tile);padding:12px 16px;min-width:0}
+.box.stop{border:3px solid var(--warn);background:var(--paper)}
+.box.wide{grid-column:1/-1}
+h2{font-family:var(--display);font-size:1.45rem;margin:0 0 6px;line-height:1.05;display:flex;gap:10px;align-items:baseline}
+h2 .n{font-size:2rem;color:var(--accent)}
+.stop h2,.stop h2 .n{color:var(--warn)}
+ul{margin:0;padding-left:18px}li{margin:3px 0}
+.line{display:inline-block;min-width:170px;border-bottom:1px solid var(--fg);height:1em}
+footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--rule);font-size:.85rem;color:var(--muted)}
+@media print{body{background:#fff;padding:0}.sheet{border:0;padding:10mm 12mm}}
+@page{size:A4;margin:8mm}
+</style>
+
+<div class="sheet">
+<header>
+  <div>
+    <h1>Sistema giù: cosa fare</h1>
+    <div class="sub">Tablet, console o internet non funzionano · per i soci e per chi è in turno · tienila stampata nella cartella HACCP</div>
+  </div>
+  <div class="meta">SOP-13 · rev. 1 · 13/10/2026<b>La produzione non si ferma</b></div>
+</header>
+
+<div class="grid">
+  <div class="box"><h2><span class="n">1</span>Continua su carta</h2>
+    <ul>
+      <li>Usa i <b>moduli stampati</b> (Autocontrollo → Registri → <b>Modulo vuoto</b>): tienine sempre una copia nella cartella HACCP, perché a sistema giù non si stampano.</li>
+      <li>Su ogni riga: <b>data, ora vera, valore, firma</b>. Arrivo latte, inizio e fine lotto compresi.</li>
+      <li>Il tablet <b>senza internet registra lo stesso</b>: le registrazioni restano in coda e partono da sole quando torna la rete.</li>
+      <li><b>Non premere «Esci»</b> sul tablet finché in Home c'è scritto «registrazioni in attesa di rete».</li>
+    </ul></div>
+
+  <div class="box"><h2><span class="n">2</span>Chi chiamare</h2>
+    <ul>
+      <li>Sicurezza alimentare (latte, lotti, celle): responsabile HACCP <b>Nicola Celso</b> · tel. <span class="line"></span></li>
+      <li>Il sistema: titolare <b>Nick Del Verme</b> · WhatsApp <span class="line"></span><br><small>è negli Stati Uniti: 6 ore indietro rispetto all'Italia</small></li>
+      <li>Internet / linea: <span class="line"></span> · tel. <span class="line"></span></li>
+      <li>Prima il responsabile HACCP; per il sistema scrivi a Nick anche di notte (per lui è sera).</li>
+    </ul></div>
+
+  <div class="box stop wide"><h2><span class="n">✋</span>Cosa NON fare, anche se qualcuno al telefono lo suggerisce</h2>
+    <ul>
+      <li><b>Non ripristinare un backup</b> e non incollare comandi nell'editor SQL di Supabase: un ripristino completo <b>cancella tutto quello registrato dopo il backup</b> (gli arrivi latte e i controlli di stamattina).</li>
+      <li><b>Non cancellare</b> righe, utenti o lotti per «sistemare» qualcosa: le registrazioni HACCP non si cancellano, si correggono (Autocontrollo → Correggi, con il motivo).</li>
+      <li>Non disinstallare l'app dal tablet e non cancellare i dati del browser: perderesti le registrazioni in coda.</li>
+      <li>Non registrare la stessa cosa due volte (carta e tablet insieme): quando il tablet funziona usa il tablet; quando non funziona, solo la carta.</li>
+    </ul></div>
+
+  <div class="box"><h2><span class="n">3</span>Quando torna tutto</h2>
+    <ul>
+      <li>Tablet: <b>🛡 → 📝 Ricopia da foglio di carta</b>, con la <b>data e l'ora del foglio</b> (fino a 7 giorni). Non usare il QR normale: segnerebbe l'ora di adesso.</li>
+      <li>Arrivo latte, inizio e fine lotto scritti su carta: dai i fogli al responsabile HACCP, li inserisce lui.</li>
+      <li>In Home controlla che «in attesa di rete» sia sparito e che non ci siano registrazioni «rifiutate».</li>
+      <li>I fogli restano nella cartella HACCP: sono parte del registro.</li>
+    </ul></div>
+
+  <div class="box"><h2><span class="n">4</span>Se mancano dei dati</h2>
+    <ul>
+      <li>Scrivi a Nick <b>cosa manca e da quando</b> (es. «i controlli celle di ieri sera»).</li>
+      <li>Il sistema fa un backup ogni 2 ore e uno ogni notte: Nick rimette <b>solo le righe mancanti</b>, senza toccare il resto.</li>
+      <li>Nel frattempo i dati mancanti valgono su carta: tieni i fogli.</li>
+    </ul></div>
+</div>
+
+<footer>Per lo sviluppatore: backup e ripristino sono in <code>tools/go-live/BACKUP-RESTORE.md</code>; lo script di ripristino aggiunge solo le righe mancanti, salvo richiesta esplicita di ripristino completo su un progetto vuoto.</footer>
+</div>

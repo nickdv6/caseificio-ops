@@ -29,7 +29,9 @@ echo "migration failures: $fail"; [ $fail -eq 0 ] || exit 1
 
 echo "== 2. restore the backup (full)"
 cd "$WORK"
-python3 "$REPO/tools/go-live/restore_backup.py" sql backup.json.gz > restore.sql && chmod 644 restore.sql
+# v0.96 (audit E-23): a full restore must be asked for (--wipe-all --target) and confirmed with the backup time
+EXP=$(python3 "$REPO/tools/go-live/restore_backup.py" when backup.json.gz 2>/dev/null)
+python3 "$REPO/tools/go-live/restore_backup.py" sql backup.json.gz --wipe-all --target $DB --confirm "$EXP" > restore.sql && chmod 644 restore.sql
 t0=$(date +%s.%N); PSQL < restore.sql > /dev/null || { echo "restore failed"; exit 1; }
 echo "loaded in $(echo "$(date +%s.%N) - $t0" | bc) s"
 

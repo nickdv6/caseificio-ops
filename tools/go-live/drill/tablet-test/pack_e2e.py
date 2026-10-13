@@ -5,6 +5,7 @@ orders in packing order with lots and flags; W1 opens with two rows already fill
 refused on the spot; W1 and S1 save at once; W2 (2 kg short) asks to confirm with the reason, then saves."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -49,7 +50,7 @@ try:
     pg = ctx.new_page(); logs = []
     pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto('http://localhost:8768/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))}){op_js(sess)}")
     pg.goto('http://localhost:8768/index.html')
     pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(2500)
     view = lambda: pg.evaluate("(document.querySelector('.view.active')||{}).id")

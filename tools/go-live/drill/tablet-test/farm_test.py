@@ -3,6 +3,7 @@ weight → farm page shows it received. The edge function is emulated by calling
 as service_role (exactly what farm-order does)."""
 import json, subprocess, time, hmac, hashlib, base64, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 import os
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
@@ -75,12 +76,12 @@ with sync_playwright() as p:
     tab = b.new_context(service_workers='block'); tab.route('**/*.supabase.co/**', rest)
     tp = tab.new_page(); tp.on('pageerror', lambda e: errs.append('tablet: ' + str(e)))
     sess = {"access_token": CASARO, "refresh_token": "r", "expires_at": int(time.time()) + 3600, "expires_in": 3600, "token_type": "bearer", "user": {"id": "00000000-0000-4000-a000-000000000001", "email": "casaro@test.it"}}
-    tp.goto('http://localhost:8769/labels.html'); tp.evaluate(f"localStorage.clear(); localStorage.setItem('sb-ojkquhzaeypsphncjqwy-auth-token', {json.dumps(json.dumps(sess))})")
+    tp.goto('http://localhost:8769/labels.html'); tp.evaluate(f"localStorage.clear(); localStorage.setItem('sb-ojkquhzaeypsphncjqwy-auth-token', {json.dumps(json.dumps(sess))}){op_js(sess)}")
     tp.goto('http://localhost:8769/index.html'); tp.wait_for_function("document.querySelector('#v-home.active')", timeout=20000)
     tp.evaluate("() => { document.getElementById('manual').value = 'DDT:'; document.getElementById('btn-manual').click(); }"); tp.wait_for_timeout(1500)
     st = tp.evaluate("() => ({ ship: (document.getElementById('ship')||{}).value, opt: ((document.getElementById('ship')||{}).selectedOptions||[{}])[0].textContent, kg: document.getElementById('kg').value, kgRO: document.getElementById('kg').readOnly, lot: document.getElementById('lot').value, ddtReq: document.getElementById('ddtn').required })")
     check('tablet: pending shipment preselected, kg locked to the farm weight', st['kg'] == '1048.5' and st['kgRO'] and st['lot'] == lot and not st['ddtReq'], json.dumps(st))
-    tp.evaluate("() => { const s = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('change')); }; s('temp', '4.4'); s('abx', '0'); document.getElementById('btn-form-save').click(); }")
+    tp.evaluate("() => { const s = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('change')); }; s('temp', '4.4'); s('abx', '0'); s('kgh', '1048.5'); document.getElementById('btn-form-save').click(); }")
     tp.wait_for_timeout(2500)
     row = sql(f"select s.status||'|'||mi.qty_kg||'|'||mi.milk_lot||'|'||(mi.shipment_id = s.id) from fabula.milk_shipments s join fabula.milk_intake mi on mi.id = s.milk_intake_id where s.milk_lot='{lot}'")
     check('db: intake at the farm weight, shipment received', row == f'received|1048.500|{lot}|true', row)

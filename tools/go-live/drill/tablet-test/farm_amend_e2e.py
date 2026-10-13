@@ -6,6 +6,7 @@ The edge function farm-order is emulated by calling the same database functions 
 Expect "FAILURES: none"."""
 import json, os, subprocess, time, hmac, hashlib, base64, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -67,7 +68,7 @@ def app_ctx(b, who, port):
         return route.fulfill(status=200, body='{}', headers={'access-control-allow-origin': '*'})
     ctx = b.new_context(service_workers='block', viewport={'width': 1100, 'height': 1300}); ctx.route('**/*.supabase.co/**', handler)
     pg = ctx.new_page(); pg.goto(f'http://localhost:{port}/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(s))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(s))}){op_js(s)}")
     return pg
 
 fails = []

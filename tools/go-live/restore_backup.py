@@ -4,14 +4,28 @@
 Tested 05/10/2026 (restore drill, see BACKUP-RESTORE.md): the real latest.json.gz restored into a scratch database
 built from supabase/migrations matched the live database table by table (row counts and content checksums).
 
-Usage
-  # 1) write the restore SQL (one transaction) — paste into the Supabase SQL editor or run with psql
-  python3 restore_backup.py sql latest.json.gz > restore.sql
-  python3 restore_backup.py sql latest.json.gz --tables haccp_log,non_conformities > partial.sql   # only some tables:
-      # adds the backup rows that are missing (by primary key) and leaves every other row as it is
+PARTNERS / NOT A DEVELOPER: do not use this script. Read sop/sistema_giu.html ("Sistema giù: cosa fare"): switch to paper and
+call Nick. This script is for the developer runbook (BACKUP-RESTORE.md).
 
-  # 2) or load straight into a database with psql available
-  python3 restore_backup.py load latest.json.gz --db "postgresql://postgres:…@db.<ref>.supabase.co:5432/postgres"
+Usage (v0.96, audit E-23: the safe way is the default; wiping needs to be asked for, twice)
+  # 0) when was the backup taken? (UTC and Agropoli time)
+  python3 restore_backup.py when latest.json.gz
+
+  # 1) DEFAULT = PARTIAL: adds back only the backup rows that are missing (by primary key); never deletes or overwrites anything
+  python3 restore_backup.py sql latest.json.gz > partial.sql          # the day-to-day RECORDS (HACCP, milk, lots, stock, sales…)
+  python3 restore_backup.py sql latest.json.gz --tables haccp_log,non_conformities > partial.sql   # only some tables
+  python3 restore_backup.py sql latest.json.gz --tables all > partial.sql   # every table: also brings back settings, PINs,
+      # rota or standing orders deleted ON PURPOSE after the backup — only when that is what you want
+
+  # 2) FULL restore (empties EVERY table and reloads the backup): only into a new/empty project, never the live one
+  python3 restore_backup.py sql latest.json.gz --wipe-all --target <project-ref> > restore.sql
+      # the SQL refuses to run when ANY record (HACCP, milk, lots, stock, sales, shifts…) is newer than the backup
+
+  # Every generated SQL starts with a safety stop: it runs only if `set restore.confirm = '<exported_at>';` was run first
+  # (the exact line is printed, together with the backup time). --confirm <exported_at> adds that line for you.
+
+  # 3) or load straight into a database with psql available (same rules; --confirm is required)
+  python3 restore_backup.py load latest.json.gz --db "postgresql://postgres:…@db.<ref>.supabase.co:5432/postgres" --confirm <exported_at>
 
   # 3) check a database against the backup (row counts + per-table checksums of the restored rows)
   python3 restore_backup.py verify latest.json.gz --db "…"
@@ -23,16 +37,19 @@ Usage
 What the restore does
   * one transaction; session_replication_role = replica, so triggers (audit log, stock guard, bot messages, staff guard…)
     don't fire and foreign keys aren't checked while the tables are refilled in any order;
-  * full restore (no --tables): TRUNCATEs every table and re-inserts the backup rows with jsonb_populate_recordset,
-    skipping generated columns and overriding identity columns;
-  * partial restore (--tables): inserts only the backup rows whose primary key is missing (on conflict do nothing);
+  * partial restore (default, all tables or --tables): inserts only the backup rows whose primary key is missing
+    (on conflict do nothing);
+  * full restore (--wipe-all --target <ref>): TRUNCATEs every table and re-inserts the backup rows with
+    jsonb_populate_recordset, skipping generated columns and overriding identity columns;
   * moves every serial/identity sequence past the highest restored id.
 
 Not in the backup (restore separately): passwords (since v0.68 the list of logins is in `auth_users`: re-invite the people and
 re-link staff.auth_user_id by email), Storage files themselves (since v0.68 their list is in `storage_manifest`), Vault secrets,
 pg_cron jobs (in the migrations), edge function secrets.
 """
-import argparse, gzip, json, os, secrets, subprocess, sys
+import argparse, gzip, json, os, re, secrets, subprocess, sys, datetime
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 def load_backup(path):
     raw = open(path, 'rb').read()
@@ -70,16 +87,74 @@ begin
 end $f$;
 """
 
-def restore_sql(b, tables=None):
-    names = sorted(b['tables']) if not tables else [t for t in tables if t in b['tables']]
+# the records the floor and the office write every day: what a partial restore puts back by default, and what a full restore
+# checks first (any of them newer than the backup = live data that the wipe would destroy)
+RECORD_TABLES = ['haccp_log', 'non_conformities', 'record_corrections', 'milk_intake', 'milk_shipments', 'batch_milk_inputs', 'production_batches',
+                 'batch_step_logs', 'batch_consumables', 'stock_moves', 'labels', 'lab_samples', 'calibration_checks', 'pest_inspections',
+                 'goods_receipts', 'goods_receipt_lines', 'shipments', 'shipment_lines', 'sales_orders', 'sales_order_lines', 'scan_events',
+                 'meter_readings', 'effluent_log', 'waste_log', 'shifts', 'task_instances', 'stock_counts', 'stock_count_lines',
+                 'pos_daily_closings', 'invoices', 'invoice_lines', 'documents', 'haccp_register_reviews', 'training_records']
+
+WIPE_CHECK = [t for t in RECORD_TABLES if t != 'labels']   # the migrations themselves create a few station labels
+
+def rome_time(b):
+    try:
+        t = datetime.datetime.fromisoformat(str(b.get('exported_at')).replace('Z', '+00:00'))
+        return t.astimezone(ZoneInfo('Europe/Rome')).strftime('%d/%m/%Y alle %H:%M')
+    except Exception:
+        return str(b.get('exported_at'))
+
+def sq(v):            # an SQL string literal
+    return "'" + str(v).replace("'", "''") + "'"
+
+def restore_sql(b, tables=None, wipe=False, target=None, confirm=None):
+    if wipe and tables:
+        sys.exit('--wipe-all restores every table: leave out --tables (or leave out --wipe-all for a partial restore)')
+    if wipe or tables == ['all']:
+        names = sorted(b['tables'])
+    elif tables:
+        names = [t for t in tables if t in b['tables']]
+    else:
+        names = [t for t in RECORD_TABLES if t in b['tables']]
+        print('Ripristino parziale delle registrazioni: ' + ', '.join(names) + ' (le altre tabelle con --tables …)', file=sys.stderr)
+    tables = None if tables == ['all'] else tables
     missing = [t for t in (tables or []) if t not in b['tables']]
     if missing:
         sys.exit('not in the backup: ' + ', '.join(missing))
+    exp = str(b.get('exported_at')); when = rome_time(b)
+    if confirm is not None and confirm != exp:
+        sys.exit(f"--confirm does not match this backup: it was exported at {exp} ({when}, ora italiana)")
     tag = 'bk' + secrets.token_hex(4)
-    out = [f"-- La Perla restore · backup {b.get('mode')} exported {b.get('exported_at')} ({b.get('rome_day')}) · {len(names)} tables, "
-           f"{sum(len(b['tables'][t]) for t in names)} rows",
-           'begin;', "set local session_replication_role = replica;", HELPER.strip()]
-    merge = bool(tables)
+    lose = (f"RIPRISTINO COMPLETO del progetto {target}: svuota TUTTE le tabelle e rimette il backup del {when}: "
+            f"perderai tutto quello registrato dopo.") if wipe else \
+           (f"Ripristino parziale dal backup del {when}: aggiunge solo le righe mancanti di {len(names)} tabelle, non cancella e non cambia niente.")
+    stop = f"set restore.confirm = {sq(exp)};"
+    guard = [f"do $guard$ begin",
+             f"  if coalesce(current_setting('restore.confirm', true), '') <> {sq(exp)} then",
+             f"    raise exception using message = {sq('FERMO: ripristino non confermato. ' + lose + ' Se sei sicuro, aggiungi in cima e riesegui: ' + stop)};",
+             f"  end if;"]
+    if wipe:
+        # any record newer than the backup = a database in use: the wipe would destroy it (whatever the time of day)
+        guard = ["do $guard$ declare v_have text[]; v_newer text; begin",
+                 *guard[1:],
+                 "  select array_agg(c.table_name::text) into v_have from information_schema.columns c",
+                 "   where c.table_schema = 'fabula' and c.column_name = 'created_at' and c.table_name::text = any (array[" + ', '.join(sq(t) for t in WIPE_CHECK) + "]);",
+                 "  if v_have is not null then",
+                 f"    execute 'select string_agg(t, '', '') from (' || (select string_agg(format('select %L t where exists (select 1 from fabula.%I where created_at > %L::timestamptz)', x, x, {sq(exp)}), ' union all ') from unnest(v_have) x) || ') q' into v_newer;",
+                 "  end if;",
+                 "  if v_newer is not null then",
+                 f"    raise exception using message = {sq('FERMO: questo database contiene registrazioni più recenti del backup (' + when + ') in: ')} || v_newer || {sq('. Il ripristino completo le cancellerebbe: si fa solo su un progetto nuovo e vuoto. Per rimettere righe perse usa il ripristino parziale (senza --wipe-all).')};",
+                 "  end if;"]
+
+    guard.append("end $guard$;")
+    print(f"Il backup è del {when} (ora italiana). {lose}", file=sys.stderr)
+    out = [f"-- La Perla restore · backup {b.get('mode')} exported {exp} ({when} ora italiana) · {len(names)} tables, "
+           f"{sum(len(b['tables'][t]) for t in names)} rows · {'FULL: wipes every table of ' + str(target) if wipe else 'PARTIAL: adds missing rows only'}",
+           f"-- {lose}",
+           f"-- Safety stop: the line below must be run first (it is the backup's time, to show you read it).",
+           (stop if confirm else f"-- {stop}"),
+           'begin;', *guard, "set local session_replication_role = replica;", HELPER.strip()]
+    merge = not wipe
     if not merge:
         out.append('truncate table ' + ', '.join(f'fabula."{t}"' for t in names) + ';')
     for t in names:
@@ -110,6 +185,19 @@ select jsonb_object_agg(t, jsonb_build_object(
                 where table_schema = 'fabula' and table_type = 'BASE TABLE')) t;
 """
 
+def db_targets(db):
+    """What a --target must equal for this connection string: the Supabase project ref (from db.<ref>.supabase.co or the
+    pooler user postgres.<ref>), or else the database name. Never a substring: «postgres» or «supabase» match nothing."""
+    u = urlparse(db or '')
+    refs = set()
+    m = re.match(r'^db\.([a-z0-9]{15,30})\.supabase\.co$', u.hostname or '')
+    if m: refs.add(m.group(1))
+    m = re.match(r'^postgres\.([a-z0-9]{15,30})$', u.username or '')
+    if m: refs.add(m.group(1))
+    if refs: return refs
+    name = (u.path or '').lstrip('/')
+    return {name} if name else set()
+
 def psql(db, sql):
     r = subprocess.run(['psql', db, '-v', 'ON_ERROR_STOP=1', '-At', '-q'], input=sql, capture_output=True, text=True)
     if r.returncode:
@@ -118,13 +206,23 @@ def psql(db, sql):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('action', choices=['sql', 'load', 'verify', 'counts', 'logins', 'files'])
+    ap.add_argument('action', choices=['sql', 'load', 'verify', 'counts', 'logins', 'files', 'when'])
     ap.add_argument('backup')
     ap.add_argument('--db', default=os.environ.get('DATABASE_URL'))
     ap.add_argument('--tables', help='comma-separated table names (default: all tables in the backup)')
+    ap.add_argument('--wipe-all', action='store_true', help='FULL restore: empty every table and reload the backup (new/empty project only)')
+    ap.add_argument('--target', help='with --wipe-all: the project ref (or local database name) you mean to wipe')
+    ap.add_argument('--confirm', help="the backup's exported_at (see `when`): adds the safety-stop line to the SQL")
     a = ap.parse_args()
     b = load_backup(a.backup)
     tables = [t.strip() for t in a.tables.split(',')] if a.tables else None
+    if a.action == 'when':
+        print(b.get('exported_at')); print(f"{rome_time(b)} ora italiana · {b.get('mode')}", file=sys.stderr); return
+    if a.wipe_all and a.action in ('sql', 'load'):
+        if not a.target:
+            sys.exit('--wipe-all needs --target <project ref>: the project you mean to wipe (never the live one with real data)')
+        if a.action == 'load' and a.target not in db_targets(a.db):
+            sys.exit(f'--target {a.target} is not the database of --db ({", ".join(sorted(db_targets(a.db))) or "?"}): refusing to wipe a different database')
     if a.action == 'counts':
         for t in sorted(b['tables']):
             print(f"{t}\t{len(b['tables'][t])}")
@@ -143,11 +241,14 @@ def main():
             print(f"{f['bucket']}/{f['name']}\t{f.get('size')}\t{f.get('mimetype') or ''}\t{f.get('updated_at') or ''}")
         print(f"{len(files)} files, {sum(int(f.get('size') or 0) for f in files)} bytes", file=sys.stderr); return
     if a.action == 'sql':
-        sys.stdout.write(restore_sql(b, tables)); return
+        sys.stdout.write(restore_sql(b, tables, a.wipe_all, a.target, a.confirm)); return
     if not a.db:
         sys.exit('--db (or DATABASE_URL) is required')
     if a.action == 'load':
-        out = psql(a.db, restore_sql(b, tables))
+        if not a.confirm:
+            sys.exit(f"--confirm is required: the backup was exported at {b.get('exported_at')} ({rome_time(b)} ora italiana); "
+                     f"pass --confirm '{b.get('exported_at')}' if that is the backup you mean")
+        out = psql(a.db, restore_sql(b, tables, a.wipe_all, a.target, a.confirm))
         print(out.strip().splitlines()[-1] if out.strip() else 'done')
     sums = json.loads(psql(a.db, CHECKSUM_SQL).strip())
     bad = [(t, len(b['tables'][t]), sums.get(t, {}).get('n')) for t in (tables or sorted(b['tables'])) if sums.get(t, {}).get('n') != len(b['tables'][t])]

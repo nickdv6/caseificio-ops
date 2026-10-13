@@ -130,7 +130,9 @@ body.print .box{display:none}body.print .poster{display:block}
     : s.status === 'rejected' ? `<span class="pill p-ko">Respinto</span>` : s.status === 'cancelled' ? '<span class="pill p-ko">Annullata</span>' : '<span class="pill p-road">In viaggio</span>';
   // v0.94: what changed on a load (corrected weight, cancellation) — shown on the latest card and in the list
   const changes = s => (s.original_kg != null ? `<div class="meta">Peso corretto: prima ${kg(s.original_kg)} kg${s.correction_reason ? ' · ' + esc(s.correction_reason) : ''}</div>` : '')
-    + (s.status === 'cancelled' ? `<div class="meta">Annullata${s.cancelled_by && s.cancelled_by !== 'Masseria' ? ' dal caseificio' : ''}: ${esc(s.cancel_reason || '')}</div>` : '');
+    + (s.status === 'cancelled' ? `<div class="meta">Annullata${s.cancelled_by && s.cancelled_by !== 'Masseria' ? ' dal caseificio' : ''}: ${esc(s.cancel_reason || '')}</div>` : '')
+    // v0.96 (audit FARM-02): weighed differently at the dairy (over 2 %): that weight counts, with the reason
+    + (s.weight_note && s.entered_kg != null ? `<div class="meta" style="color:#b4472c">Pesato al caseificio: ${kg(s.entered_kg)} kg (vale questo peso) · ${esc(s.weight_note)}</div>` : '');
   const post = async body => { const r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body: JSON.stringify({ t: token, ...body }) });
     const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'non salvato'); return d; };
 

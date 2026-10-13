@@ -4,6 +4,7 @@ printed sheet is typed in from 🛡 → "Ricopia da foglio di carta" with the sh
 time when sent; out of limit it opens the same non-conformity as a live check; after each line the paper menu comes back."""
 import json, subprocess, time, os, hmac, hashlib, base64, datetime
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -16,6 +17,8 @@ JWT = _jwt("00000000-0000-4000-a000-000000000001", "casaro@test.it")
 def sql(q):
     r = subprocess.run(['su', 'postgres', '-c', f'psql -At -d restore_drill -c "{q}"'], capture_output=True, text=True)
     return r.stdout.strip() or r.stderr.strip()
+# v0.96 (A-19): who signed the sheet is picked from the people list (no free text, no default)
+sql("insert into fabula.staff (id, full_name, role, app_role, active) values ('10000000-0000-4000-a000-0000000000ab', 'Aiuto Banco', 'commesso', 'banco', true) on conflict do nothing")
 srv = subprocess.Popen(['python3', '-m', 'http.server', '8770'], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(1)
 sess = {"access_token": JWT, "refresh_token": "r", "expires_at": int(time.time()) + 86400, "expires_in": 86400, "token_type": "bearer",
         "user": {"id": "00000000-0000-4000-a000-000000000001", "email": "casaro@test.it", "aud": "authenticated", "role": "authenticated"}}
@@ -32,7 +35,7 @@ yday = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=
 def code(pg, c): pg.evaluate("c => { document.getElementById('manual').value = c; document.getElementById('btn-manual').click(); }", c); pg.wait_for_timeout(1200)
 def fill_save(pg, day, hm, v, who=None, action=None):
     pg.fill('#pday', day); pg.fill('#ptime', hm)
-    if who is not None: pg.fill('#pwho', who)
+    pg.select_option('#pwho', who or 'Test Casaro')
     if pg.locator('select#v').count(): pg.select_option('#v', v)
     else: pg.fill('#v', v)
     if action: pg.fill('#action', action)
@@ -44,13 +47,13 @@ try:
     pg = ctx.new_page(); logs = []
     pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto('http://localhost:8770/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))}){op_js(sess)}")
     pg.goto('http://localhost:8770/index.html')
     pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(2500)
     code(pg, 'HACCP:')
     check('HACCP menu offers "Ricopia da foglio di carta"', 'Ricopia da foglio di carta' in pg.evaluate("document.getElementById('form').innerText"))
     code(pg, 'PAPER:')
-    check('paper menu lists the 10 sheet checks', pg.locator('#form button.nitem').count() == 10)
+    check('paper menu lists the 11 sheet checks (v0.96: milk temperature too)', pg.locator('#form button.nitem').count() == 11)
     code(pg, 'PAPER:CCP-COLD-1')
     fill_save(pg, yday, '07:30', '3.2', who='Aiuto Banco')
     row = sql(f"select source || '|' || to_char(logged_at at time zone 'Europe/Rome', 'YYYY-MM-DD HH24:MI') || '|' || operator || '|' || (corrective_action like 'Ricopiata dal foglio cartaceo da %')::text from fabula.haccp_log l join fabula.haccp_control_points cp on cp.id = l.control_point_id where cp.code = 'CCP-COLD-1' order by created_at desc limit 1")
@@ -75,7 +78,7 @@ try:
     code(pg, 'PAPER:CCP-COLD-1')
     old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=9)).strftime('%Y-%m-%d')
     pg.evaluate("d => { const e = document.getElementById('pday'); e.removeAttribute('min'); e.value = d; }", old)
-    pg.fill('#ptime', '08:00'); pg.fill('#v', '3'); pg.click('#btn-form-save'); pg.wait_for_timeout(1200)
+    pg.fill('#ptime', '08:00'); pg.fill('#v', '3'); pg.select_option('#pwho', 'Test Casaro'); pg.click('#btn-form-save'); pg.wait_for_timeout(1200)
     check('a sheet older than 7 days is refused', 'ultimi 7 giorni' in pg.evaluate("document.getElementById('toast').textContent"))
     pg.screenshot(path='/tmp/paper_menu.png', clip={'x': 0, 'y': 0, 'width': 800, 'height': 900})
     check('no page errors', not logs, ' | '.join(logs)[:300])

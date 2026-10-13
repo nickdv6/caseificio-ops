@@ -157,8 +157,8 @@ select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value 
 select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-MILK-ABX', p_value => 5, p_staff_id => '10000000-0000-4000-a000-0000000095a2')$q$) e_abx \gset
 select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-COLD-1', p_value => 3.5, p_staff_id => '10000000-0000-4000-a000-0000000095a2')$q$) e_cold \gset
 select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-COLD-2', p_value => 27, p_staff_id => '10000000-0000-4000-a000-0000000095a2')$q$) e_hot \gset
-select pg_temp.err($q$update fabula.production_batches set curd_ph = 52 where batch_lot = 'L95-C'$q$) e_ph \gset
-select pg_temp.err($q$update fabula.production_batches set curd_ph = 5.2 where batch_lot = 'L95-C'$q$) e_ph2 \gset
+select pg_temp.err($q$update fabula.production_batches set curd_ph = 52 where batch_lot = 'L95-E'$q$) e_ph \gset
+select pg_temp.err($q$update fabula.production_batches set curd_ph = 5.2 where batch_lot = 'L95-E'$q$) e_ph2 \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
 select pg_temp.ck('D-12 stretching 520 °C is refused with a sentence', :'e_520' = 'Valore impossibile: 520 °C per «Filatura: temperatura della pasta» (possibili 10–99). Controlla la virgola e riscrivi.', :'e_520');

@@ -66,7 +66,7 @@
   const phCheck = v => { if (v != null && v !== '' && (Number(v) < 3 || Number(v) > 8)) throw new Error(`pH della cagliata impossibile: ${itN(v)} (possibile da 3 a 8). Controlla la virgola e riscrivi.`); };
   function plausOps(ops) {
     for (const op of ops) {
-      if (op.rpc === 'log_ccp' && op.args) plausCheck(op.args.p_cp_code, op.args.p_value);
+      if ((op.rpc === 'log_ccp' || op.rpc === 'log_milk_check') && op.args) plausCheck(op.args.p_cp_code, op.args.p_value);
       if (op.table === 'production_batches' && op.row) phCheck(op.row.curd_ph);
     }
   }
@@ -91,7 +91,7 @@
   // and the queue id makes a re-send after a lost reply return the first result instead of writing again.
   // Items half-sent by an older version (st.done > 0) finish step by step as before.
   // single RPCs that write (dosing, steps, CCP, receipts) go the same way, so a lost reply never records them twice
-  const ONCE_RPCS = new Set(['log_ccp', 'receive_purchase_order', 'record_receipt_check', 'close_open_task', 'start_byproduct_batch', 'log_batch_step', 'record_batch_consumable']);
+  const ONCE_RPCS = new Set(['log_ccp', 'log_milk_check', 'receive_purchase_order', 'record_receipt_check', 'close_open_task', 'start_byproduct_batch', 'log_batch_step', 'record_batch_consumable']);
   let atomicOk = true;
   async function run(ops, st = { done: 0, out: [] }, qid = null) {
     if ((ops.length > 1 || (qid && ops[0] && ONCE_RPCS.has(ops[0].rpc))) && !(st.done > 0) && atomicOk) {
@@ -189,6 +189,7 @@
   });
 
   // ---------- Auth ----------
+  let justLoggedIn = false;
   async function init() {
     const session = await PERM.session(sb);
     // offline with an expired login: supabase keeps the stored session when the refresh fails for lack of network,
@@ -201,13 +202,14 @@
     if (!PERM.page('tablet')) return PERM.deny(sb, PERM.notForProfile());
     const { data } = PERM.offline ? { data: null } : await PERM.timeout(sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle().then(x => x, () => ({ data: null })));
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
-    $('who').textContent = staff.full_name;
+    if (justLoggedIn) { justLoggedIn = false; setOperator(staff, 'login'); }   // v0.96 (A-01): who typed the password records, until someone else badges
+    renderWho(); loadOperators().catch(() => {});
     show('home'); loadTasks(); setQueue(queue()); flush(); if (!PERM.offline) { warmRefs(); warmLots(); } setTimeout(checkin, 1500);
     if (PERM.offline) toast('Offline: profilo salvato su questo tablet. Le registrazioni vanno in coda e partono al ritorno della rete.');
   }
   $('btn-login').onclick = async () => {
     const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value });
-    if (error) return toast('Accesso negato: ' + error.message, 'err'); init();
+    if (error) return toast('Accesso negato: ' + error.message, 'err'); justLoggedIn = true; init();
   };
   PERM.forgot(sb, toast);
   // v0.95 (audit A-12): records still waiting would be sent later under the next person's login (wrong name, maybe refused):
@@ -224,7 +226,7 @@
       toast(`${n === 1 ? 'C\'è 1 registrazione non ancora inviata' : `Ci sono ${n} registrazioni non ancora inviate`}: collegati a internet prima di uscire, partono da sole. Se devi uscire per forza, tocca di nuovo «Esci» entro 10 secondi.`, 'err', 9000);
       return;
     }
-    logoutAsk = 0; staff = null; await sb.auth.signOut(); show('login');
+    logoutAsk = 0; staff = null; clearOperator(); await sb.auth.signOut(); show('login');
     if (n) toast(`${n === 1 ? '1 registrazione resta' : n + ' registrazioni restano'} su questo tablet: ${n === 1 ? 'parte' : 'partono'} con il prossimo accesso`, 'err', 6000);
   };
 
@@ -317,7 +319,9 @@
         const label = it.label_it || it.label || it.title_it || it.scan || '';
         if (!label) return;
         if (!it.scan) { const t = document.createElement('div'); t.className = 'code'; t.textContent = label; d.append(t); return; }
-        const b = document.createElement('button'); b.className = 'nitem'; b.textContent = label + ' ›'; b.onclick = () => handleCode(it.scan); d.append(b); });
+        const b = document.createElement('button'); b.className = 'nitem'; b.textContent = label + ' ›';
+        // v0.96 (A-01): «badge di uscita non passato» closes that person's shift (with a confirm); it never makes them the one recording
+        b.onclick = () => String(it.scan).startsWith('STAFF:') ? shiftOutCard(it.scan).catch(e => { toast(e.message, 'err'); show('home'); }) : handleCode(it.scan); d.append(b); });
       wrap.append(d);
     });
   }
@@ -326,6 +330,7 @@
     let { data, error } = await sb.rpc('floor_open_shifts');   // v0.59: works for floor profiles too (v_open_shifts needs personale ≥ 1)
     if (error) ({ data } = await sb.from('v_open_shifts').select('full_name, hours_so_far'));
     el.textContent = data && data.length ? 'In turno: ' + data.map(r => `${r.full_name} (${Number(r.hours_so_far).toLocaleString('it-IT')} h)`).join(', ') : 'Nessuno in turno · passa il badge per iniziare';
+    loadOperators().catch(() => {});   // v0.96: keeps the tablet's list of people (badge, PIN, in turno) fresh
   }
   async function loadTasks() {
     loadSellDown(); loadNotices(); loadShifts(); loadShipCount(); loadPlan();
@@ -357,7 +362,7 @@
   }
   async function closeTask(filter, scanEventId) {   // marks today's matching open task done — v0.59: one RPC, queued when offline, for the Agropoli day it was done
     try {
-      await save([{ rpc: 'close_open_task', args: { p_day: today(), p_code: filter.code || null, p_equipment_id: filter.equipment_id || null, p_control_point_id: filter.control_point_id || null, p_staff_id: staff.id, p_scan_event_id: scanEventId || null } }]);
+      await save([{ rpc: 'close_open_task', args: { p_day: today(), p_code: filter.code || null, p_equipment_id: filter.equipment_id || null, p_control_point_id: filter.control_point_id || null, p_staff_id: me().id, p_scan_event_id: scanEventId || null } }]);
     } catch (e) { console.warn('closeTask', e); }
   }
   // v0.59: reference data (machines, control points, milk suppliers, pest stations) is kept on the device, so the
@@ -439,7 +444,198 @@
     return v;
   }
   const cachedProduct = id => (lotView().products || []).find(p => p.id === id) || null;
-  const scanEvent = (code, action, extra = {}) => ({ table: 'scan_events', row: { code, action, staff_id: staff.id, device: CFG.device, ...extra } });
+  const scanEvent = (code, action, extra = {}) => ({ table: 'scan_events', row: { code, action, staff_id: me().id, device: CFG.device, ...extra } });
+
+  // ---------- Who is recording (v0.96, audit A-01) ----------
+  // The tablet stays logged in on one account; the person who records is the "operator": badge scan, or name + 4-digit PIN.
+  // It lapses after 15 minutes without a touch (not while a form or a dosing sequence is open) and at badge-out.
+  // Every record carries the operator (me()); the database also keeps the logged-in account (entered_by_id).
+  const OPK = 'perla_operator_v1', OPLK = 'perla_operators_v1', PINK = 'perla_pinok_v1', IDLE_MS = 15 * 60000;
+  let operator = null; try { operator = JSON.parse(localStorage.getItem(OPK) || 'null'); } catch {}
+  const readObj = k => { try { return JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch { return {}; } };
+  const writeObj = (k, o) => { try { localStorage.setItem(k, JSON.stringify(o)); } catch {} };
+  const me = () => operator || staff;                       // who did it (the logged-in account only as a fallback)
+  const opIdle = () => !operator || Date.now() - (operator.last || 0) > IDLE_MS;
+  const busy = () => ['form', 'dose'].some(v => { const e = $('v-' + v); return e && e.classList.contains('active'); });
+  function saveOp() { try { operator ? localStorage.setItem(OPK, JSON.stringify(operator)) : localStorage.removeItem(OPK); } catch {} renderWho(); }
+  function setOperator(p, via) { operator = { id: p.id, full_name: p.full_name, badge_code: p.badge_code || null, via, at: Date.now(), last: Date.now() }; saveOp(); }
+  function clearOperator() { operator = null; saveOp(); }
+  let opTouchSaved = 0;
+  const activeView = () => ((document.querySelector('.view.active') || {}).id || '').replace('v-', '');
+  document.addEventListener('pointerdown', e => {
+    if (!operator) return;
+    if (opIdle()) {
+      const v = activeView();
+      // a form left open for 15 minutes: whoever touches it says who they are first; at the vat (dosing) a long wait is normal
+      if (v === 'form' && !$('op-still')) { e.stopPropagation(); e.preventDefault(); askStillYou(); return; }
+      if (v !== 'dose') return;                       // Home / scan: lapsed, the next record asks
+    }
+    operator.last = Date.now(); if (Date.now() - opTouchSaved > 30000) { opTouchSaved = Date.now(); saveOp(); } }, true);
+  function askStillYou() {
+    const o = operator; if (!o) return;
+    const w = document.createElement('div'); w.id = 'op-still';
+    w.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px';
+    w.innerHTML = `<div class="card" style="max-width:520px;width:100%;background:var(--paper,#fff)"><div class="scan">Chi sta registrando?</div>
+      <p>Questo modulo è aperto da più di 15 minuti a nome di <b>${esc(o.full_name)}</b>.</p>
+      <button type="button" class="btn" id="op-still-yes">Sono ${esc(o.full_name)}: continuo</button>
+      <button type="button" class="btn secondary" id="op-still-no">Non sono io: annulla il modulo</button></div>`;
+    document.body.append(w);
+    $('op-still-yes').onclick = () => { operator.last = Date.now(); saveOp(); w.remove(); };
+    $('op-still-no').onclick = () => { w.remove(); clearOperator(); show('home'); loadTasks(); toast('Modulo annullato: alla prossima registrazione passa il tuo badge'); };
+  }
+  setInterval(() => { if (operator && opIdle() && !busy()) { clearOperator(); } }, 30000);
+  function renderWho() {
+    const w = $('who'); if (!w) return;
+    if (!staff) { w.textContent = ''; w.className = 'who'; w.style.display = 'none'; return; }
+    w.style.display = '';
+    const o = operator && (!opIdle() || busy()) ? operator : null;
+    w.textContent = o ? `👤 ${o.full_name} · cambia` : '👤 Chi registra? tocca qui';
+    w.className = 'who' + (o ? '' : ' none');
+    const a = $('acct'); if (a) a.textContent = `Tablet collegato come ${staff.full_name}`;
+  }
+  // the people who can record (kept on the tablet: a badge scan works offline too)
+  const opList = () => { const c = readObj(OPLK); return Array.isArray(c.list) ? c.list : []; };
+  async function loadOperators() {
+    if (navigator.onLine) {
+      const { data, error } = await live(sb.rpc('floor_operators'));
+      if (!error && Array.isArray(data)) { writeObj(OPLK, { at: Date.now(), list: data }); return data; }
+    }
+    return opList();
+  }
+  const markShift = (id, on) => { const c = readObj(OPLK); (c.list || []).forEach(p => { if (p.id === id) { p.on_shift = on; p.shift_since = on ? new Date().toISOString() : null; } }); writeObj(OPLK, c); };
+  // records need a person: returns true when it opened the "who is recording?" screen (then() runs after the choice)
+  function needOperator(then, why) {
+    if (operator && (!opIdle() || busy())) { operator.last = Date.now(); return false; }
+    if (operator) clearOperator();
+    pickOperator(then, why).catch(e => { toast(e.message, 'err'); show('home'); }); return true;
+  }
+  async function pickOperator(then, why) {
+    $('form').innerHTML = ''; current = { code: 'OPERATOR' };
+    const list = await loadOperators();
+    const bb = document.createElement('button'); bb.type = 'button'; bb.className = 'btn'; bb.textContent = '▣ Passa il badge';
+    bb.onclick = () => { scanTarget = code => badgeScan(code, then).catch(e => { toast(e.message, 'err'); show('form'); }); startScan(); };
+    $('form').append(bb);
+    const h = document.createElement('div'); h.className = 'code'; h.style.margin = '14px 0 4px'; h.textContent = 'Oppure tocca il tuo nome e scrivi il PIN:'; $('form').append(h);
+    if (!list.length) { const e = document.createElement('div'); e.className = 'code'; e.textContent = 'Elenco persone non ancora salvato su questo tablet (serve la rete una volta): passa il badge.'; $('form').append(e); }
+    list.forEach(p => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem';
+      b.innerHTML = `${esc(p.full_name)}<span class="code" style="display:block;font-weight:400">${p.on_shift ? 'in turno' + (p.shift_since ? ' dalle ' + hhmm(p.shift_since) : '') : 'non in turno'}${p.has_pin ? '' : ' · PIN non impostato: usa il badge'}</span>`;
+      b.onclick = () => p.has_pin ? askPin(p, then) : toast(`${p.full_name} non ha un PIN: passa il badge, oppure il titolare lo imposta in Configurazione → Utenti`, 'err', 5000);
+      $('form').append(b);
+    });
+    openForm('Chi sta registrando?', why || 'Ogni registrazione porta il nome di chi la fa: passa il tuo badge', async () => {});
+    $('btn-form-save').style.display = 'none';
+  }
+  function askPin(p, then) {
+    $('form').innerHTML = ''; current = { code: 'OPERATOR' };
+    const f = field('pin', `PIN di ${p.full_name} (4 cifre)`, 'password'); f.inputMode = 'numeric'; f.maxLength = 4; f.pattern = '[0-9]{4}'; f.autocomplete = 'off';
+    if (!p.on_shift) { const d = document.createElement('div'); d.className = 'check'; d.innerHTML = '<input type="checkbox" id="pin-shift" checked><label for="pin-shift" style="margin:0;text-transform:none;color:inherit;font-weight:400">Inizio anche il turno adesso (non risulti in turno)</label>'; $('form').append(d); }
+    openForm(p.full_name, 'Scrivi il tuo PIN', async () => {
+      const pin = String($('pin').value || '').trim(); if (!/^\d{4}$/.test(pin)) throw new Error('Il PIN è di 4 cifre');
+      await checkPin(p, pin);
+      setOperator(p, 'pin');
+      if ($('pin-shift') && $('pin-shift').checked) await clockIn(p, null);
+      toast(`Registra: ${p.full_name}`);
+      if (then) { setTimeout(then, 0); return 'stay'; }
+    });
+  }
+  // the PIN is checked on the server (5 wrong → 15 min lock). Offline only a PIN already checked online on THIS tablet
+  // (last 30 days) is accepted, from a salted hash kept on the tablet; 5 wrong offline lock it here for 15 minutes too.
+  async function pinKey(id, pin) {
+    if (!(window.crypto && crypto.subtle)) return null;
+    let salt = null; try { salt = localStorage.getItem('perla_dev_salt'); if (!salt) { salt = uuid(); localStorage.setItem('perla_dev_salt', salt); } } catch { return null; }
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
+    const h = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode(`${salt}:${id}`), iterations: 200000 }, base, 256);
+    return 'p2:' + [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');   // slow on purpose: a 4-digit PIN kept on the tablet
+  }
+  async function checkPin(p, pin) {
+    let r = null;
+    if (navigator.onLine) { const x = await live(sb.rpc('operator_pin_check', { p_staff_id: p.id, p_pin: pin })); if (!x.error) r = x.data; else if (!unreachable(x.error)) throw x.error; }
+    const store = readObj(PINK);
+    if (r) {
+      if (r.ok) { const k = await pinKey(p.id, pin); if (k) { store[p.id] = { k, at: Date.now(), f: 0 }; writeObj(PINK, store); } return true; }
+      if (r.why === 'locked') throw new Error(`PIN bloccato fino alle ${hhmm(r.until)} (troppi tentativi sbagliati): passa il badge`);
+      if (r.why === 'no_pin') throw new Error(`${p.full_name} non ha ancora un PIN: passa il badge`);
+      if (r.why === 'wrong') { $('pin').value = ''; throw new Error(`PIN sbagliato · ${r.left === 1 ? 'ancora 1 tentativo' : `ancora ${r.left} tentativi`}, poi si blocca per 15 minuti`); }
+      throw new Error('Persona non attiva: chiedi al titolare');
+    }
+    const c = store[p.id];
+    if (!c || Date.now() - c.at > 30 * 864e5) throw new Error('Senza rete posso controllare solo un PIN già usato su questo tablet: passa il badge');
+    if (c.lu && c.lu > Date.now()) throw new Error(`PIN bloccato fino alle ${hhmm(new Date(c.lu).toISOString())}: passa il badge`);
+    if ((await pinKey(p.id, pin)) !== c.k) {
+      c.f = (c.f || 0) + 1; if (c.f >= 5) { c.f = 0; c.lu = Date.now() + 15 * 60000; } store[p.id] = c; writeObj(PINK, store); $('pin').value = '';
+      throw new Error(c.lu > Date.now() ? 'PIN sbagliato 5 volte: bloccato per 15 minuti, passa il badge' : 'PIN sbagliato');
+    }
+    c.f = 0; c.lu = null; store[p.id] = c; writeObj(PINK, store); return true;
+  }
+  // badge scan: sets the operator; clocks in if not on shift. The same badge again (already recording) → card with «Fine turno».
+  // A second scan never clocks out by mistake (audit A-25).
+  async function badgeScan(code, then) {
+    let list = opList(), p = list.find(x => x.badge_code === code);
+    if (!p || navigator.onLine) { list = await loadOperators(); p = list.find(x => x.badge_code === code) || p; }
+    if (!p) throw new Error(`Badge sconosciuto: ${code}${navigator.onLine ? '' : ' (senza rete: elenco persone non ancora salvato su questo tablet)'}`);
+    if (!then && operator && operator.id === p.id && !opIdle() && p.on_shift) return badgeCard(p, code);
+    setOperator(p, 'badge');
+    if (!p.on_shift) { await clockIn(p, code); toast(`${p.full_name}: inizio turno ✓ · ora registri tu`); }
+    else toast(`Ora registra: ${p.full_name}`);
+    if (then) return then();
+    show('home'); loadTasks();
+  }
+  function badgeCard(p, code) {
+    $('form').innerHTML = ''; current = { code };
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = `<div class="scan">${esc(p.full_name)}</div><div>In turno${p.shift_since ? ' dalle ' + hhmm(p.shift_since) : ''} · stai registrando tu</div>`;
+    const out = document.createElement('button'); out.type = 'button'; out.className = 'btn warn'; out.textContent = 'Fine turno: esco';
+    out.onclick = async () => { out.disabled = true; try { await clockOut(p, code); } catch (e) { toast(e.message, 'err'); out.disabled = false; } };
+    const stay = document.createElement('button'); stay.type = 'button'; stay.className = 'btn secondary'; stay.textContent = 'Continuo a lavorare';
+    stay.onclick = () => { show('home'); loadTasks(); };
+    $('form').append(c, out, stay);
+    $('f-title').textContent = 'Badge'; $('f-sub').textContent = ''; $('btn-form-save').style.display = 'none'; show('form');
+    return 'stay';
+  }
+  async function shiftOutCard(code) {
+    let p = opList().find(x => x.badge_code === code);
+    if (!p || navigator.onLine) p = (await loadOperators()).find(x => x.badge_code === code) || p;
+    if (!p) throw new Error('Persona sconosciuta: ' + code);
+    $('form').innerHTML = ''; current = { code };
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = `<div class="scan">${esc(p.full_name)}</div><div>${p.on_shift ? 'Risulta ancora in turno' + (p.shift_since ? ' dalle ' + hhmm(p.shift_since) : '') : 'Non risulta in turno'}: il badge di uscita non è stato passato.</div>`;
+    const out = document.createElement('button'); out.type = 'button'; out.className = 'btn warn'; out.textContent = `Chiudi il turno di ${p.full_name} adesso`;
+    out.onclick = async () => { out.disabled = true; try { await clockOut(p, code); } catch (e) { toast(e.message, 'err'); out.disabled = false; } };
+    const no = document.createElement('button'); no.type = 'button'; no.className = 'btn secondary'; no.textContent = 'Lascia così';
+    no.onclick = () => { show('home'); loadTasks(); };
+    $('form').append(c, ...(p.on_shift ? [out] : []), no);
+    $('f-title').textContent = 'Fine turno'; $('f-sub').textContent = ''; $('btn-form-save').style.display = 'none'; show('form');
+  }
+  async function clockIn(p, code) {
+    await rpcNow('badge_in', { p_badge: code || null, p_staff_id: p.id, p_at: new Date().toISOString() });
+    markShift(p.id, true);
+    try { await save([scanEvent(code || 'PIN', 'task_done', { payload: { shift: 'in', via: code ? 'badge' : 'pin' } })]); } catch (e) { console.warn('scanEvent', e); }
+    loadShifts();
+  }
+  async function clockOut(p, code) {
+    const r = await rpcNow('badge_out', { p_badge: code || null, p_staff_id: p.id, p_at: new Date().toISOString() });
+    try { await save([scanEvent(code || 'PIN', 'task_done', { payload: { shift: 'out', hours: r && r.hours } })]); } catch (e) { console.warn('scanEvent', e); }
+    markShift(p.id, false);
+    if (operator && operator.id === p.id) clearOperator();
+    toast(r && r.hours != null ? `${p.full_name}: fine turno ✓ · ${Number(r.hours).toLocaleString('it-IT')} h` : `${p.full_name}: fine turno ✓${r ? '' : ' (parte appena c\'è rete)'}`);
+    show('home'); loadTasks();
+  }
+  $('who').onclick = () => {
+    if (!staff) return;
+    if (busy()) return toast('Finisci o annulla prima questa registrazione, poi cambia chi registra', 'err');
+    if (operator) clearOperator();
+    pickOperator(null, 'Chi registra da adesso? Passa il badge o tocca il tuo nome').catch(e => toast(e.message, 'err'));
+  };
+  // Home: every button that leads to a record asks first who is recording (Scansiona is free: a badge scan needs nobody)
+  $('v-home').addEventListener('click', e => {
+    const t = e.target.closest('button, .task, .nitem'); if (!t || !staff) return;
+    if (t.id === 'btn-scan' || t.id === 'btn-logout' || t.closest('#update-banner') || t.closest('#pending') || t.closest('#selldown')) return;
+    if (operator && !opIdle()) { operator.last = Date.now(); return; }
+    e.stopPropagation(); e.preventDefault();
+    needOperator(() => { show('home'); t.click(); });
+  }, true);
+
 
   // ---------- Scanner ----------
   let scanStarting = null, scanTarget = null;   // scanTarget: one-shot consumer of the next code (lot scan inside a form)
@@ -491,6 +687,7 @@
     $('form').innerHTML = ''; current = { code };
     const [kind, ...rest] = code.split(':'); const ref = rest.join(':');
     if (!allowed(/^[LR]\d{8}-[A-Z]$/.test(kind) && !rest.length ? 'LOT' : kind)) return;
+    if (kind !== 'STAFF' && needOperator(() => handleCode(code), 'Prima di registrare: chi sei? Passa il badge o tocca il tuo nome')) return;   // v0.96 (audit A-01)
     try {
       if (kind === 'EQ') return await stepEquipment(ref);
       if (kind === 'DDT') return await stepMilk(ref);
@@ -507,13 +704,7 @@
       if (kind === 'SAMPLE') return await stepSample(ref);
       if (kind === 'HACCP') return stepHaccpMenu();
       if (kind === 'PAPER') return ref ? await stepPaper(ref) : stepPaperMenu();
-      if (kind === 'STAFF') {                       // one scan = clock in, next scan = clock out
-        const { data: r, error } = await sb.rpc('toggle_shift', { p_badge: code });
-        if (error) throw error;
-        await save([scanEvent(code, 'task_done', { payload: { shift: r.action, hours: r.hours } })]);
-        toast(r.action === 'in' ? `${r.staff}: inizio turno ✓` : `${r.staff}: fine turno ✓ · ${Number(r.hours).toLocaleString('it-IT')} h`);
-        loadShifts(); return show('home');
-      }
+      if (kind === 'STAFF') return await badgeScan(code);   // v0.96 (A-01/A-25): the badge says who records; clocks in if needed, never out by mistake
       if (!rest.length && /^[LR]\d{8}-[A-Z]$/.test(kind)) return await stepLot(kind);   // v0.54: a lot number typed by hand (L20261005-A) without LOT:
       toast('Codice non riconosciuto: ' + code, 'err'); show('home');
     } catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
@@ -560,7 +751,7 @@
       const v = val('temp'); const bad = cp && ((cp.max_value != null && v > cp.max_value) || (cp.min_value != null && v < cp.min_value));
       const warn = cp && ((cp.warn_max != null && v > cp.warn_max) || (cp.warn_min != null && v < cp.warn_min));
       const ops = [scanEvent(current.code, 'temp_check', { equipment_id: eq.id, payload: { temp_c: v } })];
-      if (cp) ops.push({ rpc: 'log_ccp', args: { p_cp_code: cp.code, p_value: v, p_staff_id: staff.id, p_action: val('action'), p_source: 'tablet', p_equipment_code: eq.code } });   // server opens the NC
+      if (cp) ops.push({ rpc: 'log_ccp', args: { p_cp_code: cp.code, p_value: v, p_staff_id: me().id, p_action: val('action'), p_source: 'tablet', p_equipment_code: eq.code } });   // server opens the NC
       await save(ops); await closeTask({ equipment_id: eq.id });
       toast(bad ? 'Registrato come NON CONFORMITÀ' : warn ? 'Registrato · ALLERTA: ricontrolla entro 1 ora' : 'Registrato ✓', bad || warn ? 'err' : 'ok');
     });
@@ -578,7 +769,7 @@
   function stepMeter(meter) {
     field('reading', meter === 'elec_main' ? 'kWh sul contatore' : 'Lettura', 'number', { step: '1' });
     openForm('Contatore', meter, async () => {
-      await save([scanEvent(current.code, 'task_done'), { table: 'meter_readings', row: { meter, reading: val('reading'), unit: meter === 'elec_main' ? 'kWh' : 'm3', read_by_id: staff.id } }]);
+      await save([scanEvent(current.code, 'task_done'), { table: 'meter_readings', row: { meter, reading: val('reading'), unit: meter === 'elec_main' ? 'kWh' : 'm3', read_by_id: me().id } }]);
       await closeTask({ code: 'T-KWH' }); toast('Lettura registrata ✓');
     });
   }
@@ -591,7 +782,7 @@
     openForm('Sanificazione fine turno', 'Spunta tutto prima di salvare', async () => {
       const done = items.filter((_, k) => $('c' + k).checked);
       if (done.length < items.length) { toast('Mancano: ' + items.filter((_, k) => !$('c' + k).checked).join(', '), 'err'); throw new Error('incompleto'); }
-      await save([scanEvent(current.code, 'clean_done', { payload: { items: done } }), { table: 'haccp_log', row: { control_point_id: cp.id, result: 'ok', operator: staff.full_name, operator_id: staff.id, source: 'tablet' } }]);
+      await save([scanEvent(current.code, 'clean_done', { payload: { items: done } }), { table: 'haccp_log', row: { control_point_id: cp.id, result: 'ok', operator: me().full_name, operator_id: me().id, source: 'tablet' } }]);
       await closeTask({ control_point_id: cp.id }); toast('Sanificazione registrata ✓');
     });
   }
@@ -642,7 +833,24 @@
     const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
     const { data: cpT } = await cached('cp_CCP-MILK-TEMP', () => sb.from('haccp_control_points').select('*').eq('code', 'CCP-MILK-TEMP').maybeSingle());
     const tMax = Number(cpT?.max_value ?? 8), tWarn = Number(cpT?.warn_max ?? 6);
-    field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' }); field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
+    field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' });
+    // v0.96 (audit FARM-02): with a farm load the Masseria's kg stay as written, and the reception scale gets its own field;
+    // over the tolerance (2 %) a reason is required and the dairy's weight is the one that counts
+    const { data: tolRow } = await cached('set_milk_tol', () => sb.from('settings').select('value').eq('key', 'milk.weight_tolerance_pct').maybeSingle());
+    const tolPct = Number((tolRow || {}).value) || 2;
+    const kgh = field('kgh', 'kg pesati qui (bilancia ricezione)', 'number', { required: false }); kgh.step = '0.1'; kgh.placeholder = 'leggi la bilancia';
+    const kgInfo = document.createElement('div'); kgInfo.className = 'limit'; kgInfo.id = 'kgh-info'; $('form').append(kgInfo);
+    const kgWhy = field('kgwhy', 'Perché i kg sono diversi?', 'text', { required: false }); kgWhy.placeholder = 'es. latte rimasto nella cisterna, la Masseria ha sbagliato a scrivere';
+    const kgEls = [kgh.previousElementSibling, kgh, kgInfo], whyEls = [kgWhy.previousElementSibling, kgWhy];
+    const kgDiff = () => { const x = ships.find(y => y.id === (shipSel && shipSel.value)), d = val('kgh');
+      if (!x || d == null || !(Number(x.kg) > 0)) return null; const pct = (d - Number(x.kg)) / Number(x.kg) * 100; return { x, d, pct, over: Math.abs(pct) > tolPct }; };
+    const showDiff = () => { const k = kgDiff(), over = !!(k && k.over);
+      whyEls.forEach(e => { e.style.display = over ? '' : 'none'; }); kgWhy.required = over;
+      kgInfo.textContent = !k ? '' : `Masseria ${Number(k.x.kg).toLocaleString('it-IT')} kg · pesati qui ${k.d.toLocaleString('it-IT')} kg: ${k.pct > 0 ? '+' : ''}${k.pct.toLocaleString('it-IT', { maximumFractionDigits: 1 })} %`
+        + (over ? ` — oltre il ${tolPct.toLocaleString('it-IT')} %: vale il peso del caseificio, scrivi il motivo (la Masseria e l'ufficio lo vedono)` : ' — vale il peso della Masseria');
+      kgInfo.style.color = over ? '' : 'var(--muted)'; };
+    kgh.addEventListener('input', showDiff);
+    field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
     field('abx', 'Test antibiotici (CCP 1b)', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Test rapido prima dello scarico' });
     field('fat', 'Grasso % (se noto)', 'number', { step: '0.01', required: false }); field('prot', 'Proteine % (se note)', 'number', { step: '0.01', required: false }); field('scc', 'Cellule somatiche /ml (da analisi, se note)', 'number', { step: '1000', required: false }); field('photo', 'Foto DDT', 'file', { required: false });
     const applyShip = () => {                                              // a chosen shipment fixes supplier, lot and kg
@@ -655,6 +863,8 @@
         if (!need && x.ddt_number && !ddtIn.value) { ddtIn.value = x.ddt_number; ddtIn.dataset.auto = x.ddt_number; } }
       else if (kgIn.readOnly) { kgIn.value = ''; lotF.value = ''; lotF.placeholder = ''; }
       [kgIn, lotF].forEach(e => { e.readOnly = !!x; e.style.background = x ? '#f1efe9' : ''; });
+      if (kgIn.previousElementSibling) kgIn.previousElementSibling.textContent = x ? 'kg scritti dalla Masseria' : 'kg (bilancia)';   // v0.96 (FARM-02)
+      kgEls.forEach(e => { e.style.display = x ? '' : 'none'; }); kgh.required = !!x; if (!x) { kgh.value = ''; kgWhy.value = ''; } showDiff();
       ddtIn.required = !x;                                                 // the farm may not have a DDT number for it
       if (chk) { chk.required = need; chkEls.forEach(e => { if (e) e.style.display = need ? '' : 'none'; }); if (!need) chk.value = ''; chkErr.textContent = ''; }
       if (card) { card.style.display = x ? '' : 'none';
@@ -695,19 +905,25 @@
           k++; lotIn = base + '-' + today().slice(8, 10) + today().slice(5, 7) + (k > 1 ? '-' + k : ''); }
         if (lotIn !== base) { $('lot').value = lotIn; toast(`Lotto ${base} già usato: registrato come ${lotIn}`, 'err'); }
       }
+      const kd = shipX ? kgDiff() : null;                                 // v0.96 (FARM-02)
+      if (shipX && !kd) { toast('Pesa il latte e scrivi i kg della bilancia', 'err'); throw new Error('kgh'); }
+      if (kd && kd.over && String(val('kgwhy') || '').trim().length < 3) { toast('I kg sono diversi da quelli della Masseria: scrivi il motivo', 'err'); throw new Error('kgwhy'); }
+      const kgEntered = kd ? (kd.over ? kd.d : Number(shipX.kg)) : val('kg');
       const hot = val('temp') > tMax, abxPos = val('abx') === '1', accepted = !hot && !abxPos;
       const why = [hot ? `temperatura > ${tMax} °C` : null, abxPos ? 'test antibiotici positivo' : null].filter(Boolean).join(' · ');
-      const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: val('kg'), temp_c: val('temp'), abx: Number(val('abx')), shipment_id: shipId } }),
-        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour12: false }), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: val('kg'), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo || null, accepted, rejection_reason: accepted ? null : why, received_by: staff.full_name, received_by_id: staff.id, source: 'tablet', shipment_id: shipId } },
-        { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + lotIn, lot_number: lotIn, milk_intake_id: '$1.id', printed_by_id: staff.id } },
-        { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: staff.id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
-        { rpc: 'log_ccp', args: { p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: staff.id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
+      const ops = [scanEvent(current.code, 'milk_receive', { payload: { kg: kgEntered, farm_kg: kd ? Number(shipX.kg) : null, dairy_kg: kd ? kd.d : null, temp_c: val('temp'), abx: Number(val('abx')), shipment_id: shipId } }),
+        { table: 'milk_intake', row: { intake_date: today(), intake_time: new Date().toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour12: false }), supplier_id: val('supplier'), milk_lot: lotIn, qty_kg: kgEntered, ...(kd ? { dairy_kg: kd.d, weight_note: String(val('kgwhy') || '').trim() || null } : {}), temperature_c: val('temp'), fat_pct: val('fat'), protein_pct: val('prot'), scc_cells_ml: val('scc') == null ? null : Math.round(val('scc')), ddt_number: ddtNo || null, accepted, rejection_reason: accepted ? null : why, received_by: me().full_name, received_by_id: me().id, source: 'tablet', shipment_id: shipId } },
+        { table: 'labels', row: { kind: 'milk_lot', code: 'LOT:' + lotIn, lot_number: lotIn, milk_intake_id: '$1.id', printed_by_id: me().id } },
+        // v0.96 (audit A-04): both checks are linked to this delivery ($1 = the milk_intake row above)
+        { rpc: 'log_milk_check', args: { p_milk_intake_id: '$1.id', p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: me().id, p_action: hot ? 'latte respinto' : null, p_source: 'tablet', p_equipment_code: 'TERM-01' } },
+        { rpc: 'log_milk_check', args: { p_milk_intake_id: '$1.id', p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: me().id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: 'tablet' } }];
       await save(ops);
-      const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${(ddtNo || lotIn).replace(/[^A-Za-z0-9-]/g, '_')}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: staff.id }); }
+      const f = $('photo').files[0]; if (f && navigator.onLine) { const path = `ddt/${today()}_${(ddtNo || lotIn).replace(/[^A-Za-z0-9-]/g, '_')}.jpg`; const { error } = await sb.storage.from('documents').upload(path, f, { upsert: true }); if (!error) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), uploaded_by_id: me().id }); }
       toast(accepted ? (val('temp') > tWarn ? `Latte accettato · ${val('temp')} °C: iniziare la lavorazione entro 2 ore` : 'Latte registrato ✓') : 'Latte RIFIUTATO: ' + why, accepted && val('temp') <= tWarn ? 'ok' : 'err');
-      const lotv = lotIn, kgv = val('kg'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
+      const lotv = lotIn, kgv = Number(kgEntered).toLocaleString('it-IT'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
+      const wLine = kd && kd.over ? `Pesati qui ${kd.d.toLocaleString('it-IT')} kg, la Masseria ne aveva scritti ${Number(shipX.kg).toLocaleString('it-IT')}: vale il peso del caseificio (la Masseria e l'ufficio lo vedono)` : null;
       if (!accepted) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, why, 'Isola il latte e avvisa la Masseria e il responsabile.'], []);
-      return showDone('✓ Latte registrato', [`Lotto ${lotv} · ${kgv} kg · ${sup}`, 'Attacca l\'etichetta al tank: la scansioni per avviare la caldaia.'],
+      return showDone('✓ Latte registrato', [`Lotto ${lotv} · ${kgv} kg · ${sup}`, wLine, 'Attacca l\'etichetta al tank: la scansioni per avviare la caldaia.'].filter(Boolean),
         [['🖨 Stampa etichetta lotto latte', labelUrl(lotv, 'Latte di bufala · ' + sup, 'arrivo ' + ddmm(today()), 1)]]);
     });
   }
@@ -761,13 +977,21 @@
   async function stepBatchWork(b) {
     const presets = await loadPresets();
     const preset = b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id;
-    const make = processSteps(presets, preset, 'make');
-    if (!make.length) return stepBatchEnd(b);
+    // v0.96 (audit A-03): an interrupted START is resumed too (pasteurisation CCP 2 included), not only the working steps
+    const start = processSteps(presets, preset, 'start'), make = processSteps(presets, preset, 'make');
     let { data: done, error: de } = b.id ? await live(sb.from('batch_step_logs').select('step_id').eq('batch_id', b.id)) : { data: null, error: { name: 'Timeout' } };
     if (de || !done) done = lotView().steps.filter(x => lotEq(x.batch_lot, b.batch_lot));   // offline: copy + queued steps
     else done = [...done, ...lotView().steps.filter(x => lotEq(x.batch_lot, b.batch_lot))];
     const doneIds = new Set((done || []).map(d => d.step_id));
-    const left = make.filter(st => !doneIds.has(st.step_id));
+    // start doses not yet confirmed (online only: offline we can't know what was dosed, so none is asked twice)
+    let doses = [];
+    const dc = b.id ? await live(sb.from('batch_consumables').select('products!inner(sku)').eq('batch_id', b.id)) : { error: true };
+    if (!dc.error && dc.data) {
+      const doneSku = new Set([...dc.data.map(x => x.products.sku), ...queuedOps().filter(o => o.rpc === 'record_batch_consumable' && o.args && lotEq(o.args.p_batch_lot || '', b.batch_lot)).map(o => o.args.p_sku)]);
+      doses = (await doseSteps(b.product_id, 'start', { milk: b.milk_in_kg })).filter(d => !doneSku.has(d.sku))
+        .map(d => ({ ...d, instruction_it: ['Ripresa dopo un\'interruzione: se l\'hai già messo, conferma solo la quantità messa.', d.instruction_it].filter(Boolean).join(' ') }));
+    }
+    const left = [...mergeSteps(doses, start.filter(st => !doneIds.has(st.step_id))), ...make.filter(st => !doneIds.has(st.step_id))];
     if (!left.length) return stepBatchEnd(b);
     runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo l\'etichetta sul tank'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
@@ -810,7 +1034,7 @@
       const vs = field('valve', 'Pastorizzatore: verifica di inizio giornata (non ancora registrata oggi)', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']], limit: 'NON ok = non pastorizzare: chiama il responsabile' });
       vs.onchange = async () => {                      // NON ok: recorded at once (non-conformity) and no batch
         if (vs.value !== '1') return;
-        try { await rpcNow('log_ccp', { p_cp_code: 'PRP-PAST-VALVE', p_value: 1, p_staff_id: staff.id, p_action: 'Verifica non ok all\'inizio lotto: lotto non avviato', p_source: 'tablet' }); } catch (e) { console.warn(e); }
+        try { await rpcNow('log_ccp', { p_cp_code: 'PRP-PAST-VALVE', p_value: 1, p_staff_id: me().id, p_action: 'Verifica non ok all\'inizio lotto: lotto non avviato', p_source: 'tablet' }); } catch (e) { console.warn(e); }
         toast('Pastorizzatore NON ok: lotto non avviato. Chiama il responsabile.', 'err'); show('home'); loadTasks();
       };
     }
@@ -834,10 +1058,10 @@
       if (kg > leftKg * 1.02) throw new Error(`Sul latte ${lot} restano ${fmtKg(leftKg)} kg: hai scritto ${fmtKg(kg)} kg. Controlla il lotto sull'etichetta e i kg`);
       batchLot = await nextLot();                            // another tablet may have opened a lot meanwhile (offline: the device copy)
       const extra = [];
-      if (!valveDone) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'PRP-PAST-VALVE', p_value: 0, p_staff_id: staff.id, p_source: 'tablet' } });
-      if (pastIn.required && val('past') != null) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('past'), p_staff_id: staff.id, p_batch_lot: batchLot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });
+      if (!valveDone) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'PRP-PAST-VALVE', p_value: 0, p_staff_id: me().id, p_source: 'tablet' } });
+      if (pastIn.required && val('past') != null) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('past'), p_staff_id: me().id, p_batch_lot: batchLot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });
       await save([scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset } }),
-        { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: staff.full_name, casaro_id: staff.id, source: 'tablet' } },
+        { table: 'production_batches', row: { batch_date: today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: new Date().toISOString(), casaro: me().full_name, casaro_id: me().id, source: 'tablet' } },
         { table: 'batch_milk_inputs', row: { batch_id: '$1.id', milk_intake_id: milk.id, qty_kg: kg } },
         { table: 'stock_moves', row: { product_id: await rawMilkId(), lot_number: lot, qty: -kg, move_type: 'production_in', batch_id: '$1.id', source: 'tablet' } }, ...extra]);
       if (pre) planStarted(pre, kg);
@@ -850,7 +1074,7 @@
   // v0.95 (audit A-16): ricotta from a closed mozzarella lot's whey — at its close, or later from Home (Produzione di oggi)
   async function runRicotta(parentLot, byp, whey, doneTitle, doneLines, links) {
     const ricLot = 'R' + parentLot.slice(1);
-    await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: parentLot, p_whey_kg: whey, p_staff_id: staff.id } }]);
+    await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: parentLot, p_whey_kg: whey, p_staff_id: me().id } }]);
     const done = () => { toast(`Ricotta ${ricLot} avviata ✓ · stampa l'etichetta per il tino`);
       return showDone(doneTitle, [...doneLines, `Ricotta ${ricLot} avviata con ${fmtKg(whey)} kg di siero. Attacca l'etichetta al tino: a fine ricotta scansionala per chiudere il lotto (le etichette delle fuscelle si stampano alla chiusura).`],
         [...links, ['🖨 Stampa etichetta tino ricotta', labelUrl(ricLot, 'Ricotta in lavorazione', 'tino · ' + ddmm(today()), 1)]]); };   // v0.54: the tino gets its own label to scan at close
@@ -888,6 +1112,9 @@
     // v0.80: the lot's critical point (mozzarella CCP 3 stretching, ricotta CCP 4) asked here if it is not recorded yet
     const ccpCode = b.input_kind === 'whey' ? 'CCP-RIC' : 'CCP-STRETCH';
     const ccpDone = await ccpRecorded(ccpCode, b.batch_lot, b.id);
+    // v0.96 (audit A-03): pasteurisation too — a start interrupted before CCP 2 must not close without it
+    const pastDone = b.input_kind === 'whey' ? true : await ccpRecorded('CCP-PAST', b.batch_lot, b.id);
+    if (!pastDone) field('pastv', 'Temperatura di pastorizzazione (CCP 2), °C · non ancora registrata', 'number', { step: '0.1', limit: 'Valore letto all\'inizio del lotto; se era scritto sul foglio, ricopialo qui' });
     if (!ccpDone) field('ccpv', b.input_kind === 'whey' ? 'Temperatura di affioramento (CCP 4), °C · non ancora registrata' : 'Temperatura della pasta filata (CCP 3), °C · non ancora registrata', 'number', { step: '0.1', limit: 'Valore letto sul termometro; se era scritto sul foglio, ricopialo qui' });
     field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
     if (byp) {                                       // v0.95 (audit A-16): an explicit choice, not an optional field that is easy to leave empty
@@ -897,7 +1124,7 @@
       ric.addEventListener('change', tog); tog();
     }
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
-      phCheck(val('ph')); if (!ccpDone) plausCheck(ccpCode, val('ccpv'));   // v0.95 (audit D-12): before the packing steps, not after them
+      phCheck(val('ph')); if (!ccpDone) plausCheck(ccpCode, val('ccpv')); if (!pastDone) plausCheck('CCP-PAST', val('pastv'));   // v0.95 (audit D-12): before the packing steps, not after them
       const ricNo = !!byp && val('ricyn') === 'no';
       if (byp && val('ricyn') === 'si' && !(val('whey') > 0)) throw new Error('Scrivi i kg di siero per la ricotta');
       const out = val('out'), ph = val('ph'), n = val('n'), whey = byp && val('ricyn') === 'si' ? val('whey') : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
@@ -913,9 +1140,10 @@
         const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
           { table: 'production_batches', update: bKey, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString(), ...(ricNo ? { whey_kg: 0 } : {}) } },   // whey_kg 0 = "no ricotta" was chosen
           { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: bId, source: 'tablet' } }];
-        if (!ccpDone && val('ccpv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: ccpCode, p_value: val('ccpv'), p_staff_id: staff.id, p_batch_lot: b.batch_lot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });   // v0.80 (after the update: ids above stay $1)
+        if (!pastDone && val('pastv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('pastv'), p_staff_id: me().id, p_batch_lot: b.batch_lot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });   // v0.96 (A-03)
+        if (!ccpDone && val('ccpv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: ccpCode, p_value: val('ccpv'), p_staff_id: me().id, p_batch_lot: b.batch_lot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });   // v0.80 (after the update: ids above stay $1)
         if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)
-          ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: bId, qty_printed: n || 1, printed_by_id: staff.id } });
+          ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: bId, qty_printed: n || 1, printed_by_id: me().id } });
         await save(ops);
         toast(`Resa ${y}% · ${out} kg ✓`);
         if (whey > 0) return startRicotta();
@@ -946,7 +1174,7 @@
       if (!val('cust')) { toast('Scegli il cliente', 'err'); throw new Error('cliente'); }
       const ddt = 'DDT-' + today().replace(/-/g, '') + '-' + Date.now().toString().slice(-4);
       await save([scanEvent(current.code, 'pick', { payload: { kg, mode: 'ship' } }),
-        { table: 'shipments', row: { ddt_number: ddt, customer_id: val('cust'), status: 'picked', driver_id: staff.id } },
+        { table: 'shipments', row: { ddt_number: ddt, customer_id: val('cust'), status: 'picked', driver_id: me().id } },
         { table: 'shipment_lines', row: { shipment_id: '$1.id', product_id: prod.id, lot_number: b.batch_lot, qty: kg } },
         { table: 'stock_moves', row: { product_id: prod.id, lot_number: b.batch_lot, qty: -kg, move_type: 'sale', source: 'tablet' } }]);
       toast(`Spedizione ${ddt} · ${kg} kg ✓`);
@@ -982,11 +1210,11 @@
       if (chk === '') { toast('Registra il controllo all\'arrivo', 'err'); throw new Error('chk'); }
       if (chk === '0' && !chkNote) { toast('Scrivi cosa non va nella merce', 'err'); throw new Error('chknote'); }
       await save([scanEvent(current.code, 'goods_receive', { payload: { po_number: po.po_number, ddt, lines, check_ok: chk === '1', check_note: chkNote || null } }),
-        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: staff.id, p_ddt: ddt } },
-        { rpc: 'record_receipt_check', args: { p_po_number: po.po_number, p_ok: chk === '1', p_note: chkNote || null, p_staff_id: staff.id, p_ddt: ddt } }]);
+        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: me().id, p_ddt: ddt } },
+        { rpc: 'record_receipt_check', args: { p_po_number: po.po_number, p_ok: chk === '1', p_note: chkNote || null, p_staff_id: me().id, p_ddt: ddt } }]);
       const f = $('photo').files[0];
       if (f && navigator.onLine) { const path = `ddt/${today()}_${po.po_number}.jpg`; const { error: ue } = await sb.storage.from('documents').upload(path, f, { upsert: true });
-        if (!ue) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), related_table: 'purchase_orders', related_id: po.id, uploaded_by_id: staff.id }); }
+        if (!ue) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), related_table: 'purchase_orders', related_id: po.id, uploaded_by_id: me().id }); }
       const tot = lines.reduce((a, x) => a + x.qty, 0);
       if (chk === '0') toast(`Ricevuto ${po.po_number} · merce NON conforme: isolala con il cartello e avvisa il responsabile`, 'err');
       else toast(`Ricevuto ${po.po_number} · ${tot.toLocaleString('it-IT')} pezzi/kg in magazzino ✓`);
@@ -996,7 +1224,7 @@
   // 12 — weekly stock count: sheet prefilled with the system quantity; change only what differs
   async function stepStockCount() {
     $('form').innerHTML = ''; current = { code: 'COUNT:' };
-    const { data: sheet, error } = await sb.rpc('start_stock_count', { p_staff_id: staff.id });
+    const { data: sheet, error } = await sb.rpc('start_stock_count', { p_staff_id: me().id });
     if (error) { toast('Conta non disponibile offline', 'err'); return; }
     const lines = sheet.lines || [];
     let lastKind = '';
@@ -1011,7 +1239,7 @@
       const changed = [...$('form').querySelectorAll('input[data-line]')].filter(i => i.value !== '' && Number(i.value) !== Number(i.dataset.sys)).map(i => ({ line_id: i.dataset.line, counted_qty: Number(i.value) }));
       const big = changed.filter(c => { const i = $('form').querySelector(`input[data-line="${c.line_id}"]`); const sys = Number(i.dataset.sys); return sys > 0 && Math.abs(c.counted_qty - sys) / sys > 0.5; });
       if (big.length && !current.bigOk) { current.bigOk = true; toast(`${big.length} righe con differenza oltre il 50%: ricontrolla e premi Salva di nuovo`, 'err'); throw new Error('check'); }
-      const { data, error: pe } = await sb.rpc('post_stock_count', { p_count_id: sheet.count_id, p_lines: changed, p_staff_id: staff.id, p_note: val('note') || null });
+      const { data, error: pe } = await sb.rpc('post_stock_count', { p_count_id: sheet.count_id, p_lines: changed, p_staff_id: me().id, p_note: val('note') || null });
       if (pe) { toast(pe.message, 'err'); throw pe; }
       await save([scanEvent('COUNT:', 'task_done', { payload: { count_id: sheet.count_id, changed: data.lines_changed } })]);
       await closeTask({ code: 'T-COUNT' });
@@ -1037,7 +1265,7 @@
     openForm('Reflui', 'Una riga per ogni ritiro o scarico. Allevamento e trasportatore richiedono il documento.', async () => {
       if (needDoc() && !val('doc')) { toast('Serve il numero del documento per allevamento o trasportatore', 'err'); throw new Error('doc'); }
       await save([scanEvent('EFFL:', 'task_done', { payload: { kind: val('kind'), qty: val('qty'), unit: val('unit'), destination: val('dest') } }),
-        { table: 'effluent_log', row: { kind: val('kind'), qty: val('qty'), unit: val('unit'), destination: val('dest'), recipient: val('recipient') || null, document_ref: val('doc') || null, notes: val('note') || null, staff_id: staff.id } }]);
+        { table: 'effluent_log', row: { kind: val('kind'), qty: val('qty'), unit: val('unit'), destination: val('dest'), recipient: val('recipient') || null, document_ref: val('doc') || null, notes: val('note') || null, staff_id: me().id } }]);
       toast('Refluo registrato ✓');
     });
   }
@@ -1128,7 +1356,7 @@
       const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: Number(r.q.value) || 0, weighed: r.q.dataset.weighed === '1' })).filter(x => x.qty > 0);
       if (!lines.length) { toast('Nessuna quantità da spedire', 'err'); throw new Error('qty'); }
       if (lines.some(x => !x.lot_number)) { toast('Manca il lotto su una riga', 'err'); throw new Error('lot'); }
-      const { data, error } = await sb.rpc('pack_order', { p_order_id: o.order_id, p_lines: lines, p_staff_id: staff.id, p_gross_kg: val('gross'), p_carrier: val('carrier') || null, p_tracking: val('tracking') || null, p_notes: val('note') || null, p_force: current.force });
+      const { data, error } = await sb.rpc('pack_order', { p_order_id: o.order_id, p_lines: lines, p_staff_id: me().id, p_gross_kg: val('gross'), p_carrier: val('carrier') || null, p_tracking: val('tracking') || null, p_notes: val('note') || null, p_force: current.force });
       if (error) { toast(error.message, 'err'); throw error; }
       if (data && data.needs_confirm) { current.force = true;
         toast((data.reasons && data.reasons.length ? 'Da confermare: ' + data.reasons.join('; ') : `Pesati ${fmtKg(data.packed_kg)} kg contro ${fmtKg(data.ordered_kg)} ordinati (${data.variance_pct > 0 ? '+' : ''}${data.variance_pct}%)`) + '. Ricontrolla e premi Salva di nuovo per confermare', 'err'); throw new Error('confirm'); }
@@ -1249,7 +1477,7 @@
         $('d-diff').textContent = 'Ho usato una quantità diversa'; $('d-diff').style.display = ''; $('d-alt-l').textContent = 'Quantità usata'; $('d-alt-u').textContent = disp(s).u; $('d-alt-in').step = '0.1'; $('d-ok').textContent = '✓ Fatto';
       }
       $('d-instr').textContent = s.instruction_it || '';
-      $('d-skip').style.display = opts.skippable ? '' : 'none'; $('d-pause').style.display = opts.skippable ? '' : 'none';
+      $('d-skip').style.display = opts.skippable ? '' : 'none'; $('d-pause').style.display = '';   // v0.96 (audit A-03): every sequence can be left and resumed
       $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-warn').textContent = ''; $('d-ok').style.display = '';
       if (s.kind === 'process' && s.ccp) {             // v0.80: CCP = write the value read on the thermometer; no one-tap "Fatto · target", no skip
         $('d-ok').style.display = 'none'; $('d-diff').style.display = 'none'; $('d-skip').style.display = 'none';
@@ -1269,15 +1497,15 @@
     const next = async q => {
       const s = steps[k]; btns.forEach(b => b.disabled = true);
       try {
-        if (s.kind === 'process') await save([{ rpc: 'log_batch_step', args: { p_batch_lot: batchLot, p_step_id: s.step_id, p_actual: q, p_staff_id: staff.id } }]);
-        else await save([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: staff.id } }]);
+        if (s.kind === 'process') await save([{ rpc: 'log_batch_step', args: { p_batch_lot: batchLot, p_step_id: s.step_id, p_actual: q, p_staff_id: me().id } }]);
+        else await save([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: me().id } }]);
       } finally { btns.forEach(b => b.disabled = false); }
       k++; if (k < steps.length) return render();
       return finish();
     };
     $('d-ok').onclick = () => { if (k >= steps.length) return finish(); const s = steps[k]; if (s.kind === 'process' && s.ccp) { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); return; } next(s.kind === 'process' ? s.target : s.qty); };
     $('d-diff').onclick = () => { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); };
-    $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona di nuovo il lotto per continuare'); show('home'); loadTasks(); };
+    $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona di nuovo l\'etichetta del tank o del lotto per continuare da qui', 'ok', 5000); show('home'); loadTasks(); };
     $('d-skip').onclick = () => { if (steps[k] && steps[k].kind === 'process' && steps[k].ccp) return toast('Punto critico: non si salta, scrivi il valore misurato', 'err'); k++; if (k < steps.length) return render(); if (opts.onSkipAll && steps.every(st => st.kind === 'process')) { $('form').innerHTML = ''; return opts.onSkipAll(); } return finish(); };
     $('d-alt-ok').onclick = () => {
       if (k >= steps.length) return finish();
@@ -1307,12 +1535,32 @@
   };
   function stepHaccpMenu() {
     $('form').innerHTML = ''; current = { code: 'HACCP:' };
-    const items = [['🥛 Test antibiotici latte (CCP 1b)', 'CCP:CCP-MILK-ABX'], ['🔥 Temperatura pasta filata (CCP 3)', 'CCP:CCP-STRETCH'], ['🍶 Ricotta: affioramento (CCP 4)', 'CCP:CCP-RIC'],
+    const items = [['🥛 Test antibiotici latte (CCP 1b)', 'CCP:CCP-MILK-ABX'], ['🌡 Temperatura latte in arrivo (CCP 1a)', 'CCP:CCP-MILK-TEMP'], ['🔥 Temperatura pasta filata (CCP 3)', 'CCP:CCP-STRETCH'], ['🍶 Ricotta: affioramento (CCP 4)', 'CCP:CCP-RIC'],
       ['♨ Pastorizzazione (CCP 2)', 'CCP:CCP-PAST'], ['🔧 Pastorizzatore: verifica di inizio giornata', 'CCP:PRP-PAST-VALVE'], ['🧫 Siero-innesto: acidità', 'CCP:PRP-INNESTO'],
       ['🧂 Salamoia: concentrazione', 'CCP:PRP-BRINE'], ['💧 Cloro acqua (settimanale)', 'CCP:PRP-WATER-CL'], ['🌡 Verifica termometro sonda', 'CAL:TERM-01'], ['🌡 Verifica termometro alta temperatura', 'CAL:TERM-02'],
       ['⚗ Calibrazione pH-metro', 'CAL:PH-01'], ['🐭 Giro infestanti', 'PEST:'], ['🧪 Campione prelevato per il laboratorio', 'SAMPLE:'], ['📝 Ricopia da foglio di carta', 'PAPER:']];
     items.forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode(c); $('form').append(b); });
     openForm('Sicurezza alimentare', 'Scegli cosa registrare', async () => {}); $('btn-form-save').style.display = 'none';
+  }
+  // v0.96 (audit A-04): a milk check from the 🛡 menu or the paper copy belongs to ONE delivery (last 3 days): a positive test
+  // rejects it and holds what was made from it (log_milk_check). Offline the deliveries kept on the tablet are listed.
+  const MILK_CPS = new Set(['CCP-MILK-ABX', 'CCP-MILK-TEMP']);
+  async function milkPicker() {
+    const r = await live(sb.from('milk_intake').select('id, milk_lot, intake_date, intake_time, qty_kg, accepted, created_at').gte('intake_date', addDays(today(), -3)).order('created_at', { ascending: false }).limit(20));
+    const rows = !r.error && r.data ? r.data : lotView().milk.filter(m => m.id && String(m.intake_date || today()) >= addDays(today(), -3));
+    if (!rows.length) throw new Error('Nessuna consegna di latte negli ultimi 3 giorni: registra prima l\'arrivo del latte');
+    const day = d => d === today() ? 'oggi' : d === addDays(today(), -1) ? 'ieri' : ddmm(d);
+    field('mi', 'Quale consegna di latte?', 'select', { options: [['', '— scegli la consegna —'], ...rows.map(m => [m.id,
+      `${m.milk_lot} · ${day(String(m.intake_date))}${m.intake_time ? ' ' + String(m.intake_time).slice(0, 5) : ''} · ${Number(m.qty_kg).toLocaleString('it-IT')} kg${m.accepted === false ? ' · già respinta' : ''}`])],
+      limit: 'Il lotto è sull\'etichetta del tank. Un esito positivo respinge quel latte e blocca i lotti già fatti con esso.' });
+    return rows;
+  }
+  function milkResult(r) {            // a persistent card, not a toast: what happened to the milk and to the lots made from it
+    if (!r) return toast('Salvato offline: parte appena c\'è rete');
+    if (r.result !== 'non_conformity') return toast(`${r.ccp} registrato ✓ · latte ${r.milk_lot}`);
+    const held = r.lots_held || [];
+    return showDone(`⚠ Latte ${r.milk_lot} RESPINTO`, [r.corrective_it || '', 'Isola il latte: non si usa in produzione.',
+      held.length ? `Lotti già fatti con questo latte BLOCCATI: ${held.join(', ')}. Non vendere, avvisa il responsabile HACCP.` : 'Nessun lotto era stato fatto con questo latte.', 'Avvisa la Masseria.'].filter(Boolean), []);
   }
   // CCP:<code>[:<lot>] — one measurement against the HACCP plan; the server opens the NC and blocks the lot when out of limit
   async function stepCcp(cpCode, lot) {
@@ -1325,6 +1573,7 @@
       field('lot', 'Lotto', 'select', { options: [['', '— scegli —'], ...mine.map(b => [b.batch_lot, b.batch_lot])] });
     }
     const lim = [cp.min_value != null ? `≥ ${Number(cp.min_value)}` : null, cp.max_value != null ? `≤ ${Number(cp.max_value)}` : null].filter(Boolean).join(' e ');
+    if (MILK_CPS.has(cp.code)) await milkPicker();
     if (cp.code === 'CCP-MILK-ABX') {
       field('v', 'Esito test rapido', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Positivo = latte non accettato' });
       field('action', 'Note / azione (se positivo)', 'text', { required: false });
@@ -1342,7 +1591,13 @@
       if (value == null) { toast('Inserisci il valore', 'err'); throw new Error('valore'); }
       const theLot = lot || val('lot') || null;
       if (needsLot && !theLot) { toast('Scegli il lotto', 'err'); throw new Error('lotto'); }
-      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_staff_id: staff.id, p_batch_lot: theLot, p_action: val('action'), p_source: 'tablet', p_equipment_code: needsLot ? 'TERM-02' : null });
+      if (MILK_CPS.has(cp.code)) {
+        if (!val('mi')) { toast('Scegli la consegna di latte', 'err'); throw new Error('consegna'); }
+        plausCheck(cp.code, value);
+        const rm = await rpcNow('log_milk_check', { p_milk_intake_id: val('mi'), p_cp_code: cp.code, p_value: value, p_staff_id: me().id, p_action: val('action'), p_source: 'tablet', p_equipment_code: cp.code === 'CCP-MILK-TEMP' ? 'TERM-01' : null });
+        return milkResult(rm);
+      }
+      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_staff_id: me().id, p_batch_lot: theLot, p_action: val('action'), p_source: 'tablet', p_equipment_code: needsLot ? 'TERM-02' : null });
       await closeTask({ control_point_id: cp.id });   // v0.57: any task tied to this control point (cloro, valvola, salamoia)
       if (!r) return toast('Salvato offline');
       if (r.result === 'non_conformity') toast(`NON CONFORMITÀ${r.lot_on_hold ? ' · lotto ' + theLot + ' BLOCCATO' : ''}. ${r.corrective_it || ''}`, 'err');
@@ -1351,7 +1606,7 @@
     });
   }
   // v0.77: PAPER:[<control point>] — a check written on the printed sheet (tablet or Wi-Fi down), typed in later with the time on the sheet
-  const PAPER_CPS = [['🥛 Test antibiotici latte (MOD-01)', 'CCP-MILK-ABX'], ['🔧 Pastorizzatore: verifica di inizio giornata (MOD-02)', 'PRP-PAST-VALVE'], ['♨ Pastorizzazione (MOD-02)', 'CCP-PAST'],
+  const PAPER_CPS = [['🥛 Test antibiotici latte (MOD-01)', 'CCP-MILK-ABX'], ['🌡 Temperatura latte in arrivo (MOD-01)', 'CCP-MILK-TEMP'], ['🔧 Pastorizzatore: verifica di inizio giornata (MOD-02)', 'PRP-PAST-VALVE'], ['♨ Pastorizzazione (MOD-02)', 'CCP-PAST'],
     ['🧫 Siero-innesto (MOD-03)', 'PRP-INNESTO'], ['🔥 Temperatura pasta filata (MOD-03)', 'CCP-STRETCH'], ['🍶 Ricotta: affioramento (MOD-04)', 'CCP-RIC'],
     ['❄ Cella 1 (MOD-05)', 'CCP-COLD-1'], ['❄ Cella 2 (MOD-05)', 'CCP-COLD-2'], ['🧽 Sanificazione fine turno (MOD-06)', 'PRP-CLEAN'], ['🧂 Salamoia (MOD-17)', 'PRP-BRINE']];
   function stepPaperMenu() {
@@ -1371,8 +1626,10 @@
     const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
     const d = field('pday', 'Data scritta sul foglio', 'date'); d.value = today(); d.max = today(); d.min = addDays(today(), -7);
     field('ptime', 'Ora scritta sul foglio', 'time');
-    const w = field('pwho', 'Chi l\'ha scritto (firma sul foglio)', 'text'); w.value = staff.full_name;
+    // v0.96 (audit A-19): who signed the sheet is chosen from the list, never prefilled with whoever is copying it
+    field('pwho', 'Chi l\'ha scritto (firma sul foglio)', 'select', { options: [['', '— scegli chi ha firmato —'], ...opList().map(p => [p.full_name, p.full_name]), ['firma non leggibile', 'Non si legge / non firmato']] });
     if (needsLot) field('lot', 'Lotto (come sul foglio, es. L20261012-A)', 'text');
+    if (MILK_CPS.has(cp.code)) await milkPicker();
     if (cp.code === 'CCP-MILK-ABX') field('v', 'Esito test rapido', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']] });
     else if (cp.unit === 'esito') field('v', 'Esito della verifica', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']] });
     else if (cp.code === 'PRP-CLEAN') field('v', 'Sanificazione', 'select', { options: [['0', 'Fatta']] });
@@ -1388,9 +1645,18 @@
       if (value == null || Number.isNaN(value)) { toast('Inserisci il valore', 'err'); throw new Error('valore'); }
       const lot = needsLot ? (val('lot') || '').trim().toUpperCase() : null;
       if (needsLot && !lot) { toast('Scrivi il lotto', 'err'); throw new Error('lotto'); }
-      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_logged_at: romeIso(day, hm), p_staff_id: staff.id, p_batch_lot: lot, p_action: val('action'),
-                                          p_source: 'paper', p_equipment_code: needsLot ? 'TERM-02' : null, p_written_by: (val('pwho') || '').trim() || staff.full_name });
-      try { await save([{ rpc: 'close_open_task', args: { p_day: day, p_code: null, p_equipment_id: null, p_control_point_id: cp.id, p_staff_id: staff.id, p_scan_event_id: null } }]); } catch (e) { console.warn('closeTask', e); }
+      if (MILK_CPS.has(cp.code)) {
+        if (!val('mi')) { toast('Scegli la consegna di latte', 'err'); throw new Error('consegna'); }
+        plausCheck(cp.code, value);
+        const rm = await rpcNow('log_milk_check', { p_milk_intake_id: val('mi'), p_cp_code: cp.code, p_value: value, p_logged_at: romeIso(day, hm), p_staff_id: me().id, p_action: val('action'),
+                                                   p_source: 'paper', p_equipment_code: cp.code === 'CCP-MILK-TEMP' ? 'TERM-01' : null, p_written_by: val('pwho') });
+        if (rm && rm.result === 'non_conformity') return milkResult(rm);
+        toast(rm ? `Ricopiato ✓ ${fmtDay(day)} ${hm} · latte ${rm.milk_lot}` : 'Salvato offline: parte appena c\'è rete');
+        stepPaperMenu(); return 'stay';
+      }
+      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_logged_at: romeIso(day, hm), p_staff_id: me().id, p_batch_lot: lot, p_action: val('action'),
+                                          p_source: 'paper', p_equipment_code: needsLot ? 'TERM-02' : null, p_written_by: val('pwho') });
+      try { await save([{ rpc: 'close_open_task', args: { p_day: day, p_code: null, p_equipment_id: null, p_control_point_id: cp.id, p_staff_id: me().id, p_scan_event_id: null } }]); } catch (e) { console.warn('closeTask', e); }
       if (!r) toast('Salvato offline: parte appena c\'è rete');
       else if (r.result === 'non_conformity') toast(`NON CONFORMITÀ${r.lot_on_hold ? ' · lotto ' + lot + ' BLOCCATO' : ''}. ${r.corrective_it || ''}`, 'err');
       else toast(`Ricopiato ✓ ${fmtDay(day)} ${hm}`);
@@ -1415,7 +1681,7 @@
       if (isPh) pts = [{ ref: 4.01, reading: val('r4') }, { ref: 7.00, reading: val('r7') }, ...(val('slope') != null ? [{ slope: val('slope') }] : [])];
       else if (isScale || isRoom) pts = [{ ref: val('ref'), reading: val('read') }];
       else pts = [{ ref: isHot ? 100 : 0, reading: val('p1') }, ...(val('ref') != null && val('read') != null ? [{ ref: val('ref'), reading: val('read') }] : [])];
-      const r = await rpcNow('record_calibration_check', { p_code: eq.code, p_kind: 'verifica_interna', p_method: method, p_points: pts, p_staff_id: staff.id });
+      const r = await rpcNow('record_calibration_check', { p_code: eq.code, p_kind: 'verifica_interna', p_method: method, p_points: pts, p_staff_id: me().id });
       await closeTask({ equipment_id: eq.id });
       if (!r) return toast('Salvato offline');
       if (r.result === 'ko') toast(`${eq.code} FUORI TOLLERANZA (scarto ${r.max_deviation}): non usarlo, è fuori servizio. ${r.records_to_review} registrazioni da rivalutare.`, 'err');
@@ -1431,7 +1697,7 @@
     field('note', 'Note / azioni', 'text', { required: false });
     openForm('Giro infestanti', 'Una postazione per riga · dentro solo trappole senza veleno', async () => {
       const findings = st.map((x, k) => ({ station: x.code, status: val('st' + k) }));
-      const r = await rpcNow('record_pest_inspection', { p_by: 'interno', p_findings: findings, p_staff_id: staff.id, p_actions: val('note') });
+      const r = await rpcNow('record_pest_inspection', { p_by: 'interno', p_findings: findings, p_staff_id: me().id, p_actions: val('note') });
       if (!r) return toast('Salvato offline');
       toast(r.activity_inside ? 'Infestanti ALL\'INTERNO: non conformità aperta, chiama la ditta' : r.activity_found ? 'Attività all\'esterno: segnalata' : 'Giro infestanti registrato ✓', r.activity_found ? 'err' : 'ok');
     });
@@ -1444,7 +1710,7 @@
     field('lot', 'Lotto (prodotto) — facoltativo', 'text', { required: false }); field('point', 'Punto di prelievo (se diverso dal piano)', 'text', { required: false });
     openForm('Campione per il laboratorio', 'Poi scrivi il codice sul contenitore', async () => {
       const testv = val('test'), lotv = val('lot') || '';
-      const r = await rpcNow('record_sample_taken', { p_test_code: testv, p_lot: lotv || null, p_point: val('point') || null, p_staff_id: staff.id });
+      const r = await rpcNow('record_sample_taken', { p_test_code: testv, p_lot: lotv || null, p_point: val('point') || null, p_staff_id: me().id });
       if (!r || !r.sample_code) return toast('Salvato offline: scrivi a mano analisi, lotto e data sul contenitore', 'ok');
       toast(`Campione ${r.sample_code} registrato ✓`);
       return showDone(`Campione ${r.sample_code}`, [`Analisi ${testv}${lotv ? ' · lotto ' + lotv : ''}`, 'Stampa l\'etichetta e attaccala al contenitore (oppure scrivi il codice a mano).'],

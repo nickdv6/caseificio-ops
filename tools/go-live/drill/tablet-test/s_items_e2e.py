@@ -12,6 +12,7 @@ DDT: incomplete company data → red banner and printing disabled (PRINT-03).
 Expect "FAILURES: none"."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'; PORT = 8773
@@ -39,8 +40,11 @@ sql(f"insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) va
 # an open batch with its working steps done and CCP 3 recorded: scanning it goes straight to the close form
 LB = f'LS{RUN}-B'
 sql(f"insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, preset_id, source) values ('{TODAY}', '{LB}', '{moz}', 300, 'milk', now() - interval '2 hours', (select id from fabula.process_presets where product_id = '{moz}' order by is_default desc limit 1), 'tablet')")
-sql(f"insert into fabula.batch_step_logs (batch_id, step_id, step_name, source) select b.id, s.id, s.name_it, 'tablet' from fabula.production_batches b join fabula.process_steps s on s.preset_id = b.preset_id and s.phase = 'make' where b.batch_lot = '{LB}'")
+sql(f"insert into fabula.batch_step_logs (batch_id, step_id, step_name, source) select b.id, s.id, s.name_it, 'tablet' from fabula.production_batches b join fabula.process_steps s on s.preset_id = b.preset_id and s.phase in ('start', 'make') where b.batch_lot = '{LB}'")
+# v0.96 (A-03): a batch started on the tablet also has its start steps and start doses recorded (otherwise the scan resumes them)
+sql(f"insert into fabula.batch_consumables (batch_id, product_id, qty, recipe_id, entry) select b.id, p.id, 1, r.recipe_id, 'tablet' from fabula.production_batches b join fabula.v_recipe_active r on r.finished_product_id = b.product_id and r.phase = 'start' join fabula.products p on p.sku = r.sku where b.batch_lot = '{LB}'")
 sql(f"select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value => 64, p_batch_lot => '{LB}', p_staff_id => '10000000-0000-4000-a000-000000000001')")
+sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST', p_value => 72, p_batch_lot => '{LB}', p_staff_id => '10000000-0000-4000-a000-000000000001')")
 # farm: today's approved order (a test one if there is none)
 ORDER = sql1(f"select milk_kg from fabula.milk_plans where status = 'approved' and plan_date = '{TODAY}' order by milk_kg desc limit 1")
 made_plan = not ORDER
@@ -100,7 +104,7 @@ def page_as(b, who, path, logs, width=1100):
     ctx = b.new_context(service_workers='block', viewport={'width': width, 'height': 1300}); ctx.route('**/*.supabase.co/**', handler)
     pg = ctx.new_page(); pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto(f'http://localhost:{PORT}/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(s))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(s))}){op_js(s)}")
     pg.goto(f'http://localhost:{PORT}/{path}')
     return ctx, pg
 

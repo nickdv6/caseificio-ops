@@ -83,3 +83,25 @@ broke the sync and task times came out at 07:45/08:45 instead of 06:45.
   - C-28, C-04 (time, day lists and ranges, fallback), E-20 (`bots_ok`), PRINT-03 (`company_docs_check`, street addresses).
 
   12/10/2026: 63/63 PASS on a fresh replay and on the database built by the SQL Editor script.
+- `test_audit_critical.sql` (v0.96, the remaining Critical items):
+  - A-04: a positive milk retest rejects the delivery and the farm load, writes off the raw milk left, holds the lots and the
+    ricotta made from it (and a lot already held for another reason gets the milk reason added); the milk register shows the
+    linked test; a delivery refused at arrival raises one alert.
+  - A-03: a lot closed without CCP 2/3 is held, with the message saying so.
+  - D-02: app users cannot UPDATE/DELETE the record tables; `correct_record` with reason and permission (own record within
+    15 min, else level 3); a corrected value out of limit opens the NC and holds (a milk check rejects the delivery); a reading
+    moved to another lot holds that lot, moves the NC, and holds the lot left without its CCP; open lots and delivery
+    temperatures are not corrected directly; the register prints «CORREZIONE».
+  - D-21: a second close refused with time and kg; one production output per lot.
+  - A-01: PINs (own or by a manager, easy ones refused, bcrypt only, table unreadable), PIN check with tries left and 15-min
+    lock, `floor_operators` without PIN data, badge in/out (a second scan does not clock out, offline time kept), operator +
+    logged-in account on the record, the daily `operator_off_shift` check.
+  - E-01: link codes (one use), default topics by profile, routing (HACCP responsible always for food safety; decisions wait
+    for quiet hours; system at once to the owner), 3-hour dedupe, no push for warnings/simulations, the minute tick, claim
+    (no double hand-out, skipped when taken or unlinked, failed after 5 tries), «Me ne occupo io» with edits, the 30-minute
+    reminder (once; taking it takes the original), alert notices pushed once, NCs pushed, infra-first topics, blocked bot
+    unlinked, settings, overview by permission, test message, `notify_failed`/`notify_stuck`, webhook bootstrap on first link.
+  - FARM-02: over 2 % without a reason refused; with it both weights kept and the dairy's counts (stock too); within 2 % the
+    farm's counts; the office notice; the farm page and its month total; MOD-01 prints both.
+
+  13/10/2026: 89/89 PASS on a fresh replay and on the database built by the SQL Editor script.

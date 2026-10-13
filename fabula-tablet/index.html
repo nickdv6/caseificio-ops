@@ -21,7 +21,8 @@ html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:18px;line-height:1.3;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0)}
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:var(--accent);color:var(--accent-fg)}
 header h1{font-family:var(--display);font-size:1.35rem;margin:0;font-weight:700}
-header .who{font-size:.9rem;opacity:.9}
+header .who{font:700 1.05rem var(--body);color:inherit;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.55);border-radius:999px;padding:9px 16px;cursor:pointer;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header .who.none{background:#fff;color:var(--warn);border-color:#fff}   /* v0.96 (A-01): nobody chosen → asks who is recording */
 main{flex:1;overflow:auto;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0))}
 .view{display:none}.view.active{display:block}
 h2{font-family:var(--display);font-size:1.6rem;margin:0 0 10px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}
@@ -72,7 +73,7 @@ input[type=number]{font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
-<header><h1 data-brand="name">Caseificio Bubalina</h1><div class="who" id="who"></div></header>
+<header><h1 data-brand="name">Caseificio Bubalina</h1><button type="button" class="who" id="who" style="display:none"></button></header>
 <main>
 
 <section class="view" id="v-login">
@@ -95,7 +96,8 @@ input[type=number]{font-variant-numeric:tabular-nums}
   <h2 style="margin-top:22px">Da fare oggi</h2>
   <div class="tasks" id="tasks"></div>
   <div class="pending" id="pending"></div>
-  <button class="btn secondary" id="btn-logout" style="margin-top:28px">Esci</button>
+  <div class="pending" id="acct" style="margin-top:28px"></div>
+  <button class="btn secondary" id="btn-logout" style="margin-top:6px">Esci</button>
 </section>
 
 <section class="view" id="v-scan">

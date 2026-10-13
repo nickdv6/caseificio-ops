@@ -1,4 +1,8 @@
-# La Perla — backups and restore
+# La Perla — backups and restore (developer runbook)
+
+> **Partners and floor staff: this page is not for you.** When the tablet, the console or the internet stop, follow the
+> one-page Italian card [`sop/sistema_giu.html`](../../sop/sistema_giu.html) (PDF next to it): switch to paper, call the HACCP
+> responsible and Nick, and **never restore a backup or paste SQL** (v0.96, audit E-23).
 
 Decided 03/10/2026: free off-database export instead of the Supabase PITR add-on.
 
@@ -61,14 +65,22 @@ significant digits would be rounded — none exist in the data today.
    Without dashboard access the database can fetch it: `select fabula.backup_fetch_call('backups/latest.json.gz');`
    (or `backups/daily/AAAA-MM-GG.json.gz`), then read the answer with
    `select content from net._http_response where id = <the number returned>;` → JSON with `b64` (base64 of the .gz) and `sha256`.
-2. **Full restore into an empty project** (schema from the migrations first):
-   `python3 tools/go-live/restore_backup.py load latest.json.gz --db "<connection string>"` — one transaction:
-   triggers off (`session_replication_role = replica`, which Supabase's own data-import guide uses), every table emptied
-   and refilled, sequences reset; it then prints whether every table's row count matches the backup.
-   Or write the SQL and run it yourself: `python3 tools/go-live/restore_backup.py sql latest.json.gz > restore.sql`.
-3. **Put back a table or a few lost rows** in the live database:
-   `python3 tools/go-live/restore_backup.py sql latest.json.gz --tables haccp_log,non_conformities > partial.sql` —
-   inserts only the rows whose id is missing and never deletes or overwrites anything.
+   `python3 tools/go-live/restore_backup.py when latest.json.gz` prints when it was taken (UTC and Agropoli time).
+2. **Put back lost rows in the live database — the default (v0.96):**
+   `python3 tools/go-live/restore_backup.py sql latest.json.gz [--tables haccp_log,non_conformities] > partial.sql` —
+   inserts only the rows whose id is missing (all tables, or the ones listed) and never deletes or overwrites anything.
+3. **Full restore into an EMPTY project only** (schema from the migrations first) — must be asked for explicitly:
+   `python3 tools/go-live/restore_backup.py load latest.json.gz --wipe-all --target <project-ref> --confirm <exported_at> --db "<connection string>"`
+   (the `--db` must contain the `--target` ref) — one transaction: triggers off (`session_replication_role = replica`, which
+   Supabase's own data-import guide uses), every table emptied and refilled, sequences reset; it then prints whether every
+   table's row count matches the backup. Or write the SQL and run it yourself:
+   `python3 tools/go-live/restore_backup.py sql latest.json.gz --wipe-all --target <project-ref> > restore.sql`.
+   The full restore **refuses to run** on a database that holds HACCP records newer than the backup.
+
+   **Safety stop (every generated SQL, v0.96 audit E-23):** the script starts with a block that raises
+   «FERMO: ripristino non confermato…» unless `set restore.confirm = '<exported_at>';` was run first in the same session;
+   the message names the backup time and the exact line to add. `--confirm <exported_at>` writes that line for you (needed
+   for `load`). `tools/go-live/drill/restore_guard_test.py` checks all of this on a local copy.
 4. **Check:** `python3 tools/go-live/restore_backup.py verify latest.json.gz --db "…"` (row counts vs the backup; per-table
    checksums written to `restored_checksums.json`).
 5. Re-invite users (`restore_backup.py logins` lists who had a login and their staff row; after they accept, `staff.auth_user_id`

@@ -104,7 +104,8 @@ dialog.dlg .row{justify-content:flex-end;margin-top:14px}
     <div class="card"><h3>Prova di richiamo <span data-mod="MOD-14"></span></h3><div class="hint">Simula il ritiro di un lotto: da quale latte viene, a chi è andato, quanti kg sono in giacenza o non giustificati. Si fa almeno una volta l'anno e nella settimana di prova (giorno 5). Lotto vuoto = un lotto venduto a caso degli ultimi 30 giorni.</div>
       <div class="row" style="margin:6px 0"><input id="rc-lot" type="text" placeholder="es. L20261012-A" style="max-width:200px"><button class="btn sm" id="rc-run">Avvia la prova</button></div><div id="rc-out"></div></div>
     <div class="card"><h3>Non conformità aperte <span data-mod="MOD-12"></span></h3><div id="ncs"></div></div>
-    <div class="card"><h3>Registrazioni HACCP · ultimi 7 giorni</h3><div class="hint">La colonna Modulo dice in quale registro del Manuale di Autocontrollo finisce ogni controllo. Il registro completo e stampabile è nella scheda Registri.</div><div id="logs"></div></div>
+    <div class="card"><h3>Registrazioni HACCP · ultimi 7 giorni</h3><div class="hint">La colonna Modulo dice in quale registro del Manuale di Autocontrollo finisce ogni controllo. Il registro completo e stampabile è nella scheda Registri. Una registrazione sbagliata non si cancella: «Correggi» (responsabile HACCP) scrive il valore giusto con il motivo, e il registro mostra anche l'originale.</div><div id="logs"></div></div>
+    <div class="card"><h3>Arrivi latte e lotti chiusi · ultimi 7 giorni</h3><div class="hint">Per correggere kg, temperatura o DDT di un arrivo, oppure kg prodotti e pH di un lotto chiuso. Resta traccia dell'originale e del motivo.</div><div id="prodrecs"></div></div>
   </div>
 
   <div class="pane active" id="p-registri">

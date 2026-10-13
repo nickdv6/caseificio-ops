@@ -12,11 +12,76 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
-- `sop/` — printable floor procedure sheet.
+- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Audit Critical items (v0.96)
+The remaining Critical items of the 12/10/2026 audit (project doc `claude/audit-2026-10-12/`). Migrations `v096a` (milk, CCP,
+records), `v096b` (operator), `v096c` (Telegram alerts), `v096d` (dairy weight); edge function `notify`; live apply:
+`tools/go-live/live-apply/2026-10-13_v096_sql-editor.sql` (database first, then the site: the tablet calls the new functions); tablet sw `perla-v64`.
+- **A-04 · a positive milk check blocks that milk** (`log_milk_check`, `milk_reject`):
+  - From the 🛡 menu or the paper copy, the antibiotic test and the arrival temperature ask which delivery (last 3 days).
+  - Out of limit, the delivery is rejected, the farm load is marked rejected, and the raw milk left is written off.
+  - Every lot made from it, and their ricotta, is held. A lot already held for another reason gets the milk reason added.
+  - One alert goes out (Telegram too), also when the milk is refused at arrival.
+- **A-03 · a lot closed without its CCPs is held** (not only reported):
+  - The tablet always shows «Continua più tardi» and, on re-scan, resumes unfinished start steps and doses.
+  - «Fine lotto» asks every missing CCP (pasteurisation included).
+- **D-02 · records are locked:**
+  - Users cannot UPDATE or DELETE `haccp_log`, `milk_intake`, `batch_milk_inputs`, `stock_moves`, `labels`, `goods_receipts`,
+    `lab_samples`; no DELETE on `non_conformities` and `production_batches`. Every change is in the audit log.
+  - The only way to change them is `correct_record` (Autocontrollo → «Correggi», with a reason from a list). The original value
+    stays on the record and on the printed register («CORREZIONE: …»), and a row goes to `record_corrections`.
+  - Who may correct: the operator, on their own record, within 15 minutes; otherwise the manager (haccp or produzione level 3).
+  - A corrected value is evaluated again. Out of limit → NC + hold, and for a milk check, the A-04 rejection. Moved to another
+    lot → that lot is held, the NC follows, and the lot it left is held if it has no reading left.
+  - An open lot cannot be "closed" by a correction. A delivery's temperature is corrected only through its CCP 1a record.
+- **D-21:** a closed lot cannot be closed again (Italian message with time and kg); one production output per lot.
+- **A-01 · who is recording on the shared tablet:**
+  - The header chip shows the operator. Badge scan, or name + 4-digit PIN, sets it; it lapses after 15 minutes idle and at
+    badge-out. A form left open for 15 minutes asks «Sono … / Non sono io» at the first touch.
+  - Every record button asks «Chi sta registrando?» when nobody is set.
+  - A badge scan clocks in only when needed: the same badge again offers «Fine turno» instead of clocking out (A-25). The
+    evening «badge di uscita non passato» item closes that shift with a confirm.
+  - PINs: `staff_pins` stores bcrypt hashes only, and the apps cannot read it. Configurazione → Utenti → «PIN». Easy PINs are
+    refused; 5 wrong attempts lock the PIN for 15 minutes.
+  - Offline, only a PIN already checked on that tablet works (PBKDF2 on the device).
+  - Records keep the operator and the logged-in account (`entered_by_id`).
+  - The daily check flags tablet checks signed by someone not clocked in.
+  - Paper copy: «Chi l'ha scritto» is a list with no default (A-19).
+- **E-01 · alerts on Telegram (@bubalina_avvisi_bot):**
+  - Every `alert` bot message, alert notice and new non-conformity goes to `notify_outbox`, by topic:
+    - food safety → whoever subscribed, the HACCP responsible and whoever is clocked in, at any hour;
+    - system → Nick, at any hour;
+    - decisions → owner/partners, after their quiet hours.
+  - Two buttons: «👀 Ho visto» and «✋ Me ne occupo io». Taking charge updates everyone's copy.
+  - Nobody takes it within 30 minutes → one reminder, also to the owner, the partners and the HACCP responsible.
+  - pg_cron `fabula_notify_tick` runs every minute and calls the function `notify` when something is due. The function sends,
+    and receives `/start <code>`, `/stop` and the buttons through the webhook (secret header). It registers that webhook by itself.
+  - Configurazione → Utenti → «Avvisi su Telegram»:
+    - link your own phone (t.me link + QR), choose topics, quiet hours and time zone, send a test message;
+    - the owner can send a link to anyone and sees who is linked and the last alerts.
+  - The daily check flags undelivered or stuck alerts and «nobody linked».
+- **FARM-02 · the dairy's scale weight is kept:**
+  - With a farm load, the Masseria's kg stay read-only and «kg pesati qui» is asked.
+  - Within 2 % (`milk.weight_tolerance_pct`) the farm's figure counts. Beyond it a reason is required, and the dairy's weight
+    becomes `qty_kg` (stock and the farm's month total).
+  - The office gets a notice, the farm page shows «Pesato al caseificio … (vale questo peso)», and MOD-01 prints both weights.
+- **E-23 · restore without wiping live data:**
+  - `restore_backup.py` puts back only missing rows by default, and only the day-to-day records unless `--tables` says otherwise.
+  - A full restore needs `--wipe-all --target <ref>`. The target must equal the `--db` project ref, never a substring. The SQL
+    refuses any database holding records newer than the backup.
+  - Every generated SQL stops unless `set restore.confirm = '<backup time>'` was run first.
+  - Partners get the one-page card `sop/sistema_giu.html` (+ PDF): paper, who to call, what never to do.
+- **Tests:**
+  - `prod-test/test_audit_critical.sql` 89/89.
+  - `tablet-test/operator_e2e.py` 37/37, `farm_weight_e2e.py` 11/11, `notify_fn_e2e.py` 12/12 (the function run in Deno against a
+    fake Telegram).
+  - `drill/restore_guard_test.py` 15/15.
+  - Existing e2e tests store the operator like a login, fill «kg pesati qui», and record start steps on SQL-made batches.
+    On the long-used local copy, failures left by old test data stay as before (see `tablet-test/README.md`).
 ## Bubalina domain, tracking links and tablet name (13/10/2026)
 The shop trades as **Caseificio Bubalina** on **www.bubalina.it** (perladelcilento.it only redirects there). Project doc
 `claude/ga4-setup-2026-10-12.md` has the GA4 set-up and the tagged links for the Google profile and social bios.
@@ -35,6 +100,7 @@ The shop trades as **Caseificio Bubalina** on **www.bubalina.it** (perladelcilen
 - Bot message rule 10 now says: website www.bubalina.it, handle @caseificiobubalina, never the old domain or handle
   (`tools/bots/MESSAGE-RULES.md`, `tools/bots/prompts/*.txt`, `tools/sales/bot_vendite_prompt.md`, and the same sentence
   in the 14 enabled scheduled bots, updated 13/10; the disabled weekly-brief task was left as it was).
+
 
 ## Audit backlog: items under an hour, High/Critical (v0.95)
 From the 12/10/2026 audit backlog (project doc `claude/audit-2026-10-12/`): every item with effort S and severity High or

@@ -11,6 +11,7 @@ A-10 (v0.94): with a choice, the list and the card show departure, age and kg bu
 Expect "FAILURES: none"."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -60,7 +61,7 @@ try:
     pg = ctx.new_page(); logs = []
     pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto('http://localhost:8768/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))}){op_js(sess)}")
     pg.goto('http://localhost:8768/index.html')
     pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(2500)
     view = lambda: pg.evaluate("(document.querySelector('.view.active')||{}).id")
@@ -88,7 +89,9 @@ try:
     pick = lambda txt: pg.evaluate("t => { const s = document.getElementById('ship'); s.value = [...s.options].find(o => o.textContent.includes(t)).value; s.dispatchEvent(new Event('change')); }", txt)
     def fill_and_save(chk):
         pg.evaluate("""c => { const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change')); };
-            if (c !== null) set('shipchk', c); set('temp', '4'); set('abx', '0'); document.getElementById('btn-form-save').click(); }""", chk)
+            if (c !== null) set('shipchk', c); set('temp', '4'); set('abx', '0');
+            const k = document.getElementById('kgh'); if (k && k.offsetParent !== null && !k.value) set('kgh', document.getElementById('kg').value);   // v0.96 (FARM-02): weighed = the farm's kg
+            document.getElementById('btn-form-save').click(); }""", chk)
         pg.wait_for_timeout(1800)
     s = ship()
     check('milk arrival with two loads in transit: nothing preselected, the choice is required',

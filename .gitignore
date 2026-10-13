@@ -18,3 +18,4 @@ supabase/.branches/
 # source portraits for bot avatars (kept locally, not in git)
 nonni-avatars/
 nonni-avatars.zip
+__pycache__/

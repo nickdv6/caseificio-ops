@@ -78,5 +78,19 @@ every migration: the tests still run, after adding one milk supplier
     prod_e2e expects the over-draw to be refused. On the long-used restore_drill copy pack_e2e, prod_e2e and paper_e2e
     have failures caused by data left by earlier runs (same failures with the v0.94 code).
 
+16. `python3 operator_e2e.py` (v0.96, port 8774; needs v096a-d) — who is recording (A-01) and the Telegram card (E-01):
+    «Chi registra?» chip and gate, name + PIN (tries left, shift box), badge of another person (clocks in, signs the next
+    record, the logged-in account kept), same badge again → «Fine turno» card, 15 idle minutes (reload) and a form left open
+    (fake clock) ask again, offline PIN (only one already used on this tablet), paper signer list, the evening «badge di
+    uscita» item closes that shift, Configurazione «PIN» button, Telegram card (link + QR, people, link for someone else,
+    topics / time zone saved).
+17. `python3 farm_weight_e2e.py` (v0.96, port 8775) — FARM-02: «kg pesati qui» next to the Masseria's kg, within 2 % / over
+    2 % with a reason, both weights saved, result card, stock, office notice, the farm page.
+18. `python3 notify_fn_e2e.py` (v0.96) — the edge function `notify` run locally with Deno (DENO=…/deno; `npm i deno`) against
+    PostgREST and a fake Telegram on :8790: wrong webhook secret 403, /start links, dispatch registers the webhook and sends
+    HTML with the two buttons, «Me ne occupo io» edits the copies, a blocked bot unlinks, /stop, no errors in the log.
+    13/10/2026: 37/37, 11/11, 12/12. The other e2e tests now store the operator like a login (`e2e_op.py`), fill «kg pesati
+    qui» when a farm load is picked, and record the start steps of batches they create in SQL (A-03 resumes them otherwise).
+
 Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
 paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

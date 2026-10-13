@@ -5,6 +5,7 @@ Scenarios: A online milk intake (one transaction) · B lost reply → re-send wr
 (milk in, batch start, dosing, process steps, close) then reconnect · D Wi-Fi up but no internet."""
 import json, subprocess, time, sys, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -57,7 +58,7 @@ with sync_playwright() as p:
     pg.on('console', lambda m: logs.append(m.type + ': ' + m.text))
     pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto('http://localhost:8766/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))}){op_js(sess)}")
     pg.goto('http://localhost:8766/index.html')
     pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000)
     pg.wait_for_timeout(2500)
@@ -81,6 +82,7 @@ with sync_playwright() as p:
     def milk(ddt, lot, kg=600):
         scan('DDT:' + ddt)
         check(f'milk form opens ({lot}, offline={state["off"]})', view() == 'v-form', pg.evaluate("document.getElementById('f-title').textContent") + ' | ' + toast())
+        pg.evaluate("(() => { const s = document.getElementById('ship'); if (s) { s.value = 'none'; s.dispatchEvent(new Event('change')); } })()")   # a load left in transit by another test is not this milk
         setf({'lot': lot, 'kg': kg, 'temp': 4, 'abx': '0'}); save_form()
         pg.evaluate("() => { const b=[...document.querySelectorAll('#form button')].find(x=>x.textContent==='Fatto'); if (b) b.click(); }"); pg.wait_for_timeout(300)
     def dose_through(max_steps=40):

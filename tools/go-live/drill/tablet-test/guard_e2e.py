@@ -5,6 +5,7 @@ The day's pasteuriser check is asked at the first batch start (NON ok = no batch
 recorded asks for it at close; a fully recorded batch closes with no alert from Zio Ciro."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -44,7 +45,7 @@ try:
     pg = ctx.new_page(); logs = []
     pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto('http://localhost:8772/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(sess))}){op_js(sess)}")
     pg.goto('http://localhost:8772/index.html')
     pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(3000)
     view = lambda: pg.evaluate("(document.querySelector('.view.active')||{}).id")
@@ -135,7 +136,9 @@ try:
     sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST', p_value => 72, p_batch_lot => '{lot2}', p_staff_id => (select id from fabula.staff where active order by created_at limit 1))")
     # its working steps were done on an old app that let the stretching step be skipped (step marked done, no value)
     sql(f"update fabula.production_batches set preset_id = (select id from fabula.process_presets where name like 'Base · prova%') where batch_lot = '{lot2}'")
-    sql(f"insert into fabula.batch_step_logs (batch_id, step_id, step_name, source) select b.id, s.id, s.name_it, 'tablet' from fabula.production_batches b join fabula.process_steps s on s.preset_id = b.preset_id and s.phase = 'make' where b.batch_lot = '{lot2}'")
+    sql(f"insert into fabula.batch_step_logs (batch_id, step_id, step_name, source) select b.id, s.id, s.name_it, 'tablet' from fabula.production_batches b join fabula.process_steps s on s.preset_id = b.preset_id and s.phase in ('start', 'make') where b.batch_lot = '{lot2}'")
+    # v0.96 (A-03): a batch started on the tablet also has its start steps and start doses recorded (otherwise the scan resumes them)
+    sql(f"insert into fabula.batch_consumables (batch_id, product_id, qty, recipe_id, entry) select b.id, p.id, 1, r.recipe_id, 'tablet' from fabula.production_batches b join fabula.v_recipe_active r on r.finished_product_id = b.product_id and r.phase = 'start' join fabula.products p on p.sku = r.sku where b.batch_lot = '{lot2}'")
     pg.goto('http://localhost:8772/index.html'); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(3000)
     code('LOT:' + lot2)
     check('batch without CCP 3: the close form asks for it', view() == 'v-form' and has('ccpv'), toast())

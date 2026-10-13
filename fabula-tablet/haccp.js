@@ -90,7 +90,7 @@
       sb.from('v_haccp_plan').select('*'),
       sb.from('v_lots_on_hold').select('*'),
       sb.from('non_conformities').select('id, opened_at, severity, status, description, lot_number, corrective_action, root_cause, preventive_action').in('status', ['open', 'investigating']).order('opened_at', { ascending: false }),
-      sb.from('haccp_log').select('logged_at, measured_value, result, operator, corrective_action, source, haccp_control_points(code, ccp_no, name, unit, form_code), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
+      sb.from('haccp_log').select('id, logged_at, measured_value, result, operator, corrective_action, correction_note, source, haccp_control_points(code, ccp_no, name, unit, form_code), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
       sb.from('v_lab_plan_status').select('*'),
       sb.from('v_lab_samples_recent').select('*').limit(80),
       sb.from('v_pest_status').select('*'),
@@ -108,7 +108,7 @@
     renderManual(Object.fromEntries((manual.data || []).map(r => [r.key, r.value])));
     renderForms(forms.data || []);
     renderTiles(holds.data || [], ncs.data || [], samples.data || [], matrix.data || [], instr.data || [], lab.data || []);
-    renderHolds(holds.data || []); renderNcs(ncs.data || []); renderLogs(logs.data || []);
+    renderHolds(holds.data || []); renderNcs(ncs.data || []); renderLogs(logs.data || []); loadProdRecords();
     renderPlan(plan.data || []);
     renderLab(lab.data || []); renderSamples(samples.data || []);
     renderStations(stations.data || []); renderInspections(insp.data || []);
@@ -236,10 +236,75 @@
   function renderLogs(rows) {
     if (!rows.length) { $('logs').innerHTML = '<div class="empty">Nessuna registrazione negli ultimi 7 giorni.</div>'; return; }
     const res = { ok: pill('ok', 'ok'), warning: pill('allerta', 'warn'), non_conformity: pill('NC', 'ko') };
-    $('logs').innerHTML = `<table><tr><th>Quando</th><th>Punto</th><th>Modulo</th><th class="num">Valore</th><th>Esito</th><th>Lotto</th><th>Chi</th><th>Azione</th></tr>${rows.map(l => `
+    $('logs').innerHTML = `<table><tr><th>Quando</th><th>Punto</th><th>Modulo</th><th class="num">Valore</th><th>Esito</th><th>Lotto</th><th>Chi</th><th>Azione</th><th></th></tr>${rows.map(l => `
       <tr><td class="nw">${fmtDT(l.logged_at)}</td><td>${esc(l.haccp_control_points?.ccp_no || '')} ${esc(l.haccp_control_points?.name || '')}</td><td class="nw">${modChip(l.haccp_control_points?.form_code)}</td>
       <td class="num">${l.measured_value == null ? '—' : l.haccp_control_points?.unit === 'esito' ? (Number(l.measured_value) === 0 ? 'ok' : 'NON OK') : num(l.measured_value, 2) + ' ' + esc(l.haccp_control_points?.unit || '')}</td><td>${res[l.result] || esc(l.result)}</td>
-      <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}${l.source === 'paper' ? ' <small title="Ricopiata dal foglio di carta">📝 carta</small>' : ''}</td><td>${esc(l.corrective_action || '')}</td></tr>`).join('')}</table>`;
+      <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}${l.source === 'paper' ? ' <small title="Ricopiata dal foglio di carta">📝 carta</small>' : ''}</td><td>${esc(l.corrective_action || '')}${l.correction_note ? `<br><small class="ko">Correzione: ${esc(l.correction_note)}</small>` : ''}</td>
+      <td>${isManager && l.haccp_control_points?.unit !== 'esito' && l.haccp_control_points?.code !== 'PRP-CLEAN' ? `<button class="btn sm sec" data-fixlog="${l.id}">Correggi</button>` : ''}</td></tr>`).join('')}</table>`;
+    // v0.96 (audit D-02): a record is never edited or deleted; a correction keeps the original value and the reason, and prints on the register
+    $('logs').querySelectorAll('[data-fixlog]').forEach(b => b.onclick = async () => {
+      const l = rows.find(x => x.id === b.dataset.fixlog); if (!l) return;
+      const cp = l.haccp_control_points || {};
+      const v = await ask(`Correggi: ${cp.ccp_no || ''} ${cp.name || ''} · ${fmtDT(l.logged_at)}`,
+        `<div class="hint">Registrato: <b>${num(l.measured_value, 2)} ${esc(cp.unit || '')}</b>${l.production_batches?.batch_lot ? ' · lotto ' + esc(l.production_batches.batch_lot) : ''} · ${esc(l.operator || '')}. Il valore originale resta scritto sul registro insieme al motivo.</div>
+         <div class="form"><div><label>Valore giusto (${esc(cp.unit || '')})</label><input id="fx-val" type="text" inputmode="decimal" autocomplete="off"></div>
+         ${['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code) ? '<div><label>Lotto giusto (se era sbagliato)</label><input id="fx-lot" type="text" style="text-transform:uppercase"></div>' : ''}</div>
+         ${REASONS}`,
+        'Salva la correzione', () => {
+          const ch = {}, t = $('fx-val').value.trim().replace(',', '.');
+          if (t !== '') { if (!/^-?\d+(\.\d+)?$/.test(t)) throw new Error('Valore: scrivi un numero (es. 62 oppure 4,5)'); ch.measured_value = Number(t); }
+          if ($('fx-lot') && $('fx-lot').value.trim()) ch.batch_lot = $('fx-lot').value.trim().toUpperCase();
+          if (!Object.keys(ch).length) throw new Error('Scrivi il valore giusto (o il lotto giusto)');
+          return { ch, reason: reasonOf() };
+        });
+      if (!v) return;
+      const r = fail(await sb.rpc('correct_record', { p_table: 'haccp_log', p_id: l.id, p_changes: v.ch, p_reason: v.reason, p_staff_id: staff.id }), 'Correzione');
+      toast(r.nc_id ? 'Corretto: il valore giusto è fuori limite → non conformità aperta e lotto bloccato' : l.result === 'non_conformity' && r.result !== 'non_conformity'
+        ? 'Corretto. La NC e l\'eventuale blocco restano: chiudili dopo averli valutati (Non conformità, Lotti bloccati)' : 'Correzione registrata', r.nc_id || l.result === 'non_conformity' ? 'err' : '');
+      load();
+    });
+  }
+  // the reason of a correction: a short list (what usually happens) + a note
+  const REASONS = `<div class="form" style="margin-top:8px"><div><label>Motivo</label><select id="fx-why" required><option value="" selected disabled>— scegli —</option><option>errore di battitura</option><option>letto male dallo strumento o dal foglio</option><option>strumento sbagliato</option><option>lotto sbagliato</option><option>pesata di nuovo</option><option>altro</option></select></div>
+    <div><label>Note (obbligatorie con «altro»)</label><input id="fx-note" type="text"></div></div>`;
+  const reasonOf = () => { const w = $('fx-why').value, n = $('fx-note').value.trim(); if (!w) throw new Error('Scegli il motivo'); if (w === 'altro' && n.length < 3) throw new Error('Scrivi il motivo nelle note'); return n ? `${w}: ${n}` : w; };
+  // v0.96 (audit D-02): milk deliveries and closed lots of the last 7 days, corrected the same way (kg, temperature, DDT; kg produced, pH)
+  async function loadProdRecords() {
+    const box = $('prodrecs'); if (!box) return;
+    const prodManager = PERM.can('produzione', 3);   // the server asks produzione 3 for someone else's delivery or lot
+    const since = addDays(todayRome(), -7);
+    const [mi, pb] = await Promise.all([
+      sb.from('milk_intake').select('id, milk_lot, intake_date, intake_time, qty_kg, temperature_c, ddt_number, accepted, correction_note').gte('intake_date', since).order('intake_date', { ascending: false }).limit(40),
+      sb.from('production_batches').select('id, batch_lot, batch_date, output_kg, curd_ph, whey_kg, input_kind, notes, products(name)').gte('batch_date', since).not('output_kg', 'is', null).order('batch_date', { ascending: false }).order('batch_lot').limit(60)]);
+    const M = mi.data || [], B = pb.data || [];
+    box.innerHTML = `<h4 style="margin:4px 0">Arrivi latte</h4>${M.length ? `<table><tr><th>Lotto</th><th>Quando</th><th class="num">kg</th><th class="num">°C</th><th>DDT</th><th></th></tr>${M.map(m => `
+        <tr><td class="nw"><b>${esc(m.milk_lot)}</b>${m.accepted === false ? ' ' + pill('respinto', 'ko') : ''}</td><td class="nw">${fmtD(m.intake_date)} ${esc(String(m.intake_time || '').slice(0, 5))}</td><td class="num">${num(m.qty_kg)}</td><td class="num">${num(m.temperature_c)}</td>
+        <td>${esc(m.ddt_number || '')}${m.correction_note ? `<br><small class="ko">Correzione: ${esc(m.correction_note)}</small>` : ''}</td><td>${prodManager ? `<button class="btn sm sec" data-fixmi="${m.id}">Correggi</button>` : ''}</td></tr>`).join('')}</table>` : '<div class="empty">Nessun arrivo negli ultimi 7 giorni.</div>'}
+      <h4 style="margin:12px 0 4px">Lotti chiusi</h4>${B.length ? `<table><tr><th>Lotto</th><th>Prodotto</th><th class="num">kg prodotti</th><th class="num">pH</th><th></th></tr>${B.map(b => `
+        <tr><td class="nw"><b>${esc(b.batch_lot)}</b><br><small>${fmtD(b.batch_date)}</small></td><td>${esc(b.products?.name || '')}${/corretto da/.test(b.notes || '') ? `<br><small class="ko">${esc((b.notes || '').split('\n').filter(x => /corretto da/.test(x)).join(' · '))}</small>` : ''}</td>
+        <td class="num">${num(b.output_kg, 2)}</td><td class="num">${b.curd_ph == null ? '—' : num(b.curd_ph, 2)}</td><td>${prodManager ? `<button class="btn sm sec" data-fixpb="${b.id}">Correggi</button>` : ''}</td></tr>`).join('')}</table>` : '<div class="empty">Nessun lotto chiuso negli ultimi 7 giorni.</div>'}`;
+    const numIn = (id, label, cur) => `<div><label>${label} (ora ${cur == null ? '—' : num(cur, 2)})</label><input id="${id}" type="text" inputmode="decimal" autocomplete="off"></div>`;
+    const readNums = ids => { const ch = {}; for (const [id, k] of ids) { const e = $(id); if (!e) continue; const t = (e.value || '').trim().replace(',', '.'); if (t === '') continue; if (!/^\d+(\.\d+)?$/.test(t)) throw new Error('Scrivi un numero (es. 1050 oppure 4,5)'); ch[k] = Number(t); } return ch; };
+    box.querySelectorAll('[data-fixmi]').forEach(b => b.onclick = async () => {
+      const m = M.find(x => x.id === b.dataset.fixmi);
+      const v = await ask(`Correggi l'arrivo latte ${m.milk_lot}`, `<div class="hint">Scrivi solo ciò che cambia. L'originale resta sul registro MOD-01 con il motivo; se cambiano i kg, il magazzino del latte si adegua. La temperatura si corregge dalla sua registrazione CCP 1a qui sopra (così, se è fuori limite, il latte viene respinto).</div>
+        <div class="form">${numIn('fx-kg', 'kg', m.qty_kg)}<div><label>DDT (ora ${esc(m.ddt_number || '—')})</label><input id="fx-ddt" type="text"></div></div>${REASONS}`,
+        'Salva la correzione', () => { const ch = readNums([['fx-kg', 'qty_kg']]); if ($('fx-ddt').value.trim()) ch.ddt_number = $('fx-ddt').value.trim();
+          if (!Object.keys(ch).length) throw new Error('Scrivi almeno un valore da correggere'); return { ch, reason: reasonOf() }; });
+      if (!v) return;
+      fail(await sb.rpc('correct_record', { p_table: 'milk_intake', p_id: m.id, p_changes: v.ch, p_reason: v.reason, p_staff_id: staff.id }), 'Correzione');
+      toast('Correzione registrata'); loadProdRecords();
+    });
+    box.querySelectorAll('[data-fixpb]').forEach(b => b.onclick = async () => {
+      const x = B.find(y => y.id === b.dataset.fixpb);
+      const v = await ask(`Correggi il lotto ${x.batch_lot}`, `<div class="hint">Scrivi solo ciò che cambia. La correzione resta nelle note del lotto; se cambiano i kg, il magazzino del lotto si adegua.</div>
+        <div class="form">${numIn('fx-out', 'kg prodotti', x.output_kg)}${x.input_kind === 'whey' ? '' : numIn('fx-ph', 'pH cagliata', x.curd_ph)}</div>${REASONS}`,
+        'Salva la correzione', () => { const ch = readNums([['fx-out', 'output_kg'], ['fx-ph', 'curd_ph']]); if (!Object.keys(ch).length) throw new Error('Scrivi almeno un valore da correggere');
+          if (ch.curd_ph != null && (ch.curd_ph < 3 || ch.curd_ph > 8)) throw new Error('pH impossibile: controlla la virgola'); return { ch, reason: reasonOf() }; });
+      if (!v) return;
+      fail(await sb.rpc('correct_record', { p_table: 'production_batches', p_id: x.id, p_changes: v.ch, p_reason: v.reason, p_staff_id: staff.id }), 'Correzione');
+      toast('Correzione registrata'); loadProdRecords();
+    });
   }
 
   // ---------- Piano ----------

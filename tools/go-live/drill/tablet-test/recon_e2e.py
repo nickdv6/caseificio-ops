@@ -4,6 +4,7 @@ bank credit, an unknown credit is classified by hand (note required), a missing 
 production login does not see the tab. Run with DB=<name> (default restore_drill)."""
 import json, subprocess, time, os, hmac, hashlib, base64, tempfile
 from playwright.sync_api import sync_playwright
+from e2e_op import op_js
 
 DB = os.environ.get('DB', 'restore_drill')
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
@@ -65,7 +66,7 @@ def open_console(p, who, hash_='incassi'):
     pg = ctx.new_page(); logs = []
     pg.on('pageerror', lambda e: logs.append('PAGEERROR ' + str(e)))
     pg.goto('http://localhost:8771/labels.html')
-    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(s))})")
+    pg.evaluate(f"localStorage.clear(); localStorage.setItem('sb-{REF}-auth-token', {json.dumps(json.dumps(s))}){op_js(s)}")
     pg.goto(f'http://localhost:8771/console.html#{hash_}')
     pg.wait_for_function("document.querySelector('#v-main.active')", timeout=20000)
     return pg, logs
