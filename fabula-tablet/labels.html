@@ -18,7 +18,7 @@ COUNT | Conta magazzino
 SHIP | Da spedire
 EFFL | Reflui
 HACCP: | Menu HACCP</textarea>
-<div class="bar"><button type="button" id="gen">Genera</button><button type="button" id="prt">Stampa</button><span>su carta adesiva · badge: <code>STAFF:CODICE | Nome</code> · lotto: <code>LOT:L20261005-A | Mozzarella | scad. 10/10/2026</code></span></div>
+<div class="bar"><button type="button" id="gen">Genera</button><button type="button" id="prt">Stampa</button><span>su carta adesiva · badge: <code>STAFF:CODICE | Nome</code> (il codice non si stampa) · lotto: <code>LOT:L20261005-A | Mozzarella | scad. 10/10/2026</code></span></div>
 <div class="grid" id="g"></div>
 <script>
 // v0.52: ?code=LOT:…&name=…&sub=…&n=6 prints n copies of one label (tablet: milk intake, batch close, lab sample).
@@ -42,7 +42,9 @@ HACCP: | Menu HACCP</textarea>
       new QRCode(q, { text: code, width: 140, height: 140 });
       const b = document.createElement('b'); b.textContent = name || ''; d.append(b);
       if (sub) { const s = document.createElement('small'); s.textContent = sub; d.append(s); }
-      const c = document.createElement('small'); c.className = 'c'; c.textContent = code; d.append(c);
+      // 13/10/2026 (audit PRINT-13): a badge never prints its code in clear, so nobody can read a colleague's
+      // card and type the code on the tablet; only the QR carries it. Lot and machine labels keep the code.
+      if (!/^STAFF:/i.test(code)) { const c = document.createElement('small'); c.className = 'c'; c.textContent = code; d.append(c); }
       g.append(d);
     });
   }
