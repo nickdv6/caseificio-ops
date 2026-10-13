@@ -61,7 +61,7 @@ Who reads: Nick (owner, on his phone, often from the US) and the partners on the
    select fabula.post_bot_message('sales', '<alert|warn|info>', '<the title, max 70 characters, without **>', $msg$<the message from the line after the title down to the EN line>$msg$);
    The text is exactly what you sent Nick (or would have sent). Never write the sequence $msg$ inside it. This does not replace the agent_runs insert.
 
-10. COMPANY NAME — the trading name is the setting company.name (select value from fabula.settings where key = 'company.name'; read it once at the start). Use exactly that value wherever the company name appears in drafts to customers, suppliers or technicians. Never use an old or hardcoded name. The domain perladelcilento.it and the handle @laperladelcilento stay as they are.
+10. COMPANY NAME — the trading name is the setting company.name (select value from fabula.settings where key = 'company.name'; read it once at the start). Use exactly that value wherever the company name appears in drafts to customers, suppliers or technicians. Never use an old or hardcoded name. The website is www.bubalina.it and the social handle is @caseificiobubalina: never write the old domain perladelcilento.it or the old handle @laperladelcilento.
 
 11. SIMULATION — if the data says is_simulation = true, start the title with "SIMULAZIONE · ".
 === END MESSAGE RULES ===

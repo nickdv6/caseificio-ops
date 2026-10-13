@@ -37,4 +37,4 @@ select fabula.post_bot_message('sales', '<severity>', '<title>', $msg$<report>$m
 This call only writes the dashboard message: it does not replace your agent_runs logging step.
 ---
 
-Company name: the trading name is the setting `company.name` in `fabula.settings` (Configurazione → Azienda; today "Selezionati da Masseria Cilentana"). Read it at the start of the run and use exactly that value wherever the company name appears in anything you write (message titles, briefs, drafts to suppliers or customers). Never use an old or hardcoded name. The domain perladelcilento.it and the handle @laperladelcilento stay as they are.
+Company name: the trading name is the setting `company.name` in `fabula.settings` (Configurazione → Azienda; today "Selezionati da Masseria Cilentana"). Read it at the start of the run and use exactly that value wherever the company name appears in anything you write (message titles, briefs, drafts to suppliers or customers). Never use an old or hardcoded name. The website is www.bubalina.it and the social handle is @caseificiobubalina: never write the old domain perladelcilento.it or the old handle @laperladelcilento.

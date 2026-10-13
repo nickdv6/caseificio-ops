@@ -5,7 +5,7 @@
    The last values are remembered on the device, so the right name shows on the login screen and offline.
    PERM.load(sb) refreshes them after login; admin.js updates them the moment a company.* setting is saved. */
 (() => {
-  const DEFAULT = { name: 'La Perla del Cilento' }, KEY = 'fabula_company';
+  const DEFAULT = { name: 'Caseificio Bubalina' }, KEY = 'fabula_company';
   const clean = o => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, String(v ?? '').trim()]).filter(([, v]) => v));
   let data = { ...DEFAULT };
   try { Object.assign(data, clean(JSON.parse(localStorage.getItem(KEY) || '{}'))); } catch {}

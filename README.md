@@ -17,6 +17,25 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Bubalina domain, tracking links and tablet name (13/10/2026)
+The shop trades as **Caseificio Bubalina** on **www.bubalina.it** (perladelcilento.it only redirects there). Project doc
+`claude/ga4-setup-2026-10-12.md` has the GA4 set-up and the tagged links for the Google profile and social bios.
+- Migrations `20261013041042_bubalina_domain_cleanup` and `20261013041309_bubalina_launch_newsletter_utm` (applied live via
+  MCP, files saved here with the same versions; patches are guarded: no match, no change):
+  `mkt_local_qr` / `trade_settings` / `company_name()` fallbacks → bubalina.it / "Caseificio Bubalina"; launch-plan post links
+  (`mkt_seed_launch`) built from `trade.store_url`, newsletter links with `utm_medium=email`; creator outreach signature
+  "bubalina.it"; collab-disclosure message "@caseificiobubalina"; settings `trade.store_url` → https://www.bubalina.it and
+  `mkt.hashtags` #laperladelcilento → #caseificiobubalina; `mkt_channels` "sito" note.
+- Setting `mkt.local_site_url` → https://www.bubalina.it (a settings edit, in the settings history): every signage and
+  local-ad QR (`mkt_local_qr`, `v_mkt_local_items.qr_url`) now opens bubalina.it.
+- Tablet (sw **perla-v63**): Marketing → Canali link/QR builder uses `mkt.local_site_url` (was hard-coded
+  perladelcilento.it); the offline / first-load company name (`brand.js` DEFAULT, page `<title>`s and `data-brand` headers)
+  is "Caseificio Bubalina". Internal keys keep the old prefix on purpose: service-worker cache `perla-vNN` (the outside
+  watcher `tools/watch/check.sh` and `app.js` match on it), localStorage `perla_*`, backup format `la-perla-backup/1`.
+- Bot message rule 10 now says: website www.bubalina.it, handle @caseificiobubalina, never the old domain or handle
+  (`tools/bots/MESSAGE-RULES.md`, `tools/bots/prompts/*.txt`, `tools/sales/bot_vendite_prompt.md`, and the same sentence
+  in the 14 enabled scheduled bots, updated 13/10; the disabled weekly-brief task was left as it was).
+
 ## Audit backlog: items under an hour, High/Critical (v0.95)
 From the 12/10/2026 audit backlog (project doc `claude/audit-2026-10-12/`): every item with effort S and severity High or
 Critical that v0.93/v0.94 had not fixed. Migrations `v095a` (food safety, production) and `v095b` (farm, settings, print,
@@ -249,7 +268,7 @@ system — lives here. Nothing is a paid app.
   v0.49 extends it to marketing/sales copy (creator outreach, Predis brief, Vendite lead messages: "Nick di <nome>") and
   to the 16 scheduled bots, whose prompts read `company.name` at run time. Not dynamic: `fabula-tablet/manifest.json`
   (home-screen name, edit by hand), the SOP sheet and go-live board (static text). The domain perladelcilento.it and the
-  handle @laperladelcilento are accounts, not the name, and stay.
+  handle @laperladelcilento were kept at first; since 13/10 the site is www.bubalina.it and the handle @caseificiobubalina.
 
 ## Production floor guard rails (v0.80)
 The tablet now enforces the HACCP critical points instead of trusting a tap. `v_process_steps` returns each step's

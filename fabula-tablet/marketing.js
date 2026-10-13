@@ -265,7 +265,8 @@
   let lastUtm = '';
   $('utm-go').onclick = () => {
     const p = new URLSearchParams({ utm_source: $('utm-src').value.trim() || 'qr', utm_medium: $('utm-med').value.trim() || 'qr', utm_campaign: $('utm-camp').value.trim() || 'lancio' });
-    lastUtm = 'https://perladelcilento.it' + $('utm-page').value + '?' + p.toString();
+    const site = String(settings['mkt.local_site_url']?.value || 'https://www.bubalina.it').trim().replace(/\/+$/, '');
+    lastUtm = site + $('utm-page').value + '?' + p.toString();
     $('utm-out').textContent = lastUtm; $('utm-qr').innerHTML = '';
     if (window.QRCode) new QRCode($('utm-qr'), { text: lastUtm, width: 180, height: 180, colorDark: '#1e3a5f', colorLight: '#ffffff' });
   };
