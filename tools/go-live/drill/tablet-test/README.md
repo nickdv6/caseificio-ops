@@ -96,6 +96,8 @@ Last run 13/10/2026 (v0.97), fresh replay (no backup) + setup.sql + one milk sup
 prod_e2e 13/13, audit_e2e 18/18, operator_e2e 37/37, s_items_e2e 38/38 (needs the owner row operator_e2e creates), offline_e2e 11/11,
 paper_e2e 9/9, device_e2e 9/9, farm_amend_e2e 16/16, farm_test 12/12, farm_weight_e2e 11/11, notify_fn_e2e 12/12, floor_e2e 38/38,
 guard_e2e 18/18 (last). Rerunning on the same day: delete today's T-CF1 tasks first (offline_e2e adds them at fixed times).
+Last run 13/10/2026 (v0.98), fresh replay of all 175 migrations + setup.sql + one milk supplier, same order with numbers_e2e 39/39
+before guard_e2e: all 16 suites `FAILURES: none`.
 
 19. `python3 floor_e2e.py` (v0.97, audit floor flows) — red «È giusto?» before an out-of-limit value (cold room, milk), the NC card,
     the re-check as a red box with the minutes left, «Annulla» asks, cleaning item not done, «Non fatta…» on an earlier task, stock
@@ -103,3 +105,10 @@ guard_e2e 18/18 (last). Rerunning on the same day: delete today's T-CF1 tasks fi
     two tablets with the same lot letter, a double tap in dosing ignored, 60 h DOP, milk arrival from the paper sheet.
     Expect `FAILURES: none` (38 checks). Confirmations are now a question on screen: tests answer them with `e2e_op.answer_ask`.
 
+20. `python3 numbers_e2e.py` (v0.98, audit numbers and limits; port 8778, browser in it-IT) — «4,5» saved as 4.5 with the echo line,
+    «1.200» and 450 °C refused before saving; a 3100 kg vat refused; a 200 % yield corrected in the same save (milk kg, reason,
+    correction record) and a low yield with its reason; dosing ×10 asks and keeps the pack lot; a DDT price ×100 asks; Console →
+    Ricette per-vat preview, Enter does not save, ×10 asks with a reason; Configurazione range, unit, refusal, high-impact question and
+    bell notice, list for the manual status; farm page temperature warnings; Ingrosso «1150» refused, «11,90» saved.
+    Expect `FAILURES: none` (39 checks). Run it before guard_e2e. Number fields are text with `inputmode=decimal` now: tests type
+    «12,5» or «12.5» (both read the same).

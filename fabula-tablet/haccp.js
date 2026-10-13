@@ -298,8 +298,9 @@
     box.querySelectorAll('[data-fixpb]').forEach(b => b.onclick = async () => {
       const x = B.find(y => y.id === b.dataset.fixpb);
       const v = await ask(`Correggi il lotto ${x.batch_lot}`, `<div class="hint">Scrivi solo ciò che cambia. La correzione resta nelle note del lotto; se cambiano i kg, il magazzino del lotto si adegua.</div>
-        <div class="form">${numIn('fx-out', 'kg prodotti', x.output_kg)}${x.input_kind === 'whey' ? '' : numIn('fx-ph', 'pH cagliata', x.curd_ph)}</div>${REASONS}`,
-        'Salva la correzione', () => { const ch = readNums([['fx-out', 'output_kg'], ['fx-ph', 'curd_ph']]); if (!Object.keys(ch).length) throw new Error('Scrivi almeno un valore da correggere');
+        <div class="form">${numIn('fx-out', 'kg prodotti', x.output_kg)}${x.input_kind === 'whey' ? '' : numIn('fx-ph', 'pH cagliata', x.curd_ph)}<label>Se la resa è bassa: cosa è andato perso<input type="text" id="fx-yn" placeholder="es. metà cagliata persa"></label></div>${REASONS}`,
+        'Salva la correzione', () => { const ch = readNums([['fx-out', 'output_kg'], ['fx-ph', 'curd_ph']]); const yn = (document.getElementById('fx-yn').value || '').trim(); if (yn) ch.yield_note = yn;   // v0.98 (audit D-06)
+          if (!Object.keys(ch).length) throw new Error('Scrivi almeno un valore da correggere');
           if (ch.curd_ph != null && (ch.curd_ph < 3 || ch.curd_ph > 8)) throw new Error('pH impossibile: controlla la virgola'); return { ch, reason: reasonOf() }; });
       if (!v) return;
       fail(await sb.rpc('correct_record', { p_table: 'production_batches', p_id: x.id, p_changes: v.ch, p_reason: v.reason, p_staff_id: staff.id }), 'Correzione');

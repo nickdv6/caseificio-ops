@@ -116,3 +116,18 @@ the 5-minute Telegram push, cleaning not done), offline times through `save_ops(
 a measurement keeps the pH, the next free lot letter, Italian errors, stock count against what the system holds at saving, 60 h DOP,
 paper milk date, grants. 13/10/2026: 63/63 PASS.
 
+
+# Audit numbers and limits (v0.98)
+```
+tools/go-live/drill/infra-test/replay.sh n_test
+su postgres -c "psql -d n_test -f tools/go-live/drill/prod-test/test_audit_numbers.sql" | grep -E "PASS|FAIL"
+```
+Settings (range and unit refused with the name, comma, sì/no, dates, lists by value or label, yield min/max pair, a re-seed of an
+existing key, `setting_num` on an unreadable value, the bell notice with who changed it, a bot shown as «Un bot o il sistema»), batch yield (above
+the maximum refused, below the minimum needs `yield_note`, vat + 10 %, whey 95 %, simulations skipped), `correct_batch_milk` (milk
+input, raw-milk adjustment, correction record, signed by the operator on a shared login, through `save_ops`), milk (rejected over CCP 1a by the
+database, physical limits), recipe doses (×2 confirm + reason, 0 refused, units normalised, an item in a recipe keeps unit/active/
+counted), dosing (negative, ×3/⅓ confirm, pack lot, closed lot), goods receipt (expired, 3× quantity, ±50 % price), farm page
+limits, wholesale (step, the maximum for customers only and on increases only, «Confermi?» only with `can_confirm`, exceptions),
+reserved prices and tiers, `trade_price` capped by the list. 13/10/2026: 89/89 PASS on a fresh replay and on the database built by
+the SQL Editor script.

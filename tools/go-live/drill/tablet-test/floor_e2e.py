@@ -180,7 +180,7 @@ try:
     nfail = lambda: pg.evaluate("JSON.parse(localStorage.getItem('fabula_failed')||'[]').length")
     pg.evaluate("[...document.querySelectorAll('#form .card.rej')].find(c => c.innerText.includes('Filatura')).querySelector('button.btn').click()"); pg.wait_for_timeout(2000)
     check('A-11 «Rifai» opens the form with the value, the time it was done and who did it',
-          'Da rifare' in form_txt() and pg.evaluate("document.getElementById('v').value") == '61.5' and pg.evaluate("document.getElementById('pday').value") == TODAY
+          'Da rifare' in form_txt() and pg.evaluate("document.getElementById('v').value") in ('61.5', '61,5') and pg.evaluate("document.getElementById('pday').value") == TODAY
           and pg.evaluate("document.getElementById('ptime').value") != '' and pg.evaluate("document.getElementById('pwho').value") == 'Test Casaro',
           title() + ' | ' + form_txt()[:120].replace('\n', ' | '))
     pg.click('#btn-form-cancel'); pg.wait_for_timeout(300); answer_ask(pg)

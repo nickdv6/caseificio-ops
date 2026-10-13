@@ -12,10 +12,41 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
-- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97).
+- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
+
+## Audit numbers and limits (v0.98)
+The «numbers and limits» items of the 12/10/2026 audit (project doc `claude/audit-fixes-v098-2026-10-13.md`). Migrations
+`v098a` (settings), `v098b` (batch, milk, recipes, dosing, goods receipt, farm page) and `v098c` (wholesale); live apply:
+`tools/go-live/live-apply/2026-10-13_v098_sql-editor.sql` (built by `make_v098_script.py`; database first, then the site);
+tablet sw `perla-v66`; wholesale theme `shopify-theme-trade/assets/trade.js`.
+- **A-13 · numbers on the tablet:** every number field takes the Italian comma («1,5»), refuses «1.200» as ambiguous, has a
+  minimum, a maximum and a unit (from the CCP limits and the settings), and shows under the field what it understood
+  («= 1,5 kg»). Out of range it turns red with the allowed range and Salva stops on it.
+- **C-02 / C-03 / D-13 · settings:** min, max and unit per number setting, lists for the choice settings, sì/no for flags,
+  dates as dd/mm/yyyy; the database refuses out-of-range values with the setting's name. High-impact settings (milk price,
+  vat size, approvals, stock push…) ask before saving and post who changed what to the bell. `setting_num()` falls back to the
+  default instead of breaking on an unreadable value. Magic-link validity 24 h.
+- **D-06 · batch yield:** mozzarella 10–45 %, ricotta 2–25 % (`prod.*yield_min/max_pct`). Above the maximum the close asks to
+  correct the milk kg (`correct_batch_milk`: milk taken, raw-milk stock and a correction record); below the minimum it asks the
+  reason (`yield_note`, also in the HACCP correction dialog). Milk in a vat ≤ `prod.vat_kg` + 10 %; whey ≤ 95 % of the vat.
+- **D-07 / FARM-07 · milk:** the database rejects milk over the CCP 1a limit itself; physical limits on temperature, kg, fat,
+  protein, pH and cells. The farm page warns before shipping milk over the alert or rejection temperature.
+- **B-14 / D-27 · recipe doses:** the console shows each dose per vat with before/after; more than ±25 % asks, ×2 or ÷2 needs a
+  confirmation and a reason (kept in the notes); 0 refused. **D-20:** units normalised; an item used in a recipe keeps its unit,
+  stays active and counted.
+- **D-19 · dosing:** negative refused, more than 3× or under ⅓ of the recipe asks; the pack lot (rennet, cultures, salt) is
+  recorded and remembered per item; a closed lot takes no more doses.
+- **D-18 · goods receipt:** expired goods refused; more than 3× what is still to arrive, or a price ±50 % from the order, asks.
+- **TRADE-01 / D-23 · wholesale:** quantities in whole steps; customers cannot go above `trade.max_kg_per_delivery` (150 kg)
+  in one delivery; over 3× their usual and over `trade.confirm_kg_per_delivery` the portal asks «Confermi?» (only pages that
+  send `can_confirm`). Reserved prices > 0 and ≤ base; tiers ≤ reserved price, discounts ≤ 50 %; `trade_price()` stays
+  between 0 and the list.
+- Every «asks» is a database error with HINT `confirm` (P0001 «…Confermi?» for wholesale): the page asks, then resends with
+  `p_confirm` / `confirm = true`.
+- Tests: `prod-test/test_audit_numbers.sql` 89/89, `tablet-test/numbers_e2e.py` 39/39; every other suite passes on a fresh database.
 
 ## Audit floor flows (v0.97)
 The High items of the 12/10/2026 audit on the floor tablet (project doc `claude/audit-fixes-v097-2026-10-13.md`). Migrations

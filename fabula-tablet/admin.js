@@ -59,7 +59,11 @@
   const itNum = v => v === '' || v == null || !Number.isFinite(Number(v)) ? String(v ?? '') : String(v).trim().replace('.', ',');
   const WDAYS = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
   const shown = (r, v) => { const k = kindOf(r); if (v === '' || v == null) return 'vuoto'; if (k === 'flag') return Number(v) === 1 ? 'sì' : 'no'; if (k === 'date') return fmtD(v);
-    if (k === 'weekdays') return String(v).split(',').map(x => WDAYS[Number(x) - 1] || x).join(' '); if (k === 'number') return itNum(v); return SECRET.has(r.key) ? '••••' : v; };
+    if (k === 'choice') return ((r.options || []).find(o => o.v === String(v)) || {}).l || v;
+    if (k === 'weekdays') return String(v).split(',').map(x => WDAYS[Number(x) - 1] || x).join(' '); if (k === 'number') return itNum(v) + (r.unit ? ' ' + r.unit : ''); return SECRET.has(r.key) ? '••••' : v; };
+  // v0.98 (audit C-02): the range a number setting accepts (the database refuses anything outside it)
+  const rangeOf = r => r.min_value == null && r.max_value == null ? '' : `da ${r.min_value == null ? '…' : itNum(r.min_value)} a ${r.max_value == null ? '…' : itNum(r.max_value)}${r.unit ? ' ' + r.unit : ''}`;
+  const outOfRange = r => { const n = Number(r.value); return (r.min_value != null && n < Number(r.min_value)) || (r.max_value != null && n > Number(r.max_value)); };
   async function loadParams() {
     const { data, error } = await sb.from('settings').select('*').order('key');
     if (error) { $('p-secs').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
@@ -117,7 +121,7 @@
   const monthVal = v => { const t = String(v || '').trim(); if (!t) return ''; let m = t.match(/^(\d{4})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}-01`; m = t.match(/^(\d{1,2})[\/.-](\d{4})$/); return m ? `${m[2]}-${m[1].padStart(2, '0')}-01` : t; };
   function paramRow(r, edit) {
     const k = kindOf(r), att = attOf(r), row = document.createElement('div'); row.className = 'set-row' + (k === 'text' ? ' text' : '') + (att ? ' att' + (att === 'da compilare' ? ' att-empty' : '') : ''); row.dataset.key = r.key; if (att) row.dataset.att = att;
-    row.innerHTML = `<div class="lbl"${att ? ` data-att="${att}"` : ''}>${esc(r.description || r.key)}<span class="was" hidden></span></div>`; row.title = r.key;
+    row.innerHTML = `<div class="lbl"${att ? ` data-att="${att}"` : ''}>${esc(r.description || r.key)}${k === 'number' && rangeOf(r) ? `<small class="rng">possibile ${esc(rangeOf(r))}</small>` : ''}${r.impact_it ? '<small class="imp" title="' + esc(r.impact_it) + '">cambia il comportamento per tutti</small>' : ''}<span class="was" hidden></span></div>`; row.title = r.key;
     const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0'; row.append(right);
     if (READONLY.has(r.key)) { const t = document.createElement('div'); t.className = 'ro'; t.textContent = r.value || '—'; right.append(t); return row; }
     if (k === 'weekdays') {          // v0.95 (audit C-04): seven boxes instead of a "1,2,3,4,5,6" text that could silently empty the delivery days
@@ -131,6 +135,7 @@
     }
     let inp;
     if (k === 'flag') { inp = document.createElement('select'); inp.innerHTML = '<option value="1">Sì</option><option value="0">No</option>'; inp.value = Number(r.value) === 1 ? '1' : '0'; }
+    else if (k === 'choice') { inp = document.createElement('select'); inp.innerHTML = (r.options || []).map(o => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join(''); inp.value = r.value; }   // v0.98 (audit C-03): a list, never free text
     else { inp = document.createElement('input'); inp.type = k === 'date' ? 'date' : k === 'month' ? 'month' : k === 'time' ? 'time' : SECRET.has(r.key) ? 'password' : 'text';
       inp.value = k === 'month' ? String(r.value || '').slice(0, 7) : k === 'number' ? itNum(r.value) : (r.value ?? '');
       if (k === 'number') { inp.inputMode = 'decimal'; inp.style.textAlign = 'right'; }
@@ -143,6 +148,7 @@
     inp.oninput = sync; inp.onchange = sync;
     inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); saveParams().catch(err => toast(err.message || String(err), 'err')); } if (e.key === 'Escape') { inp.value = k === 'month' ? String(r.orig).slice(0, 7) : k === 'flag' ? (Number(r.orig) === 1 ? '1' : '0') : k === 'number' ? itNum(r.orig) : r.orig; sync(); r.value = r.orig; row.classList.remove('dirty'); row.querySelector('.was').hidden = true; saveState(); } };
     right.append(inp);
+    if (k === 'number' && r.unit) { const u = document.createElement('span'); u.className = 'unit'; u.textContent = r.unit; right.append(u); }   // v0.98 (audit C-02)
     if (SECRET.has(r.key)) { const b = document.createElement('button'); b.type = 'button'; b.className = 'eye'; b.textContent = 'mostra'; b.onclick = () => { const on = inp.type === 'password'; inp.type = on ? 'text' : 'password'; b.textContent = on ? 'nascondi' : 'mostra'; }; right.append(b); }
     return row;
   }
@@ -159,6 +165,7 @@
     for (const r of dirty) {
       const k = kindOf(r);
       if (k === 'number' && (r.value === '' || isNaN(Number(r.value)))) { focusRow(r.key); throw new Error(`"${r.description || r.key}": inserisci un numero`); }
+      if (k === 'number' && outOfRange(r)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": ${itNum(r.value)}${r.unit ? ' ' + r.unit : ''} non è possibile, scrivi un valore ${rangeOf(r)}. Controlla la virgola.`); }
       if ((k === 'date' || k === 'month') && r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": data non valida`); }
       if (k === 'time' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": scrivi l'ora, es. 18:00`); }
       if (k === 'weekdays' && !r.value) { focusRow(r.key); throw new Error(`"${r.description || r.key}": scegli almeno un giorno`); }
@@ -168,6 +175,11 @@
     if (jumps.length && !confirm('Controlla questi valori: cambiano di 10 volte o più.\n\n' +
         jumps.map(r => `${r.description || r.key}: ${itNum(r.orig)} → ${itNum(Number(r.value))}`).join('\n') +
         '\n\nI decimali si scrivono con la virgola (0,044). Salvare comunque?')) { focusRow(jumps[0].key); return; }
+    // v0.98 (audit C-02): a setting that changes behaviour for everyone says what it does before it is saved (and goes to the bell after)
+    const imp = dirty.filter(r => r.impact_it);
+    if (imp.length && !confirm('Questi parametri cambiano il comportamento per tutti:\n\n' +
+        imp.map(r => `${r.description || r.key}: ${shown(r, r.orig)} → ${shown(r, kindOf(r) === 'number' ? Number(r.value) : r.value)}\n   ${r.impact_it}`).join('\n\n') +
+        '\n\nLa modifica arriva come avviso nella campanella, con il tuo nome. Salvare?')) { focusRow(imp[0].key); return; }
     const res = await Promise.all(dirty.map(r => { const v = kindOf(r) === 'number' ? String(Number(r.value)) : r.value; return sb.from('settings').update({ value: v }).eq('key', r.key).select('key').then(x => ({ r, v, ...x })); }));
     const bad = res.filter(x => x.error || !(x.data || []).length);
     res.filter(x => !x.error && (x.data || []).length).forEach(({ r, v }) => { r.orig = v; r.value = v; if (r.key.startsWith('company.')) BRAND.set({ [r.key]: v }); });

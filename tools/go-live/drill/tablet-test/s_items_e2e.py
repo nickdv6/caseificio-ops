@@ -150,7 +150,7 @@ try:
     setf({'ricyn': 'si'})
     check('A-16 «Sì» shows the kg of whey', has('whey'))
     setf({'ricyn': 'no', 'ph': 52}); save_form()
-    check('D-12 a curd pH of 52 is refused on the tablet before anything is saved or queued', view() == 'v-form' and 'pH della cagliata impossibile: 52' in toast()
+    check('D-12 a curd pH of 52 is refused on the tablet before anything is saved or queued', view() == 'v-form' and ('pH della cagliata impossibile: 52' in toast() or '52 non è possibile per «pH cagliata»' in toast())
           and sql1(f"select output_kg is null from fabula.production_batches where batch_lot = '{LB}'") == 't', toast())
     setf({'ph': ''}); save_form()
     answer_ask(pg)   # v0.97: the question replaces «premi Salva di nuovo»

@@ -33,7 +33,11 @@ h2{font-family:var(--display);font-size:1.6rem;margin:0 0 10px;text-transform:up
 .big{font-family:var(--display);font-size:2.2rem;padding:28px}
 label{display:block;font-weight:600;margin-top:14px;color:var(--muted);font-size:.95rem;text-transform:uppercase;letter-spacing:.04em}
 input,select{width:100%;font:1.6rem var(--body);padding:14px;border:2px solid var(--rule);border-radius:10px;background:var(--paper);color:var(--fg);margin-top:4px}
-input[type=number]{font-variant-numeric:tabular-nums}
+input[type=number],input[data-num]{font-variant-numeric:tabular-nums}
+/* v0.98 (audit A-13): the number as the tablet read it, under the box; red when it is not possible */
+.echo{font-size:1.15rem;font-weight:600;color:var(--muted);margin-top:4px;min-height:1.2em;font-variant-numeric:tabular-nums}
+.echo.bad{color:var(--warn)} input.bad{border-color:var(--warn)}
+.dose-pack{margin-top:10px}.dose-pack input{font-size:1.3rem;padding:10px}
 .limit{color:var(--warn);font-weight:600;margin-top:6px}
 .tasks{display:flex;flex-direction:column;gap:8px}
 .task{display:flex;justify-content:space-between;align-items:center;background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:12px 14px}
@@ -147,12 +151,14 @@ input[type=number]{font-variant-numeric:tabular-nums}
     <div class="dose-instr" id="d-instr"></div>
     <div class="dose-src" id="d-src"></div>
   </div>
+  <div class="dose-pack" id="d-pack" style="display:none"><label for="d-lot">Lotto della confezione (facoltativo, se c'è)</label><input id="d-lot" type="text" autocapitalize="characters" autocomplete="off" placeholder="come stampato sulla confezione"></div>
   <div class="dose-last" id="d-last"></div>
   <button class="btn huge" id="d-ok">✓ Fatto</button>
   <button class="btn secondary" id="d-diff">Ho usato una quantità diversa</button>
   <div id="d-alt" style="display:none">
     <label for="d-alt-in" id="d-alt-l">Quantità usata</label>
-    <div class="alt-row"><input id="d-alt-in" type="number" inputmode="decimal" step="0.1"><span id="d-alt-u"></span></div>
+    <div class="alt-row"><input id="d-alt-in" type="text" inputmode="decimal" autocomplete="off"><span id="d-alt-u"></span></div>
+    <div class="echo" id="d-alt-echo"></div>
     <div class="limit" id="d-warn"></div>
     <button class="btn" id="d-alt-ok">Conferma</button>
   </div>

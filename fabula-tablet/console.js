@@ -737,13 +737,46 @@
     if (!Object.keys(byProd).length) box.innerHTML = '<div class="empty">Nessun preset: vengono creati con la migrazione v0.26.</div>';
   }
 
+  // v0.98 (audit B-14/D-27): a dose is shown in what it means for one vat («= 0,08 l per una caldaia da 310 kg»), live while typing;
+  // a change of more than 25 % asks with old → new per vat, more than 2 times also asks the reason (the database refuses it without).
+  // Doses are written with the comma (0,00025) and never saved by Enter.
+  let VAT = 310;
+  const fq = (v, d) => Number(v).toLocaleString('it-IT', { maximumFractionDigits: d });
+  const qtyHuman = (v, unit) => { const u = String(unit || '');
+    if (u === 'l' && v < 1) return fq(v * 1000, v * 1000 < 10 ? 1 : 0) + ' ml'; if (u === 'kg' && v < 1) return fq(v * 1000, v * 1000 < 10 ? 1 : 0) + ' g';
+    return fq(v, v < 10 ? 2 : 1) + ' ' + u; };
+  const perVat = (basis, v, unit, sku) => !Number.isFinite(v) ? 'numero non valido: usa la virgola per i decimali (0,00025)'
+    : basis === 'per_kg_milk' ? (sku === 'RIC-BUF-KG' ? `= ${qtyHuman(v * 100, unit)} ogni 100 kg di siero` : `= ${qtyHuman(v * VAT, unit)} per una caldaia da ${UI.num(VAT, 0)} kg di latte`)
+    : basis === 'per_kg_output' ? `= ${qtyHuman(v * 100, unit)} ogni 100 kg di prodotto` : `= ${qtyHuman(v, unit)} a lotto`;
+  const doseTxt = v => Number(v).toLocaleString('it-IT', { maximumFractionDigits: 10, useGrouping: false });   // never «5e-7»
+  async function saveDose(r, f, v, extra) {
+    const go = (more = {}) => sb.rpc('update_recipe_dose', { p_recipe_id: r.recipe_id, p_qty: v, ...extra, ...more });
+    const old = Number(r.qty_per_unit), ratio = old > 0 ? v / old : 1;
+    let more = {};
+    const askReason = () => { const why = prompt('Perché cambia così tanto? (es. caglio nuovo, più debole) — resta nella ricetta:'); if (why == null) { const e = new Error('annullato'); e.silent = true; throw e; }
+      if (why.trim().length < 3) throw new Error('Scrivi il motivo del cambio della dose'); return why.trim(); };
+    if (old > 0 && v !== old && (ratio > 1.25 || ratio < 0.8)) {
+      const times = ratio >= 1 ? ratio : 1 / ratio;
+      if (!confirm(`${r.component_name}: la dose cambia da ${doseTxt(old)} a ${doseTxt(v)} ${r.unit} (${UI.num(times, times < 10 ? 1 : 0)} volte ${ratio >= 1 ? 'di più' : 'di meno'}).\n\n` +
+          `Prima: ${perVat(r.basis, old, r.unit, f.sku).replace(/^= /, '')}\nDopo: ${perVat(r.basis, v, r.unit, f.sku).replace(/^= /, '')}\n\nVale da oggi per ogni lotto. Controlla la virgola: confermi?`)) { const e = new Error('annullato'); e.silent = true; throw e; }
+      if (ratio > 2 || ratio < 0.5) more = { p_confirm: true, p_notes: askReason() };
+    }
+    let { error } = await go(more);
+    if (error && error.hint === 'confirm') {                   // the database thinks it is a big change (another tab, older numbers)
+      if (!confirm(error.message + '\n\nConfermi?')) { const e = new Error('annullato'); e.silent = true; throw e; }
+      ({ error } = await go({ p_confirm: true, p_notes: askReason() }));
+    }
+    if (error) throw error;
+  }
   async function loadRecipes() {
     const box = $('recipes'); box.innerHTML = '';
-    const [{ data: rows, error }, { data: fins }, { data: comps }] = await Promise.all([
+    const [{ data: rows, error }, { data: fins }, { data: comps }, { data: vs }] = await Promise.all([
       sb.from('v_recipe_editor').select('*'),
       sb.from('products').select('sku, name').eq('kind', 'finished_good').eq('active', true).order('sku'),
-      sb.from('products').select('sku, name, unit').in('kind', ['consumable', 'packaging']).eq('active', true).order('name')]);
+      sb.from('products').select('sku, name, unit').in('kind', ['consumable', 'packaging']).eq('active', true).order('name'),
+      sb.from('settings').select('value').eq('key', 'prod.vat_kg').maybeSingle()]);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (vs && Number(vs.value) > 0) VAT = Number(vs.value);
     (fins || []).forEach(f => {
       const mine = (rows || []).filter(r => r.finished_sku === f.sku);
       const card = document.createElement('div'); card.className = 'card'; card.style.marginBottom = '16px';
@@ -754,11 +787,16 @@
       mine.forEach(r => {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td><span class="ph">${PHASE[r.phase] || esc(r.phase)} · ${r.step_order}</span></td><td><b>${esc(r.component_name)}</b><br><small class="status">${esc(r.component_sku)}</small></td><td class="status">${BASIS(f.sku)[r.basis] || esc(r.basis)}</td>`;
-        const tdQ = document.createElement('td'); tdQ.className = 'num'; const q = document.createElement('input'); q.type = 'number'; q.step = 'any'; q.min = '0'; q.value = Number(r.qty_per_unit); tdQ.append(q, document.createTextNode(' ' + r.unit));
+        const tdQ = document.createElement('td'); tdQ.className = 'num'; const q = document.createElement('input'); q.type = 'text'; q.inputMode = 'decimal'; q.dataset.noenter = '1'; q.style.width = '110px'; q.value = doseTxt(Number(r.qty_per_unit));
+        const pv = document.createElement('div'); pv.className = 'small'; pv.style.whiteSpace = 'normal';
+        const prev = () => { pv.textContent = perVat(r.basis, UI.parseIt(q.value), r.unit, f.sku); }; q.addEventListener('input', prev); prev();
+        tdQ.append(q, document.createTextNode(' ' + r.unit), pv);
         const tdR = document.createElement('td'); const ru = document.createElement('input'); ru.type = 'checkbox'; ru.checked = !!r.round_up; ru.title = 'Arrotonda per eccesso (pezzi)'; tdR.append(ru);
         const tdI = document.createElement('td'); const ins = document.createElement('input'); ins.type = 'text'; ins.value = r.instruction_it || ''; ins.placeholder = 'es. Pesa il caglio e aggiungilo al latte'; tdI.append(ins);
         const tdB = document.createElement('td'); tdB.style.whiteSpace = 'nowrap';
-        tdB.append(saveBtn(async () => { const { error } = await sb.rpc('update_recipe_dose', { p_recipe_id: r.recipe_id, p_qty: Number(q.value), p_round_up: ru.checked, p_instruction: ins.value.trim() }); if (error) throw error; UI.after(loadRecipes); }));
+        tdB.append(saveBtn(async () => { const v = UI.parseIt(q.value);
+          if (!Number.isFinite(v) || v <= 0) throw new Error(`${r.component_name}: scrivi la dose, un numero maggiore di zero con la virgola per i decimali`);
+          await saveDose(r, f, v, { p_round_up: ru.checked, p_instruction: ins.value.trim() }); UI.after(loadRecipes); }));
         const end = document.createElement('button'); end.className = 'btn sm sec'; end.textContent = 'Togli'; end.style.marginLeft = '6px'; end.title = 'Il componente non viene più dosato da domani';
         end.onclick = async () => { end.disabled = true; const { error } = await sb.rpc('end_recipe_component', { p_recipe_id: r.recipe_id }); if (error) { toast(error.message, 'err'); end.disabled = false; return; } toast('Componente tolto dalla ricetta'); loadRecipes(); };
         tdB.append(end); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr);
@@ -770,17 +808,21 @@
       const selB = document.createElement('select'); selB.innerHTML = Object.entries(BASIS(f.sku)).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
       const selP = document.createElement('select'); selP.innerHTML = '<option value="start">Avvio</option><option value="close">Chiusura</option>';
       const ord = document.createElement('input'); ord.type = 'number'; ord.value = 10 * (mine.length + 1); ord.style.width = '64px'; ord.title = 'ordine del passo';
-      const q2 = document.createElement('input'); q2.type = 'number'; q2.step = 'any'; q2.min = '0'; q2.placeholder = 'dose';
+      const q2 = document.createElement('input'); q2.type = 'text'; q2.inputMode = 'decimal'; q2.placeholder = 'dose'; q2.style.width = '110px';
+      const pv2 = document.createElement('div'); pv2.className = 'small'; pv2.style.whiteSpace = 'normal';
+      q2.addEventListener('input', () => { pv2.textContent = q2.value.trim() ? perVat(selB.value, UI.parseIt(q2.value), (comps || []).find(c => c.sku === selC.value)?.unit || '', f.sku) : ''; });
       const ru2 = document.createElement('input'); ru2.type = 'checkbox';
       const ins2 = document.createElement('input'); ins2.type = 'text'; ins2.placeholder = 'istruzione (facoltativa)';
       const btn = document.createElement('button'); btn.className = 'btn sm'; btn.textContent = 'Aggiungi';
       btn.onclick = async () => {
-        if (!selC.value) return toast('Scegli il componente', 'err'); if (!(Number(q2.value) > 0)) return toast('Inserisci la dose', 'err');
-        btn.disabled = true; const { error } = await sb.rpc('add_recipe_component', { p_finished_sku: f.sku, p_component_sku: selC.value, p_basis: selB.value, p_qty: Number(q2.value), p_round_up: ru2.checked, p_phase: selP.value, p_step_order: Number(ord.value) || 10, p_instruction: ins2.value.trim() || null });
+        const d2 = UI.parseIt(q2.value);
+        if (!selC.value) return toast('Scegli il componente', 'err'); if (!(d2 > 0)) return toast('Inserisci la dose: un numero maggiore di zero, con la virgola per i decimali', 'err');
+        if (!confirm(`Aggiungere ${selC.selectedOptions[0].textContent} alla ricetta di ${f.name}: ${doseTxt(d2)} ${BASIS(f.sku)[selB.value]} (${perVat(selB.value, d2, (comps || []).find(c => c.sku === selC.value)?.unit || '', f.sku).replace(/^= /, '')})?\nVale da oggi per ogni lotto.`)) return;
+        btn.disabled = true; const { error } = await sb.rpc('add_recipe_component', { p_finished_sku: f.sku, p_component_sku: selC.value, p_basis: selB.value, p_qty: d2, p_round_up: ru2.checked, p_phase: selP.value, p_step_order: Number(ord.value) || 10, p_instruction: ins2.value.trim() || null });
         btn.disabled = false; if (error) return toast(error.message, 'err'); toast('Componente aggiunto'); loadRecipes();
       };
       const c1 = document.createElement('td'); c1.append(selP, document.createTextNode(' '), ord); const c2 = document.createElement('td'); c2.append(selC); const c3 = document.createElement('td'); c3.append(selB);
-      const c4 = document.createElement('td'); c4.className = 'num'; c4.append(q2); const c5 = document.createElement('td'); c5.append(ru2); const c6 = document.createElement('td'); c6.append(ins2); const c7 = document.createElement('td'); c7.append(btn);
+      const c4 = document.createElement('td'); c4.className = 'num'; c4.append(q2, pv2); const c5 = document.createElement('td'); c5.append(ru2); const c6 = document.createElement('td'); c6.append(ins2); const c7 = document.createElement('td'); c7.append(btn);
       add.append(c1, c2, c3, c4, c5, c6, c7); tbl.append(add);
       const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(tbl); card.append(wrap); box.append(card);
     });

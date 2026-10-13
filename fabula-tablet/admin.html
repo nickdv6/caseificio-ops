@@ -63,6 +63,10 @@
 .set-row.att .lbl::before{content:attr(data-att);display:inline-block;margin:0 6px 2px 0;padding:0 7px;border-radius:9px;background:#f6ecd6;color:#6e5212;font-size:.72rem;font-weight:700;line-height:1.6;vertical-align:1px}
 .set-row.att-empty .lbl::before{background:#f6e1db;color:#9a3a22}
 .set-row .ro{font-size:.95rem;color:var(--muted);padding:6px 0;max-width:220px;overflow-wrap:anywhere}
+/* v0.98 (audit C-02): unit next to the field, allowed range and «high impact» under the description */
+.set-row .unit{font-size:.9rem;color:var(--muted);white-space:nowrap;align-self:center}
+.set-row .lbl small.rng,.set-row .lbl small.imp{display:block;font-size:.78rem;color:var(--muted);margin-top:2px}
+.set-row .lbl small.imp{color:#9a3a22;font-weight:600}
 .set-row .row{gap:4px;flex-wrap:nowrap}.set-row.text .row input.wide{flex:1;width:auto;min-width:0}
 .set-row .eye{appearance:none;border:1px solid var(--rule);background:var(--paper);border-radius:6px;padding:5px 8px;font:600 .8rem var(--body);cursor:pointer;color:var(--fg)}
 details.tech{margin-top:8px;border-top:1px dashed var(--rule)}

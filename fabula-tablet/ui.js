@@ -42,7 +42,7 @@
   document.addEventListener('input', e => { const t = e.target; if (!t.matches('input, select, textarea') || t.closest('.nodirty')) return; const s = scopeOf(t); if (s) s.classList.add('dirty'); });
   document.addEventListener('change', e => { const t = e.target; if (!t.matches('select, input[type=checkbox], input[type=date]') || t.closest('.nodirty')) return; const s = scopeOf(t); if (s) s.classList.add('dirty'); });
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || !e.target.matches('input') || e.target.closest('.nodirty, .login')) return;
+    if (e.key !== 'Enter' || !e.target.matches('input') || e.target.closest('.nodirty, .login') || e.target.dataset.noenter) return;   // v0.98 (B-14): a recipe dose is never saved by Enter
     const s = scopeOf(e.target); const b = s && s.classList.contains('dirty') && s.querySelector('.save');
     if (b && !b.disabled) { e.preventDefault(); b.click(); }
   });
@@ -63,7 +63,7 @@
     b.onclick = async () => {
       b.disabled = true; savingScope = scopeOf(b) || b.closest(SCOPE); deferred = false;
       try { await fn(); clean(b); toast(deferred ? 'Salvato · l\'elenco si aggiorna quando salvi anche le altre righe modificate' : 'Salvato'); runPending(); }
-      catch (err) { toast(err.message || String(err), 'err'); }
+      catch (err) { if (!(err && err.silent)) toast(err.message || String(err), 'err'); }   // v0.98: silent = the person chose not to save
       finally { savingScope = null; b.disabled = false; }
     };
     return b;

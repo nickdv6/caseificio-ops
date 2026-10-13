@@ -52,6 +52,7 @@ input.kgin{font-family:var(--display);font-size:2rem;font-weight:600;padding:10p
 .tot{display:flex;gap:10px}.tot .card{flex:1;margin:0}
 .empty{color:var(--muted);padding:6px 2px}
 .err{color:var(--warn);margin-top:12px}.okmsg{color:var(--ok);font-weight:600}
+.tempwarn{margin-top:6px;font-weight:600;min-height:1.2em}.tempwarn.amber{color:#8a5a00}.tempwarn.red{color:var(--warn)}
 .lotbig{font-family:var(--display);font-size:1.6rem;font-weight:600;letter-spacing:.02em;margin-top:6px}
 .btn.warn{background:var(--warn)}.lnk{color:var(--accent);background:none;border:0;padding:0;font:inherit;font-size:.9rem;text-decoration:underline;cursor:pointer}
 #amend-form{border-color:var(--amber)}
@@ -78,7 +79,8 @@ body.print .box{display:none}body.print .poster{display:block}
       <div class="day">Nuova spedizione al caseificio</div>
       <div class="meta">Il peso che scrivi qui è quello che vale: il caseificio conferma solo l'arrivo.</div>
       <label for="kg">Latte spedito (kg)</label><input id="kg" class="kgin" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 1050">
-      <label for="temp">Temperatura del latte alla partenza (°C, se misurata)</label><input id="temp" type="number" inputmode="decimal" step="0.1">
+      <label for="temp">Temperatura del latte alla partenza (°C, se misurata)</label><input id="temp" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 4,5">
+      <div class="tempwarn" id="temp-warn"></div>
       <label for="ddt">Numero DDT (se c'è)</label><input id="ddt" type="text" maxlength="40">
       <label for="note">Note</label><input id="note" type="text" maxlength="300" placeholder="es. cisterna 2">
       <div class="row" style="margin-top:14px"><button class="btn sec" id="ship-cancel">Annulla</button><button class="btn grow" id="ship-go">Registra spedizione</button></div>
@@ -169,6 +171,18 @@ body.print .box{display:none}body.print .poster{display:block}
     return order != null ? `Hai scritto ${kg(k)} kg ma l'ordine di oggi è ${kg(order)} kg${left > 0 && left < order ? ` (ne mancano ${kg(left)})` : ''}. È giusto?`
                          : `Hai scritto ${kg(k)} kg: di solito una spedizione è di circa ${kg(Math.round(med))} kg. È giusto?`;
   };
+  // v0.98 (audit FARM-07): the departure temperature is read the Italian way (4,5) and checked against the dairy's limits (CCP 1a,
+  // from the page data): above the alert the dairy has 2 hours to work it, above the limit it is rejected on arrival
+  const parseT = v => { const t = String(v || '').trim().replace(/\s|°c?/gi, '').replace(',', '.'); if (!t) return null; return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN; };
+  const tLim = () => ({ warn: Number((D && D.milk_temp && D.milk_temp.warn_max) ?? 6), max: Number((D && D.milk_temp && D.milk_temp.max) ?? 8) });
+  const tempNote = () => { const t = parseT($('temp').value), L = tLim(), w = $('temp-warn'); w.className = 'tempwarn';
+    if (t === null) { w.textContent = ''; return; }
+    if (Number.isNaN(t)) { w.textContent = 'Scrivi solo il numero, con la virgola (es. 4,5)'; w.classList.add('red'); return; }
+    if (t < -2 || t > 40) { w.textContent = `${kg(t)} °C? Controlla la virgola (si scrive 4,5)`; w.classList.add('red'); return; }
+    if (t > L.max) { w.textContent = `Oltre ${kg(L.max)} °C il caseificio deve RESPINGERE il latte all'arrivo.`; w.classList.add('red'); return; }
+    if (t > L.warn) { w.textContent = `Attenzione: oltre ${kg(L.warn)} °C il caseificio deve lavorarlo entro 2 ore dall'arrivo.`; w.classList.add('amber'); return; }
+    w.textContent = ''; };
+  $('temp').addEventListener('input', tempNote);
   let confirmKg = null, warnKg = null;
   const showWarn = (k, msg) => { warnKg = k; $('ship-warn-kg').textContent = kg(k) + ' kg'; $('ship-warn-msg').textContent = msg; $('ship-warn-yes').textContent = `Sì, ${kg(k)} kg`;
     $('ship-warn').hidden = false; $('ship-go').hidden = true; $('ship-err').textContent = ''; $('ship-warn').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
@@ -176,6 +190,9 @@ body.print .box{display:none}body.print .poster{display:block}
   $('ship-warn-no').onclick = () => { hideWarn(); confirmKg = null; $('ship-go').textContent = 'Registra spedizione'; $('kg').focus(); $('kg').select(); };
   $('ship-warn-yes').onclick = () => send(warnKg, true);
   $('ship-go').onclick = () => {
+    const tt = parseT($('temp').value);
+    if (tt !== null && (Number.isNaN(tt) || tt < -2 || tt > 40)) { $('ship-err').textContent = 'Temperatura: scrivi solo il numero dei gradi, con la virgola (es. 4,5), oppure lascia vuoto.'; $('temp').focus(); return; }
+    if (tt !== null && tt > tLim().max && !confirm(`Latte a ${kg(tt)} °C: oltre ${kg(tLim().max)} °C il caseificio lo deve respingere all'arrivo. Spedirlo lo stesso?`)) return;
     const k = parseKg($('kg').value);
     if (!Number.isFinite(k)) { $('ship-err').textContent = 'Scrivi i kg di latte spediti, solo il numero (es. 1050).'; return; }
     if (k < 50 || k > 5000) { $('ship-err').textContent = `${kg(k)} kg? Scrivi i kg di latte spediti: tra 50 e 5.000 (es. 1050).`; return; }
@@ -186,12 +203,13 @@ body.print .box{display:none}body.print .poster{display:block}
   async function send(k, confirmed) {
     $('ship-go').disabled = true; $('ship-warn-yes').disabled = true;
     try {
-      const d = await post({ action: 'ship', kg: k, confirm: confirmed, temp: $('temp').value.trim() || null, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null });
+      const tv = parseT($('temp').value);
+      const d = await post({ action: 'ship', kg: k, confirm: confirmed, temp: tv === null || Number.isNaN(tv) ? null : tv, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null });
       if (d.needs_confirm) { showWarn(k, d.message || `Hai scritto ${kg(k)} kg. È giusto?`); return; }   // the server's numbers were newer than the page's
       hideWarn();
       $('ship-form').hidden = true; $('ship-open').hidden = false;
       try { history.replaceState(null, '', location.pathname + '?t=' + encodeURIComponent(token)); } catch {}   // a reload doesn't reopen the form
-      ['kg', 'temp', 'ddt', 'note'].forEach(i => $(i).value = '');
+      ['kg', 'temp', 'ddt', 'note'].forEach(i => $(i).value = ''); tempNote();
       $('ship-ok').hidden = false;
       $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="lotbig">Lotto ${esc(d.shipment.milk_lot)}</div><div class="meta"><b>Scrivi il lotto sul DDT e sulla cisterna</b>: all'arrivo il caseificio lo controlla per sapere quale cisterna è. Sbagliato qualcosa? «Correggi o annulla» qui sotto.</div>`;
       load();

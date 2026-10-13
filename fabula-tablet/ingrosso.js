@@ -7,6 +7,12 @@
   const WD = ['', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato', 'domenica'], WDS = ['', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
   const eur2 = n => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
   const must = ({ data, error }) => { if (error) throw error; return data; };
+  // v0.98 (audit TRADE-01): a delivery far above the customer's usual comes back as «… Confermi?» (P0001): ask, then send it again confirmed
+  const withConfirm = async fn => { try { return await fn(false); } catch (e) {
+    if (!(e && e.code === 'P0001' && /Confermi\?\s*$/.test(e.message || ''))) throw e;
+    if (!confirm(e.message)) { const x = new Error('annullato'); x.silent = true; throw x; }
+    return fn(true); } };
+  const pIt = v => { const n = UI.parseIt(v); return Number.isFinite(n) ? n : NaN; };   // Italian numbers (11,50)
   let SET = {}, PRODS = [], TIERS = [], CUSTS = [], canManage = false;
 
   async function edge(action, body) {
@@ -78,14 +84,14 @@
     h += `<div class="row">${plan && plan.status === 'active' ? '<button class="btn sm sec" data-pause>Pausa (senza data)</button>' : ''}${plan && plan.status === 'paused' ? '<button class="btn sm" data-resume>Riprendi</button>' : ''}${plan && plan.status !== 'cancelled' ? '<button class="btn sm warn" data-cancel>Annulla piano</button>' : ''}
       ${c.trade_status === 'approved' ? '<button class="btn sm sec" data-suspend>Sospendi accesso</button>' : '<button class="btn sm" data-unsuspend>Riattiva accesso</button>'}${canManage && !c.shopify_company_id ? '<button class="btn sm" data-link>Collega a Shopify</button>' : ''}${canManage ? '<button class="btn sm sec" data-newlink>Nuovo link portale</button>' : ''}</div>`;
     h += `<h3 style="margin-top:12px">Modifiche in programma</h3>` + (S.exceptions.length ? S.exceptions.map(e => `<div class="ex"><span>${e.kind === 'skip' ? (e.note === 'pausa' ? 'Pausa' : 'Salta') : e.kind === 'override' ? esc(e.product) + ' → ' + e.qty : 'Fascia ' + esc(e.window)} · ${fmtD(e.date_from)}${e.date_to !== e.date_from ? ' → ' + fmtD(e.date_to) : ''} <span class="small">(${esc(e.created_by)})</span></span><button class="btn sm sec" data-cx="${e.id}">Annulla</button></div>`).join('') : '<div class="empty">Nessuna.</div>');
-    h += `<div class="row" data-scope><select data-exk><option value="skip">Salta</option><option value="override">Quantità temporanea</option><option value="window">Fascia temporanea</option></select><input type="date" data-exf><input type="date" data-ext title="fino al (facoltativo)"><select data-exv>${S.products.map(p => `<option value="${esc(p.variant_id)}">${esc(p.title)} ${esc(p.variant_title || '')}</option>`).join('')}</select><input type="number" data-exq placeholder="kg" min="0" step="0.5" style="width:80px"><select data-exw>${S.settings.windows.map(w => `<option>${esc(w)}</option>`).join('')}</select><span data-exadd></span></div>`;
+    h += `<div class="row" data-scope><select data-exk><option value="skip">Salta</option><option value="override">Quantità temporanea</option><option value="window">Fascia temporanea</option></select><input type="date" data-exf><input type="date" data-ext title="fino al (facoltativo)"><select data-exv>${S.products.map(p => `<option value="${esc(p.variant_id)}">${esc(p.title)} ${esc(p.variant_title || '')}</option>`).join('')}</select><input type="number" data-exq placeholder="kg" min="0" step="1" style="width:80px"><select data-exw>${S.settings.windows.map(w => `<option>${esc(w)}</option>`).join('')}</select><span data-exadd></span></div>`;
     h += `<h3 style="margin-top:12px">Ultime conferme</h3><div class="small">${S.log.slice(0, 6).map(l => `${new Date(l.at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })} · ${esc(l.message)}`).join('<br>')}</div>`;
     body.innerHTML = h;
     const sa = (action, payload, force) => sb.rpc('trade_staff_action', { p_customer: c.id, p_action: action, p_payload: payload, p_force: !!force }).then(must);
     const reload = async () => { body.dataset.loaded = ''; await renderCust(body, c); loadCusts(); };
     body.querySelector('[data-save]').appendChild(saveBtn(async () => {
-      const dd = {}; body.querySelectorAll('input[data-d]').forEach(i => { const q = Number(i.value) || 0; if (q > 0) { dd[i.dataset.d] = dd[i.dataset.d] || { window: body.querySelector(`select[data-w="${i.dataset.d}"]`).value, lines: {} }; dd[i.dataset.d].lines[i.dataset.v] = q; } });
-      await sa('save_schedule', { start_date: body.querySelector('[data-start]').value, address: body.querySelector('[data-addr]').value, instructions: body.querySelector('[data-instr]').value, days: dd });
+      const dd = {}; body.querySelectorAll('input[data-d]').forEach(i => { const q = pIt(i.value) || 0; if (q > 0) { dd[i.dataset.d] = dd[i.dataset.d] || { window: body.querySelector(`select[data-w="${i.dataset.d}"]`).value, lines: {} }; dd[i.dataset.d].lines[i.dataset.v] = q; } });
+      await withConfirm(conf => sa('save_schedule', { start_date: body.querySelector('[data-start]').value, address: body.querySelector('[data-addr]').value, instructions: body.querySelector('[data-instr]').value, days: dd, can_confirm: true, ...(conf ? { confirm: true } : {}) }));
       reload();
     }, 'Salva il piano'));
     const bind = (sel, fn, ok) => { const b = body.querySelector(sel); if (b) b.onclick = () => act(b, async () => { await fn(); reload(); }, ok); };
@@ -100,7 +106,7 @@
     body.querySelector('[data-exadd]').appendChild(saveBtn(async () => {
       const k = body.querySelector('[data-exk]').value, p = { kind: k, date_from: body.querySelector('[data-exf]').value, date_to: body.querySelector('[data-ext]').value || null, variant_id: body.querySelector('[data-exv]').value, qty: Number(body.querySelector('[data-exq]').value), window: body.querySelector('[data-exw]').value };
       if (!p.date_from) throw new Error('Indica la data');
-      const r = await sa('add_exception', p, true);
+      const r = await withConfirm(conf => sa('add_exception', { ...p, can_confirm: true, ...(conf ? { confirm: true } : {}) }, true));
       // v0.93 (audit B-20): «Salta» on a day already booked cancels that order; if it already went to Shopify, say so before anything else
       if (r && r.cancel_on_shopify) alert(r.message_it);
       else if (r && r.cancelled_orders) toast(r.message_it);
@@ -136,9 +142,13 @@
   async function loadListino() {
     await loadProds();
     $('prods').innerHTML = '<table><thead><tr><th>Prodotto</th><th>Variante</th><th class="num">kg/pezzo</th><th class="num">Base €</th><th class="num">Riservato €</th><th class="num">Min</th><th class="num">Passo</th><th>Attivo</th><th>Shopify</th><th></th></tr></thead><tbody>' +
-      PRODS.map(p => `<tr data-scope data-v="${esc(p.variant_id)}"><td>${esc(p.title)}</td><td>${esc(p.variant_title || '')}</td><td class="num">${num(p.kg_per_unit, 2)}</td><td class="num">${eur2(p.base_price_eur)}</td><td class="num"><input type="number" step="0.01" min="0" data-f="trade_price_eur" value="${p.trade_price_eur ?? ''}" style="width:90px"></td><td class="num"><input type="number" step="0.5" min="0.5" data-f="min_qty" value="${p.min_qty}" style="width:70px"></td><td class="num"><input type="number" step="0.5" min="0.5" data-f="step_qty" value="${p.step_qty}" style="width:70px"></td><td><input type="checkbox" data-f="active" ${p.active ? 'checked' : ''}></td><td class="small">${p.synced_at ? 'inviato ' + fmtD(p.synced_at) : 'mai inviato'}</td><td data-save></td></tr>`).join('') + '</tbody></table>';
+      PRODS.map(p => `<tr data-scope data-v="${esc(p.variant_id)}"><td>${esc(p.title)}</td><td>${esc(p.variant_title || '')}</td><td class="num">${num(p.kg_per_unit, 2)}</td><td class="num">${eur2(p.base_price_eur)}</td><td class="num"><input type="text" inputmode="decimal" data-f="trade_price_eur" value="${p.trade_price_eur == null ? '' : String(p.trade_price_eur).replace('.', ',')}" style="width:90px"></td><td class="num"><input type="number" step="1" min="1" data-f="min_qty" value="${p.min_qty}" style="width:70px" title="pezzi interi (Shopify)"></td><td class="num"><input type="number" step="1" min="1" data-f="step_qty" value="${p.step_qty}" style="width:70px" title="pezzi interi (Shopify)"></td><td><input type="checkbox" data-f="active" ${p.active ? 'checked' : ''}></td><td class="small">${p.synced_at ? 'inviato ' + fmtD(p.synced_at) : 'mai inviato'}</td><td data-save></td></tr>`).join('') + '</tbody></table>';
     $('prods').querySelectorAll('tr[data-v]').forEach(tr => tr.querySelector('[data-save]').appendChild(saveBtn(async () => {
-      const row = {}; tr.querySelectorAll('[data-f]').forEach(i => { row[i.dataset.f] = i.type === 'checkbox' ? i.checked : (i.value === '' ? null : Number(i.value)); }); row.updated_at = new Date().toISOString();
+      const row = {}; tr.querySelectorAll('[data-f]').forEach(i => { row[i.dataset.f] = i.type === 'checkbox' ? i.checked : (i.value.trim() === '' ? null : pIt(i.value)); });
+      if (Object.entries(row).some(([k, v]) => k !== 'active' && Number.isNaN(v))) throw new Error('Scrivi i numeri con la virgola per i decimali (11,50)');
+      const p0 = PRODS.find(x => x.variant_id === tr.dataset.v);   // v0.98 (audit D-23): «1150» for 11,50 is refused by the database too
+      if (row.trade_price_eur != null && p0 && p0.base_price_eur != null && row.trade_price_eur > Number(p0.base_price_eur)) throw new Error(`Prezzo riservato ${UI.num(row.trade_price_eur, 2)} € più alto del prezzo base (${UI.num(p0.base_price_eur, 2)} €): controlla la virgola`);
+      row.updated_at = new Date().toISOString();
       await upd('trade_products', { variant_id: tr.dataset.v }, row);
     })));
     $('tr-var').innerHTML = '<option value="">Tutti i prodotti</option>' + PRODS.map(p => `<option value="${esc(p.variant_id)}">${esc(p.title)} ${esc(p.variant_title || '')}</option>`).join('');
@@ -173,9 +183,10 @@
       $('q-run').onclick = () => act($('q-run'), async () => { const r = await edge('run-queue', {}); if (r.configured === false) throw new Error('Shopify non collegato: mancano SHOPIFY_CLIENT_ID e SHOPIFY_CLIENT_SECRET nei segreti Supabase (' + r.pending + ' in attesa)'); loadQueue(); return r; }, r => `Inviati ${r.processed} ordini: ${r.results.filter(x => x.ok).length} creati, ${r.results.filter(x => !x.ok).length} con errore`);
       $('pr-sync').onclick = () => act($('pr-sync'), async () => { const r = await edge('sync-prices', {}); $('pr-sync-st').textContent = `Inviati ${r.prices} prezzi, ${r.rules} regole, ${r.price_breaks} scaglioni (base ${r.basis})`; loadListino(); }, 'Listino inviato a Shopify');
       $('tr-add').replaceWith(saveBtn(async () => {
-        const v = $('tr-var').value || null, m = Number($('tr-min').value), pr = $('tr-price').value, pc = $('tr-pct').value;
+        const v = $('tr-var').value || null, m = pIt($('tr-min').value), pr = $('tr-price').value.trim(), pc = $('tr-pct').value.trim();
         if (!(m > 0)) throw new Error('Indica da quanti kg'); if (pr === '' && pc === '') throw new Error('Indica un prezzo o uno sconto %');
-        must(await sb.from('trade_price_tiers').insert({ variant_id: v, min_qty: m, price_eur: pr === '' ? null : Number(pr), discount_pct: pc === '' ? null : Number(pc), active: true }).select());
+        if ((pr !== '' && !(pIt(pr) > 0)) || (pc !== '' && !(pIt(pc) > 0))) throw new Error('Prezzo o sconto: un numero maggiore di zero, con la virgola per i decimali');
+        must(await sb.from('trade_price_tiers').insert({ variant_id: v, min_qty: m, price_eur: pr === '' ? null : pIt(pr), discount_pct: pc === '' ? null : pIt(pc), active: true }).select());
         $('tr-min').value = ''; $('tr-price').value = ''; $('tr-pct').value = ''; loadListino();
       }, 'Aggiungi'));
       $('cl-add').replaceWith(saveBtn(async () => {

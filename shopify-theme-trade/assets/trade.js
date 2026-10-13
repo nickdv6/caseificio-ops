@@ -17,9 +17,20 @@
   async function api(action, payload) {
     var r = await fetch(EDGE + '?action=portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: T, action: action, payload: payload || {} }) });
     var j = await r.json();
-    if (!r.ok) throw new Error(j.error || 'Operazione non riuscita');
+    if (!r.ok) { var e = new Error(j.error || 'Operazione non riuscita'); e.code = j.code; throw e; }
     if (j.state) S = j.state;
     return j;
+  }
+  // v0.98 (audit TRADE-01): a delivery much bigger than usual comes back as «… Confermi?»: ask, then send it again confirmed
+  async function apiConfirm(action, payload) {
+    payload = Object.assign({}, payload || {}, { can_confirm: true });   // this page can answer «Confermi?» (the database asks only then)
+    try { return await api(action, payload); }
+    catch (e) {
+      if (!(e.code === 'P0001' && /Confermi\?\s*$/.test(e.message || ''))) throw e;
+      if (!confirm(e.message)) { var x = new Error('Non salvato: correggi la quantità.'); throw x; }
+      var p = {}; Object.keys(payload || {}).forEach(function (k) { p[k] = payload[k]; }); p.confirm = true;
+      return api(action, p);
+    }
   }
   async function load() {
     var r = await fetch(EDGE + '?action=state&t=' + encodeURIComponent(T), { cache: 'no-store' });
@@ -170,16 +181,17 @@
     if (q('#tp-save')) q('#tp-save').onclick = function () {
       P.start_date = q('#tp-start').value; P.po_number = q('#tp-po').value; P.address = q('#tp-addr').value; P.instructions = q('#tp-instr').value;
       var days = {}; Object.keys(P.days).forEach(function (d) { var L = {}; Object.keys(P.days[d].lines).forEach(function (v) { if (Number(P.days[d].lines[v]) > 0) L[v] = Number(P.days[d].lines[v]); }); if (Object.keys(L).length) days[d] = { window: P.days[d].window || S.settings.default_window, lines: L }; });
-      act(q('#tp-save'), async function () { var r = await api('save_schedule', { start_date: P.start_date, address: P.address, instructions: P.instructions, po_number: P.po_number, days: days }); P = null; tab = 'prossime'; return { message_it: 'Piano salvato. Qui sotto le prossime consegne con prezzi e totali.' }; });
+      act(q('#tp-save'), async function () { var r = await apiConfirm('save_schedule', { start_date: P.start_date, address: P.address, instructions: P.instructions, po_number: P.po_number, days: days }); P = null; tab = 'prossime'; return { message_it: 'Piano salvato. Qui sotto le prossime consegne con prezzi e totali.' }; });
     };
     root.querySelectorAll('[data-skip]').forEach(function (b) { b.onclick = function () { if (!confirm('Saltare la consegna di ' + dIt(b.dataset.skip, true) + '?')) return; act(b, function () { return api('add_exception', { kind: 'skip', date_from: b.dataset.skip }); }); }; });
     root.querySelectorAll('[data-edit]').forEach(function (b) { b.onclick = function () { editing[b.dataset.edit] = !editing[b.dataset.edit]; render(); }; });
     root.querySelectorAll('[data-win-date]').forEach(function (b) { b.onclick = function () { editing['win-' + b.dataset.winDate] = !editing['win-' + b.dataset.winDate]; render(); }; });
     root.querySelectorAll('[data-edit-save]').forEach(function (b) { b.onclick = function () {
       var date = b.dataset.editSave, form = root.querySelector('[data-edit-form="' + date + '"]'), d = S.upcoming.find(function (x) { return x.date === date; });
-      var changes = []; form.querySelectorAll('[data-ev]').forEach(function (i) { var v = i.dataset.ev, cur = d.lines.find(function (l) { return l.variant_id === v; }), nq = Number(i.value) || 0, oq = cur ? Number(cur.qty) : 0; if (nq !== oq) changes.push({ variant_id: v, qty: nq }); });
+      var changes = []; form.querySelectorAll('[data-ev]').forEach(function (i) { var v = i.dataset.ev, cur = d.lines.find(function (l) { return l.variant_id === v; }), nq = Number(i.value) || 0, oq = cur ? Number(cur.qty) : 0; if (nq !== oq) changes.push({ variant_id: v, qty: nq, d: nq - oq }); });
+      changes.sort(function (a, b) { return a.d - b.d; });   // v0.98: decreases first, so the day's total never passes the limits on the way
       if (!changes.length) { banner = { ok: false, text: 'Nessuna quantità cambiata.' }; render(); return; }
-      act(b, async function () { var last; for (var c of changes) last = await api('add_exception', { kind: 'override', date_from: date, variant_id: c.variant_id, qty: c.qty }); editing = {}; return { message_it: 'Consegna di ' + dIt(date, true) + ' aggiornata: ' + changes.length + ' quantità cambiate solo per quel giorno.' }; });
+      act(b, async function () { var last; for (var c of changes) last = await apiConfirm('add_exception', { kind: 'override', date_from: date, variant_id: c.variant_id, qty: c.qty }); editing = {}; return { message_it: 'Consegna di ' + dIt(date, true) + ' aggiornata: ' + changes.length + ' quantità cambiate solo per quel giorno.' }; });
     }; });
     root.querySelectorAll('[data-win-save]').forEach(function (b) { b.onclick = function () { var date = b.dataset.winSave, sel = root.querySelector('[data-win-sel="' + date + '"]'); act(b, async function () { var r = await api('add_exception', { kind: 'window', date_from: date, window: sel.value }); editing = {}; return r; }); }; });
     if (q('#cl-save')) q('#cl-save').onclick = function () { var f = q('#cl-from').value, t = q('#cl-to').value || f; if (!f) { banner = { ok: false, text: 'Indica la data di inizio.' }; render(); return; } act(q('#cl-save'), function () { return api('add_exception', { kind: 'skip', date_from: f, date_to: t, note: 'chiusura' }); }); };

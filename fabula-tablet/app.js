@@ -23,18 +23,59 @@
   const romeDayStartIso = () => { const off = (new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Rome', timeZoneName: 'longOffset' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName') || {}).value || 'GMT+01:00';
     const m = off.match(/GMT([+-]\d{2}):?(\d{2})?/); return `${today()}T00:00:00${m ? m[1] + ':' + (m[2] || '00') : '+01:00'}`; };
   const likeSafe = v => String(v).replace(/[\\%_]/g, c => '\\' + c);   // exact, case-insensitive match with ilike
+  // v0.98 (audit A-13): numbers are typed in a text box with the number keyboard and read the Italian way, not left to the browser:
+  // «4,5» and «4.5» are the same; «1.200» (a dot before exactly three digits) is refused because it could be 1,2 or 1200 (and a
+  // browser in Italian read it as 1,2); «1.200,5» is 1200,5. A field may say what is physically possible (min/max/unit): outside it
+  // the field turns red, says why, and Salva does not go on. The value read is repeated under the box: «= 4,5 °C».
+  const parseNum = s => {
+    let t = String(s ?? '').trim().replace(/\s/g, '');
+    if (t === '') return { v: null };
+    if (t.includes(',') && t.includes('.')) { if (!/^[+-]?\d{1,3}(\.\d{3})+,\d+$/.test(t)) return { bad: true }; t = t.replace(/\./g, '').replace(',', '.'); }
+    else if (/^[+-]?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) return { amb: true };
+    else t = t.replace(',', '.');
+    return /^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(t) ? { v: Number(t) } : { bad: true };
+  };
+  const itNum = (v, d = 3) => v == null || v === '' || !Number.isFinite(Number(v)) ? '' : Number(v).toLocaleString('it-IT', { maximumFractionDigits: d, useGrouping: false });
+  function numCheck(i) {
+    const p = parseNum(i.value), e = $('echo-' + i.id), lbl = (i.labels && i.labels[0] ? i.labels[0].textContent : 'Valore').replace(/\s*[·(].*$/, '');
+    const u = i.dataset.unit ? ' ' + i.dataset.unit : '', lo = i.dataset.min === undefined ? null : Number(i.dataset.min), hi = i.dataset.max === undefined ? null : Number(i.dataset.max);
+    let msg = '';
+    if (p.amb) msg = i.dataset.int ? `«${i.value}»: scrivi ${i.value.replace(/\./g, '')} senza punto` : `«${i.value}»: scrivi ${i.value.replace(/\./g, '')} senza punto, oppure ${i.value.replace('.', ',')} con la virgola`;
+    else if (p.bad) msg = 'Scrivi solo il numero, con la virgola per i decimali (es. 4,5)';
+    else if (p.v != null && i.dataset.int && !Number.isInteger(p.v)) msg = `${lbl}: scrivi un numero intero`;
+    else if (p.v != null && ((lo != null && p.v < lo) || (hi != null && p.v > hi)))
+      msg = `${itNum(p.v)}${u} non è possibile per «${lbl}»: ${lo != null && hi != null ? `tra ${itNum(lo)} e ${itNum(hi)}${u}` : lo != null ? `almeno ${itNum(lo)}${u}` : `al massimo ${itNum(hi)}${u}`}. Controlla la virgola.`;
+    i.setCustomValidity(msg);
+    i.classList.toggle('bad', !!msg);
+    if (e) { e.textContent = msg || (p.v == null ? '' : `= ${itNum(p.v)}${u}`); e.classList.toggle('bad', !!msg); }
+    return msg ? null : p.v;
+  }
+  // a number put into a field by the tablet (a farm load, a plan, the scale) is written the Italian way, so it reads back the same
+  const setNum = (i, v) => { i.value = v == null || v === '' ? '' : itNum(v, 4); numCheck(i); };
+  const numOf = i => { const p = parseNum(i.value); return p.v == null || p.amb || p.bad ? null : p.v; };
   const field = (id, label, type = 'number', extra = {}) => {
     const l = document.createElement('label'); l.htmlFor = id; l.textContent = label;
     const i = document.createElement(type === 'select' ? 'select' : 'input');
     i.id = id; i.name = id;
-    if (type !== 'select') { i.type = type; if (type === 'number') { i.step = 'any'; i.inputMode = 'decimal'; } }   // v0.59: 'any' — a step made reportValidity() refuse real values (96.64 kg)
+    if (type === 'number') {
+      i.type = 'text'; i.inputMode = 'decimal'; i.autocomplete = 'off'; i.dataset.num = '1';
+      if (extra.min != null) i.dataset.min = extra.min; if (extra.max != null) i.dataset.max = extra.max;
+      if (extra.unit) i.dataset.unit = extra.unit; if (extra.int) i.dataset.int = '1';
+    } else if (type !== 'select') i.type = type;
     if (extra.options) extra.options.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; i.appendChild(o); });
     if (extra.required !== false) i.required = true;
     $('form').append(l, i);
+    if (type === 'number') { const e = document.createElement('div'); e.className = 'echo'; e.id = 'echo-' + id; $('form').append(e); i.addEventListener('input', () => numCheck(i)); }
     if (extra.limit) { const d = document.createElement('div'); d.className = 'limit'; d.textContent = extra.limit; $('form').append(d); }
     return i;
   };
-  const val = id => { const e = $(id); return e ? (e.type === 'number' ? (e.value === '' ? null : Number(e.value)) : e.value) : null; };
+  const val = id => { const e = $(id); return e ? (e.dataset.num ? numOf(e) : e.value) : null; };
+  const noteShow = (n, on) => { if (!n) return; n.required = on; n.style.display = on ? '' : 'none'; if (n.previousElementSibling) n.previousElementSibling.style.display = on ? '' : 'none'; };
+  // the possible range of a control point's reading (haccp_control_points.plausible_min/max, or the built-in copy)
+  const cpRange = code => { const c = refStore()['cp_' + code] || {}; const p = PLAUS[code] || [];
+    return { min: c.plausible_min ?? p[0], max: c.plausible_max ?? p[1], unit: c.unit && c.unit !== 'esito' ? c.unit : '' }; };
+  // settings the tablet needs offline (vat size, possible yields), kept with the other reference data
+  const setting = (k, d) => { const v = (refStore().settings || {})[k]; const n = Number(v); return v == null || v === '' || !Number.isFinite(n) ? d : n; };
   // v0.97 (audit A-17/A-07): a question that stays on screen until answered, with the numbers — no more «premi Salva di nuovo»
   // (a double tap answered it). Its buttons wait 1,5 s before they work. danger = red, for values that reject milk or hold a lot.
   function ask({ title, lines = [], yes = 'Sì, è giusto', no = 'No, correggo', danger = false, input = null }) {
@@ -44,7 +85,7 @@
       const h = document.createElement('div'); h.className = 'ask-t'; h.textContent = title; c.append(h);
       lines.filter(Boolean).forEach(t => { const p = document.createElement('div'); p.className = 'ask-l'; p.textContent = t; c.append(p); });
       let inp = null;
-      if (input) { const l = document.createElement('label'); l.textContent = input.label; inp = document.createElement('input'); inp.type = 'text'; inp.id = 'ask-in'; inp.placeholder = input.placeholder || ''; c.append(l, inp); }
+      if (input) { const l = document.createElement('label'); l.textContent = input.label; inp = document.createElement('input'); inp.type = 'text'; inp.id = 'ask-in'; inp.placeholder = input.placeholder || ''; if (input.mode) inp.inputMode = input.mode; inp.autocomplete = 'off'; c.append(l, inp); }
       const y = document.createElement('button'); y.type = 'button'; y.className = 'btn' + (danger ? ' warn' : ''); y.textContent = yes;
       const n = document.createElement('button'); n.type = 'button'; n.className = 'btn secondary'; n.textContent = no;
       [y, n].forEach(b => { b.disabled = true; }); setTimeout(() => [y, n].forEach(b => { b.disabled = false; }), 1500);
@@ -334,7 +375,6 @@
     return { keys: [...keys], made: [...made], used: [...used] };
   }
   const cpName = code => ((refStore()['cp_' + code] || {}).name) || code;
-  const itNum = v => v == null || v === '' ? '' : Number(v).toLocaleString('it-IT', { maximumFractionDigits: 2 });
   // one line in Italian for what a queued save was, and where to redo it (+ the values, to fill the form again)
   // what kind of record a save is (to know when «Rifai» has really redone it), the time and person of a check for the paper form
   function redoKind(ops) {
@@ -665,12 +705,31 @@
     const st = refStore(); if (key in st) return { data: st[key], error: null, cached: true };
     return { data: r ? r.data : null, error: (r && r.error) || null };
   }
+  const TABLET_SETTINGS = ['prod.vat_kg', 'prod.yield_min_pct', 'prod.yield_max_pct', 'prod.ricotta_yield_min_pct', 'prod.ricotta_yield_max_pct'];
+  // read again when a batch starts or closes (a manager may have changed them since the tablet started); offline: the kept copy
+  async function refreshSettings() {
+    const r = await live(sb.from('settings').select('key, value').in('key', TABLET_SETTINGS), 4000);
+    if (!r.error && Array.isArray(r.data) && r.data.length) putRef({ settings: { ...(refStore().settings || {}), ...Object.fromEntries(r.data.map(x => [x.key, x.value])) } });
+  }
+  // v0.98: the database asks for a confirmation (HINT confirm) that the tablet did not ask itself (other numbers on the server):
+  // ask now, then send the same save confirmed
+  async function saveConfirm(ops, idx, since = null) {
+    try { return await save(ops, since); }
+    catch (e) {
+      if (!(e && e.hint === 'confirm')) throw e;
+      const msg = String(e.message || '').replace(/^Passo \d+ di \d+ \([^)]*\):\s*/, '');
+      if (!(await ask({ danger: true, title: 'Controlla', lines: [msg, 'È giusto?'], yes: 'Sì, è giusto', no: 'No, correggo' }))) throw stop();
+      ops[idx].args.p_confirm = true; return save(ops, since);
+    }
+  }
   async function warmRefs() {                       // after login, in the background: one read per list
     try {
-      const [eq, cps, sup, pest, cust] = await Promise.all([sb.from('equipment').select('*').eq('active', true), sb.from('haccp_control_points').select('*').eq('active', true),
+      const [eq, cps, sup, pest, cust, set] = await Promise.all([sb.from('equipment').select('*').eq('active', true), sb.from('haccp_control_points').select('*').eq('active', true),
         sb.from('parties').select('id, legal_name').eq('is_milk_supplier', true).eq('active', true), sb.from('pest_stations').select('code, kind, location_it, inside').eq('active', true).order('inside', { ascending: false }).order('code'),
-        sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name')]);
+        sb.from('parties').select('id, legal_name').in('type', ['customer', 'both']).eq('active', true).order('legal_name'),
+        sb.from('settings').select('key, value').in('key', TABLET_SETTINGS)]);
       const patch = {};
+      if (set.data) patch.settings = Object.fromEntries(set.data.map(r => [r.key, r.value]));   // v0.98: vat size and possible yields, offline too
       (eq.data || []).forEach(e => { patch['eq_' + e.code] = e; });
       (cps.data || []).forEach(c => { patch['cp_' + c.code] = c; if (c.equipment_id && c.code !== 'CCP-MILK-TEMP') patch['cp_eq_' + c.equipment_id] = c; });
       if (sup.data) patch.milk_suppliers = sup.data; if (pest.data) patch.pest_stations = pest.data; if (cust.data) patch.customers = cust.data;   // v0.78
@@ -1012,7 +1071,7 @@
       const c = document.createElement('div'); c.className = 'card rej';
       c.innerHTML = `<div class="scan">Da rifare: ${esc(r.what)}</div><div>Fatta il ${esc(when(r.at))}. Controlla i valori e salva: se era su un foglio di carta, ricopia ora e data del foglio.</div>`;
       $('form').prepend(c);
-      Object.entries(r.fill || {}).forEach(([id, v]) => { const e = $(id); if (e && v != null && v !== '' && !e.readOnly && e.type !== 'file') { e.value = v; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); } });
+      Object.entries(r.fill || {}).forEach(([id, v]) => { const e = $(id); if (e && v != null && v !== '' && !e.readOnly && e.type !== 'file') { if (e.dataset.num) setNum(e, v); else e.value = v; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); } });
       if ($('pday') && $('ptime') && r.at && !(r.fill || {}).pday) { const d = new Date(r.at); $('pday').value = ROME_DAY.format(d); $('ptime').value = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome', hour12: false }); }
     }
     show('form'); const f = $('form').querySelector('input:not([readonly]),select'); if (f) f.focus();
@@ -1034,7 +1093,11 @@
     return 'stay';
   }
   $('btn-form-save').onclick = async () => {
-    if (!$('form').reportValidity()) return; $('btn-form-save').disabled = true;
+    $('form').querySelectorAll('input[data-num]').forEach(i => { if (i.offsetParent === null) i.setCustomValidity(''); else numCheck(i); });   // a hidden field does not block
+    if (!$('form').reportValidity()) {                    // v0.98 (audit A-13): an impossible number also says why, big enough to read
+      const bad = $('form').querySelector('input[data-num]:invalid'); if (bad && bad.validationMessage) { toast(bad.validationMessage, 'err', 7000); bad.focus(); }
+      return; }
+    $('btn-form-save').disabled = true;
     const cur = current;
     try {
       const r = await cur.onSave();
@@ -1056,9 +1119,11 @@
     if (eq.kind === 'thermometer' || eq.kind === 'scale' || eq.code.startsWith('PH-') || current.code.startsWith('CAL:')) return stepCalibration(eq);
     const { data: cp } = await cached('cp_eq_' + eq.id, () => sb.from('haccp_control_points').select('*').eq('equipment_id', eq.id).eq('active', true).neq('code', 'CCP-MILK-TEMP').maybeSingle());
     const lim = cp ? `limite ${cp.min_value ?? ''}${cp.min_value != null && cp.max_value != null ? '–' : ''}${cp.max_value ?? ''} ${cp.unit || ''}`.replace('limite –', 'limite max ') : '';
-    const t = field('temp', 'Temperatura °C', 'number', { limit: lim });
+    const t = field('temp', 'Temperatura °C', 'number', { limit: lim, ...(cp ? cpRange(cp.code) : { min: -30, max: 120 }), unit: '°C' });
     let note = null;
-    t.oninput = () => { const v = Number(t.value); const bad = cp && ((cp.max_value != null && v > cp.max_value) || (cp.min_value != null && v < cp.min_value)); if (bad && !note) { note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); } t.style.borderColor = bad ? 'var(--warn)' : ''; };
+    // v0.98: the «what did you do» field appears for a possible value out of limit, and goes away (not required) when corrected
+    t.oninput = () => { const v = t.validity.customError ? null : numOf(t); const bad = v != null && cp && ((cp.max_value != null && v > cp.max_value) || (cp.min_value != null && v < cp.min_value));
+      if (bad && !note) { note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); } noteShow(note, bad); t.style.borderColor = bad ? 'var(--warn)' : ''; };
     openForm(eq.name, eq.code, async () => {
       const v = val('temp'); const bad = cp && ((cp.max_value != null && v > cp.max_value) || (cp.min_value != null && v < cp.min_value));
       const warn = cp && ((cp.warn_max != null && v > cp.warn_max) || (cp.warn_min != null && v < cp.warn_min));
@@ -1086,7 +1151,7 @@
   }
   // 10 — meter
   function stepMeter(meter) {
-    field('reading', meter === 'elec_main' ? 'kWh sul contatore' : 'Lettura', 'number', { step: '1' });
+    field('reading', meter === 'elec_main' ? 'kWh sul contatore' : 'Lettura', 'number', { min: 0, max: 99999999, unit: meter === 'elec_main' ? 'kWh' : 'm³' });
     openForm('Contatore', meter, async () => {
       await save([scanEvent(current.code, 'task_done'), { table: 'meter_readings', row: { meter, reading: val('reading'), unit: meter === 'elec_main' ? 'kWh' : 'm3', read_by_id: me().id } }]);
       await closeTask({ code: 'T-KWH' }); toast('Lettura registrata ✓');
@@ -1193,12 +1258,12 @@
     const ddtIn = field('ddtn', 'Numero DDT', 'text'); ddtIn.value = ddt || ''; ddtIn.placeholder = 'come stampato sul DDT';   // v0.53: station QR "DDT:" arrives with no number
     const { data: cpT } = await cached('cp_CCP-MILK-TEMP', () => sb.from('haccp_control_points').select('*').eq('code', 'CCP-MILK-TEMP').maybeSingle());
     const tMax = Number(cpT?.max_value ?? 8), tWarn = Number(cpT?.warn_max ?? 6);
-    field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { step: '0.1' });
+    field('lot', 'Lotto / cisterna', 'text'); field('kg', 'kg (bilancia)', 'number', { min: 1, max: 5000, unit: 'kg' });
     // v0.96 (audit FARM-02): with a farm load the Masseria's kg stay as written, and the reception scale gets its own field;
     // over the tolerance (2 %) a reason is required and the dairy's weight is the one that counts
     const { data: tolRow } = await cached('set_milk_tol', () => sb.from('settings').select('value').eq('key', 'milk.weight_tolerance_pct').maybeSingle());
     const tolPct = Number((tolRow || {}).value) || 2;
-    const kgh = field('kgh', 'kg pesati qui (bilancia ricezione)', 'number', { required: false }); kgh.step = '0.1'; kgh.placeholder = 'leggi la bilancia';
+    const kgh = field('kgh', 'kg pesati qui (bilancia ricezione)', 'number', { required: false, min: 1, max: 5000, unit: 'kg' }); kgh.placeholder = 'leggi la bilancia';
     const kgInfo = document.createElement('div'); kgInfo.className = 'limit'; kgInfo.id = 'kgh-info'; $('form').append(kgInfo);
     const kgWhy = field('kgwhy', 'Perché i kg sono diversi?', 'text', { required: false }); kgWhy.placeholder = 'es. latte rimasto nella cisterna, la Masseria ha sbagliato a scrivere';
     const kgEls = [kgh.previousElementSibling, kgh, kgInfo], whyEls = [kgWhy.previousElementSibling, kgWhy];
@@ -1210,9 +1275,9 @@
         + (over ? ` — oltre il ${tolPct.toLocaleString('it-IT')} %: vale il peso del caseificio, scrivi il motivo (la Masseria e l'ufficio lo vedono)` : ' — vale il peso della Masseria');
       kgInfo.style.color = over ? '' : 'var(--muted)'; };
     kgh.addEventListener('input', showDiff);
-    field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)` });
+    field('temp', 'Temperatura latte °C', 'number', { limit: `CCP 1a: ≤ ${tMax} °C (oltre ${tWarn} °C lavorare entro 2 ore)`, ...cpRange('CCP-MILK-TEMP'), unit: '°C' });
     field('abx', 'Test antibiotici (CCP 1b)', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']], limit: 'Test rapido prima dello scarico' });
-    field('fat', 'Grasso % (se noto)', 'number', { step: '0.01', required: false }); field('prot', 'Proteine % (se note)', 'number', { step: '0.01', required: false }); field('scc', 'Cellule somatiche /ml (da analisi, se note)', 'number', { step: '1000', required: false }); field('photo', 'Foto DDT', 'file', { required: false });
+    field('fat', 'Grasso % (se noto)', 'number', { required: false, min: 3, max: 15, unit: '%' }); field('prot', 'Proteine % (se note)', 'number', { required: false, min: 2, max: 8, unit: '%' }); field('scc', 'Cellule somatiche /ml (da analisi, se note)', 'number', { required: false, min: 0, max: 10000000, int: true }); field('photo', 'Foto DDT', 'file', { required: false });
     const pb = paperBox('l\'arrivo del latte');                          // v0.97 (audit A-20)
     const applyShip = () => {                                              // a chosen shipment fixes supplier, lot and kg
       if (shipSel && shipSel.value === 'old') { setShipOpts(ships); shipSel.value = ''; }
@@ -1220,12 +1285,12 @@
       if (ddtIn.dataset.auto && ddtIn.value === ddtIn.dataset.auto) ddtIn.value = '';   // a DDT number filled in for the previous pick
       delete ddtIn.dataset.auto;
       if (x) { if (x.supplier_id && sup.some(y => y.id === x.supplier_id)) $('supplier').value = x.supplier_id;
-        kgIn.value = x.kg; lotF.value = need ? '' : x.milk_lot; lotF.placeholder = need ? 'dal controllo sul foglio' : '';
+        setNum(kgIn, x.kg); lotF.value = need ? '' : x.milk_lot; lotF.placeholder = need ? 'dal controllo sul foglio' : '';
         if (!need && x.ddt_number && !ddtIn.value) { ddtIn.value = x.ddt_number; ddtIn.dataset.auto = x.ddt_number; } }
-      else if (kgIn.readOnly) { kgIn.value = ''; lotF.value = ''; lotF.placeholder = ''; }
+      else if (kgIn.readOnly) { setNum(kgIn, ''); lotF.value = ''; lotF.placeholder = ''; }
       [kgIn, lotF].forEach(e => { e.readOnly = !!x; e.style.background = x ? '#f1efe9' : ''; });
       if (kgIn.previousElementSibling) kgIn.previousElementSibling.textContent = x ? 'kg scritti dalla Masseria' : 'kg (bilancia)';   // v0.96 (FARM-02)
-      kgEls.forEach(e => { e.style.display = x ? '' : 'none'; }); kgh.required = !!x; if (!x) { kgh.value = ''; kgWhy.value = ''; } showDiff();
+      kgEls.forEach(e => { e.style.display = x ? '' : 'none'; }); kgh.required = !!x; if (!x) { setNum(kgh, ''); kgWhy.value = ''; } showDiff();
       ddtIn.required = !x;                                                 // the farm may not have a DDT number for it
       if (chk) { chk.required = need; chkEls.forEach(e => { if (e) e.style.display = need ? '' : 'none'; }); if (!need) chk.value = ''; chkErr.textContent = ''; }
       if (card) { card.style.display = x ? '' : 'none';
@@ -1285,14 +1350,16 @@
         // v0.96 (audit A-04): both checks are linked to this delivery ($1 = the milk_intake row above)
         { rpc: 'log_milk_check', args: { p_milk_intake_id: '$1.id', p_cp_code: 'CCP-MILK-TEMP', p_value: val('temp'), p_staff_id: me().id, p_action: hot ? 'latte respinto' : null, p_source: paper ? 'paper' : 'tablet', p_equipment_code: 'TERM-01', ...(paper ? { p_logged_at: pb.iso(), p_written_by: pWho } : {}) } },
         { rpc: 'log_milk_check', args: { p_milk_intake_id: '$1.id', p_cp_code: 'CCP-MILK-ABX', p_value: Number(val('abx')), p_staff_id: me().id, p_action: abxPos ? 'latte respinto e isolato, Masseria avvisata' : null, p_source: paper ? 'paper' : 'tablet', ...(paper ? { p_logged_at: pb.iso(), p_written_by: pWho } : {}) } }];
-      await save(ops);
+      const svOut = await save(ops);
+      // v0.98 (audit D-07): the database decides the rejection (CCP 1a limit read there): if it rejected what the tablet accepted, say so
+      const dbRow = Array.isArray(svOut) && svOut[1] && typeof svOut[1] === 'object' ? svOut[1] : null, dbRej = accepted && !!dbRow && dbRow.accepted === false;
       // v0.97 (audit A-20): the DDT photo goes up with the record, or waits on the tablet until there is network
       const f = $('photo').files[0]; let photo = null;
       if (f) photo = await savePhoto(f, { path: `ddt/${paper ? pb.day() : today()}_${(ddtNo || lotIn).replace(/[^A-Za-z0-9-]/g, '_')}.jpg`, kind: 'ddt_in', date: paper ? pb.day() : today(), related_table: 'milk_intake', related_id: ops[1].row.id, by: me().id });
       const photoLine = photo === 'kept' ? 'Foto del DDT tenuta sul tablet: parte appena c\'è rete.' : photo === 'lost' ? 'La foto del DDT non si è potuta salvare: rifalla quando torna la rete.' : null;
       const lotv = lotIn, kgv = Number(kgEntered).toLocaleString('it-IT'), sup = ($('supplier').selectedOptions[0] || {}).textContent || '';
       const wLine = kd && kd.over ? `Pesati qui ${kd.d.toLocaleString('it-IT')} kg, la Masseria ne aveva scritti ${Number(shipX.kg).toLocaleString('it-IT')}: vale il peso del caseificio (la Masseria e l'ufficio lo vedono)` : null;
-      if (!accepted) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, why, 'Isola il latte e avvisa la Masseria e il responsabile.', photoLine], [], { warn: true });
+      if (!accepted || dbRej) return showDone('Latte RIFIUTATO', [`Lotto ${lotv} · ${kgv} kg`, dbRej ? (dbRow.rejection_reason || 'respinto dal sistema: oltre il limite') : why, 'Isola il latte e avvisa la Masseria e il responsabile.', photoLine], [], { warn: true });
       // v0.97 (audit A-15): warm milk = into the vat within 2 hours; it is a task with a time on Home, and the card says it
       const warm = val('temp') > tWarn && !paper, by = hhmm(new Date(Date.now() + 2 * 3600e3).toISOString());
       if (!warm) toast('Latte registrato ✓');
@@ -1378,6 +1445,7 @@
     return !r.error && !!(r.data && r.data.length);
   }
   async function stepBatchStart(milk, lot, pre = null) {   // pre: a proposal from the production plan (v0.70)
+    await refreshSettings();                         // v0.98: the vat size as it is now
     let { data: prods, error: pe } = await live(sb.from('products').select('id, name, byproduct_product_id, is_dop').eq('kind', 'finished_good').eq('active', true));
     if (pe || !prods) prods = lotView().products.filter(p => p.kind === 'finished_good' && p.active);   // offline
     if (!prods.length) throw new Error('Nessun prodotto disponibile (senza rete e prodotti non ancora salvati sul tablet)');
@@ -1425,7 +1493,8 @@
       if (pre.preset_id && [...preSel.options].some(o => o.value === pre.preset_id)) preSel.value = pre.preset_id;
     }
     field('mu', 'Unità', 'select', { options: [['kg', 'kg (bilancia)'], ['l', 'litri (contalitri)']] });
-    const kgIn = field('kg', 'Latte in caldaia', 'number', { step: '0.1' });
+    const kgIn = field('kg', 'Latte in caldaia', 'number', { min: 1, max: 5000, unit: 'kg' });
+    $('mu').addEventListener('change', () => { kgIn.dataset.unit = val('mu') === 'l' ? 'l' : 'kg'; numCheck(kgIn); });
     // v0.80: the day's pasteuriser check, asked here if nobody has recorded it yet (NON ok = no batch).
     // v0.97 (audit A-29): decided on Salva (a mis-tap on the list no longer records a non-conformity), and after a «NON ok» earlier
     // today an «Ok» needs a note of what was done
@@ -1436,12 +1505,12 @@
       if (valveKo) field('valvenote', 'Oggi era NON ok: cosa è stato fatto? (es. riparato da …, provato di nuovo)', 'text', { required: false });
     }
     // v0.80: pasteurisation (CCP 2) asked here when the chosen preset has no pasteurisation step
-    const pastIn = field('past', 'Temperatura di pastorizzazione (CCP 2), °C', 'number', { step: '0.1', required: false });
+    const pastIn = field('past', 'Temperatura di pastorizzazione (CCP 2), °C', 'number', { required: false, ...cpRange('CCP-PAST'), unit: '°C' });
     const pastLbl = pastIn.previousElementSibling;
     const togglePast = () => { const has = processSteps(presets, preSel.value, 'start').some(st => st.ccp === 'CCP-PAST' || /CCP\s*2/.test(st.name)); pastIn.style.display = pastLbl.style.display = has ? 'none' : ''; pastIn.required = !has; };
     preSel.addEventListener('change', togglePast); prodSel.addEventListener('change', togglePast); togglePast();
     if (pre) {
-      kgIn.value = pre.milk_kg;
+      setNum(kgIn, pre.milk_kg);
       const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
       const upd = () => { const v = val('mu') === 'l' ? (val('kg') || 0) * MILK_DENSITY : (val('kg') || 0);
         h.textContent = `Proposta: ${fmtKg(pre.milk_kg)} kg → ≈ ${fmtKg(Math.round(v * pre.yield_pct) / 100)} kg di ${pre.product} (resa ${String(pre.yield_pct).replace('.', ',')}%). Le dosi sono nel passo successivo.`; };
@@ -1455,6 +1524,8 @@
       if (pastIn.required) plausCheck('CCP-PAST', val('past'));             // v0.95 (audit D-12)
       // v0.95 (audit D-09): the database refuses more than the milk left (+2 % for the scale): say it here, before the dosing starts
       if (kg > leftKg * 1.02) throw new Error(`Sul latte ${lot} restano ${fmtKg(leftKg)} kg: hai scritto ${fmtKg(kg)} kg. Controlla il lotto sull'etichetta e i kg`);
+      const vat = setting('prod.vat_kg', null);                            // v0.98 (audit D-06): a vat holds what it holds (the database checks it too)
+      if (vat && kg > vat * 1.1) throw new Error(`Latte in caldaia ${fmtKg(kg)} kg: una caldaia ne tiene al massimo ${fmtKg(Math.round(vat * 1.1))} kg (Latte per lotto ${fmtKg(vat)} kg, +10 %). Controlla i kg.`);
       // the valve check of the day (a vat copied from today's paper sheet too: the result is the one on the sheet; a sheet of an
       // earlier day has its own line in «Ricopia», MOD-02)
       const askValve = !valveDone && (!paper || pb.day() === today());
@@ -1510,7 +1581,7 @@
     const sel = field('parent', 'Siero di quale lotto?', 'select', { options: [['', '— scegli il lotto —'], ...cand.map(b => [b.batch_lot,
       `${b.batch_lot} · ${fmtKg(b.output_kg)} kg${b.finished_at ? ' · chiuso alle ' + hhmm(b.finished_at) : ''}${Number(b.whey_kg) === 0 ? ' · avevi scelto «niente ricotta»' : ''}`])] });
     if (cand.length === 1) sel.value = cand[0].batch_lot;
-    field('whey', 'Siero per ricotta, kg', 'number', { step: '1' });
+    field('whey', 'Siero per ricotta, kg', 'number', { min: 1, max: 5000, unit: 'kg' });
     openForm('Avvia ricotta', 'dal siero di un lotto di mozzarella chiuso oggi', async () => {
       const b = cand.find(x => x.batch_lot === val('parent')); if (!b) throw new Error('Scegli il lotto');
       if (!(val('whey') > 0)) throw new Error('Scrivi i kg di siero');
@@ -1518,15 +1589,17 @@
     });
   }
   async function stepBatchEnd(b) {
+    await refreshSettings();                         // v0.98: the possible yields as they are now
     // v0.78: a batch started offline (no id yet) closes offline too: the update finds it by lot number, later steps take its id from that step
-    const bKey = b.id ? { id: b.id } : { batch_lot: b.batch_lot }, bId = b.id || '$1.id';
+    const bKey = b.id ? { id: b.id } : { batch_lot: b.batch_lot };
+    let bId = b.id || '$1.id';                      // v0.98: '$2.id' when a milk correction goes before the close
     let { data: prod, error: pre } = await live(sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single());
     if (pre || !prod) prod = cachedProduct(b.product_id);
     const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
     let ey = null;                                   // v0.70: expected yield (online; offline the plan kept on the tablet)
     const er = await live(sb.rpc('expected_yield', { p_product: b.product_id, p_preset: b.preset_id || null, p_exclude: b.id || null }), 5000);
     if (!er.error && er.data) ey = er.data; else if (planCache && planCache.yield && b.input_kind !== 'whey') ey = planCache.yield;
-    const outIn = field('out', 'kg prodotto', 'number', { step: '0.1' });
+    const outIn = field('out', 'kg prodotto', 'number', { min: 0, max: 5000, unit: 'kg' });
     if (ey) { const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
       const upd = () => { const o = val('out'); h.textContent = `Attesi ≈ ${fmtKg(Math.round(b.milk_in_kg * ey.pct) / 100)} kg (resa ${String(ey.pct).replace('.', ',')}%${String(ey.source).startsWith('default') ? ', stimata' : ''})` + (o ? ` · con ${fmtKg(o)} kg la resa è ${String(Math.round(o / b.milk_in_kg * 1000) / 10).replace('.', ',')}%` : ''); };
       outIn.addEventListener('input', upd); upd(); }
@@ -1535,13 +1608,13 @@
     const ccpDone = await ccpRecorded(ccpCode, b.batch_lot, b.id);
     // v0.96 (audit A-03): pasteurisation too — a start interrupted before CCP 2 must not close without it
     const pastDone = b.input_kind === 'whey' ? true : await ccpRecorded('CCP-PAST', b.batch_lot, b.id);
-    if (!pastDone) field('pastv', 'Temperatura di pastorizzazione (CCP 2), °C · non ancora registrata', 'number', { step: '0.1', limit: 'Valore letto all\'inizio del lotto; se era scritto sul foglio, ricopialo qui' });
-    if (!ccpDone) field('ccpv', b.input_kind === 'whey' ? 'Temperatura di affioramento (CCP 4), °C · non ancora registrata' : 'Temperatura della pasta filata (CCP 3), °C · non ancora registrata', 'number', { step: '0.1', limit: 'Valore letto sul termometro; se era scritto sul foglio, ricopialo qui' });
-    field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
+    if (!pastDone) field('pastv', 'Temperatura di pastorizzazione (CCP 2), °C · non ancora registrata', 'number', { ...cpRange('CCP-PAST'), unit: '°C', limit: 'Valore letto all\'inizio del lotto; se era scritto sul foglio, ricopialo qui' });
+    if (!ccpDone) field('ccpv', b.input_kind === 'whey' ? 'Temperatura di affioramento (CCP 4), °C · non ancora registrata' : 'Temperatura della pasta filata (CCP 3), °C · non ancora registrata', 'number', { ...cpRange(ccpCode), unit: '°C', limit: 'Valore letto sul termometro; se era scritto sul foglio, ricopialo qui' });
+    field('ph', 'pH cagliata (se misurato)', 'number', { required: false, min: 3, max: 8 }); field('n', 'Etichette da stampare', 'number', { required: false, min: 0, max: 200, int: true });
     const pb = paperBox('la fine del lotto');                            // v0.97 (audit A-20)
     if (byp) {                                       // v0.95 (audit A-16): an explicit choice, not an optional field that is easy to leave empty
       const ric = field('ricyn', 'Ricotta con il siero di questo lotto?', 'select', { options: [['', '— scegli —'], ['si', 'Sì, faccio la ricotta'], ['no', 'No, niente ricotta oggi']] });
-      const wIn = field('whey', 'Siero per ricotta, kg', 'number', { step: '1', required: false }), wLbl = wIn.previousElementSibling;
+      const wIn = field('whey', 'Siero per ricotta, kg', 'number', { required: false, min: 1, max: 5000, unit: 'kg' }), wLbl = wIn.previousElementSibling;
       const tog = () => { const on = ric.value === 'si'; wIn.style.display = wLbl.style.display = on ? '' : 'none'; wIn.required = on; };
       ric.addEventListener('change', tog); tog();
     }
@@ -1550,10 +1623,41 @@
       pb.check(); const paper = pb.on(), pWho = paper ? pb.who() : null;
       const ricNo = !!byp && val('ricyn') === 'no';
       if (byp && val('ricyn') === 'si' && !(val('whey') > 0)) throw new Error('Scrivi i kg di siero per la ricotta');
-      const out = val('out'), ph = val('ph'), n = val('n'), whey = byp && val('ricyn') === 'si' ? val('whey') : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
+      bId = b.id || '$1.id';                       // per attempt: an earlier attempt with a milk correction must not leave '$2.id'
+      const out = val('out'), ph = val('ph'), n = val('n'), whey = byp && val('ricyn') === 'si' ? val('whey') : 0;
+      // v0.98 (audit D-06): a yield that cannot be means a wrong number of kg. Above the maximum: the kg of milk written at the start
+      // are corrected here with a reason (or the kg made); below the minimum: what was lost is written down. The database checks the same.
+      const isWhey = b.input_kind === 'whey', what = isWhey ? 'siero' : 'latte';
+      const yLo = isWhey ? setting('prod.ricotta_yield_min_pct', 2) : setting('prod.yield_min_pct', 10), yHi = isWhey ? setting('prod.ricotta_yield_max_pct', 25) : setting('prod.yield_max_pct', 45);
+      let milkKg = Number(b.milk_in_kg), fix = null, yNote = null, y = Math.round(out / milkKg * 1000) / 10;
+      if (y > yHi) {
+        if (!(await ask({ danger: true, title: `Resa ${itN(y)} %: impossibile`, yes: `Correggo i kg di ${what}`, no: 'Correggo i kg prodotti',
+          lines: [`${fmtKg(out)} kg di prodotto da ${fmtKg(milkKg)} kg di ${what}: al massimo si arriva al ${itN(yHi)} %.`,
+                  `Se all'inizio del lotto i kg di ${what} sono stati scritti sbagliati, correggili ora (con il motivo). Se hai sbagliato i kg prodotti, correggili nel modulo.`] }))) throw stop();
+        const kgT = await ask({ title: `Kg di ${what} del lotto ${b.batch_lot}`, yes: 'Avanti', no: 'Annulla', lines: [`All'inizio sono stati scritti ${fmtKg(milkKg)} kg. Scrivi quelli giusti.`],
+          input: { label: `Kg di ${what} messi in caldaia`, placeholder: `es. ${fmtKg(setting('prod.vat_kg', 310))}`, min: 1, mode: 'decimal' } });
+        if (kgT == null) throw stop();
+        const pk = parseNum(kgT);
+        if (pk.amb || pk.bad || !(pk.v > 0)) throw new Error(`«${kgT}»: scrivi solo il numero dei kg, senza punto (es. 310)`);
+        const vat = setting('prod.vat_kg', null);
+        if (!isWhey && vat && pk.v > vat * 1.1) throw new Error(`${fmtKg(pk.v)} kg: una caldaia ne tiene al massimo ${fmtKg(Math.round(vat * 1.1))} kg. Controlla i kg.`);
+        const why = await ask({ title: 'Motivo della correzione', yes: 'Correggi', no: 'Annulla', lines: [`${what} in caldaia: ${fmtKg(milkKg)} → ${fmtKg(pk.v)} kg.`],
+          input: { label: 'Perché (es. scritto 31 invece di 310)', min: 3 } });
+        if (why == null) throw stop();
+        fix = { kg: pk.v, reason: why }; milkKg = pk.v; y = Math.round(out / milkKg * 1000) / 10;
+        if (y > yHi) throw new Error(`Anche con ${fmtKg(milkKg)} kg di ${what} la resa è ${itN(y)} %: controlla i kg prodotti (${fmtKg(out)}).`);
+      }
+      if (y < yLo) {
+        yNote = await ask({ title: `Resa ${itN(y)} %: troppo bassa`, yes: 'Registra con il motivo', no: 'Correggo i kg',
+          lines: [`${fmtKg(out)} kg di prodotto da ${fmtKg(milkKg)} kg di ${what}: di solito almeno il ${itN(yLo)} %.`, 'Se i kg sono giusti e una parte del lotto è andata persa, scrivi cosa è successo.'],
+          input: { label: 'Cosa è successo? (es. metà cagliata persa)', min: 3 } });
+        if (yNote == null) throw stop();
+      }
+      if (fix && !b.id) bId = '$2.id';
       // v0.97 (audit A-17): an unusual yield is a question with the numbers that stays until answered (a double tap used to confirm it)
-      if (ey && Math.abs(y - ey.pct) > (ey.tolerance_pts ?? 4) && !(await ask({ title: 'Controlla i kg', yes: 'Sì, è giusto', no: 'Correggo',
-        lines: [`${fmtKg(out)} kg di prodotto da ${fmtKg(b.milk_in_kg)} kg di ${b.input_kind === 'whey' ? 'siero' : 'latte'}: resa ${itN(y)} %.`, `Di solito ${itN(ey.pct)} %: hai scritto bene i kg?`] }))) throw stop();
+      if (ey && !yNote && Math.abs(y - ey.pct) > (ey.tolerance_pts ?? 4) && !(await ask({ title: 'Controlla i kg', yes: 'Sì, è giusto', no: 'Correggo',
+        lines: [`${fmtKg(out)} kg di prodotto da ${fmtKg(milkKg)} kg di ${what}: resa ${itN(y)} %.`, `Di solito ${itN(ey.pct)} %: hai scritto bene i kg?`] }))) throw stop();
+      if (whey > milkKg * 0.95) throw new Error(`Siero per la ricotta ${fmtKg(whey)} kg: non può superare il latte della caldaia (${fmtKg(milkKg)} kg). Controlla i kg.`);   // v0.98 (D-30)
       // v0.97 (audit A-07): a missing CCP written here out of its limit holds the lot: red question first
       if (!pastDone && !(await confirmOut('CCP-PAST', val('pastv'), b.batch_lot))) throw stop();
       if (!ccpDone && !(await confirmOut(ccpCode, val('ccpv'), b.batch_lot))) throw stop();
@@ -1562,9 +1666,11 @@
       const lotLink = [`🖨 Stampa ${n || 1} etichett${(n || 1) === 1 ? 'a' : 'e'} lotto ${b.batch_lot}`, labelUrl(b.batch_lot, prod?.name, 'scad. ' + ddmm(expS), n || 1)];
       const startRicotta = () => runRicotta(b.batch_lot, byp, whey, `✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`], [lotLink]);
       const close = async () => {
-        const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey, ...(paper ? { paper_at: pb.iso(), paper_by: pWho, copied_by: me().full_name } : {}) } }),
+        const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey, ...(fix ? { milk_corrected: fix } : {}), ...(paper ? { paper_at: pb.iso(), paper_by: pWho, copied_by: me().full_name } : {}) } }),
+          // v0.98 (audit D-06): the milk kg corrected first (same atomic save), so the close is checked with the right kg
+          ...(fix ? [{ rpc: 'correct_batch_milk', args: { p_batch_lot: b.batch_lot, p_milk_kg: fix.kg, p_reason: fix.reason, p_staff_id: me().id } }] : []),
           // v0.97 (audit A-22): the curd pH only when measured here (an empty field no longer erases the one recorded in the steps)
-          { table: 'production_batches', update: bKey, row: { output_kg: out, ...(ph != null ? { curd_ph: ph } : {}), finished_at: paper ? pb.iso() : new Date().toISOString(), ...(ricNo ? { whey_kg: 0 } : {}) } },   // whey_kg 0 = "no ricotta" was chosen
+          { table: 'production_batches', update: bKey, row: { output_kg: out, ...(ph != null ? { curd_ph: ph } : {}), finished_at: paper ? pb.iso() : new Date().toISOString(), ...(ricNo ? { whey_kg: 0 } : {}), ...(yNote ? { yield_note: yNote } : {}) } },   // whey_kg 0 = "no ricotta" was chosen
           { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: bId, source: 'tablet' } }];
         const pp = paper ? { p_source: 'paper', p_logged_at: pb.iso(), p_written_by: pWho } : { p_source: 'tablet' };
         if (!pastDone && val('pastv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('pastv'), p_staff_id: me().id, p_batch_lot: b.batch_lot, p_equipment_code: 'TERM-02', ...pp } });   // v0.96 (A-03)
@@ -1582,7 +1688,7 @@
         return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${itN(out)} kg · resa ${itN(y)}% · scade ${ddmm(expS)}`, 'Etichetta ogni cassa e confezione con il lotto.'], [lotLink]);
       };
       const presets = await loadPresets();
-      const steps = mergeSteps(await doseSteps(b.product_id, 'close', { milk: b.milk_in_kg, out }), processSteps(presets, b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id, 'close'));
+      const steps = mergeSteps(await doseSteps(b.product_id, 'close', { milk: milkKg, out }), processSteps(presets, b.preset_id || (presetsFor(presets, b.product_id).find(p => p.is_default) || {}).id, 'close'));
       if (!steps.length) return close();
       runDosing(`Confezionamento ${b.batch_lot} · ${out} kg`, b.batch_lot, steps, close);
       return 'stay';
@@ -1599,7 +1705,7 @@
     const d = document.createElement('div'); d.className = 'card';
     d.innerHTML = `<div class="scan">${esc(prod.name)}</div><div class="status">Spedizione diretta senza ordine. Le vendite al banco si battono su Shopify POS; gli ordini online e ingrosso si preparano da 🚚 Da spedire.</div>`;
     $('form').append(d);
-    field('kg', 'kg', 'number', { step: '0.01' });
+    field('kg', 'kg', 'number', { min: 0.01, max: 1000, unit: 'kg' });
     field('cust', 'Cliente', 'select', { options: [['', '—'], ...custs.map(x => [x.id, x.legal_name])] });
     openForm('Spedizione', 'lotto ' + b.batch_lot, async () => {
       const kg = val('kg');
@@ -1623,12 +1729,12 @@
       h.innerHTML = `<div class="scan">${esc(l.name)}</div><div>ordinati ${Number(l.qty_ordered).toLocaleString('it-IT')} ${esc(l.unit)}${Number(l.qty_received) > 0 ? ` · già ricevuti ${Number(l.qty_received).toLocaleString('it-IT')}` : ''} · listino € ${Number(l.unit_price_eur).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/${esc(l.unit)}</div>`;
       $('form').append(h);
       // v0.97 (audit A-09): count and read, don't confirm a prefilled number — empty fields, what was ordered as the hint
-      const q = field('q' + i, `Ricevuti (${l.unit}) · contali`, 'number', { step: l.unit === 'pz' ? '1' : '0.01', required: false });
+      const q = field('q' + i, `Ricevuti (${l.unit}) · contali`, 'number', { required: false, min: 0, max: 1000000, unit: l.unit, int: l.unit === 'pz' });
       q.placeholder = `ordinati ${Number(l.remaining).toLocaleString('it-IT')}`;
       field('lot' + i, 'Lotto fornitore', 'text', { required: false });
       const e = field('exp' + i, 'Scadenza (se stampata: leggila sulla confezione)', 'date', { required: false, limit: l.shelf_life_days ? `di solito dura ${l.shelf_life_days} giorni` : '' });
       e.min = today();
-      field('pr' + i, `Prezzo sul DDT €/${l.unit} (solo se diverso)`, 'number', { step: '0.0001', required: false });
+      field('pr' + i, `Prezzo sul DDT €/${l.unit} (solo se diverso)`, 'number', { required: false, min: 0, max: 100000, unit: '€/' + l.unit });
     });
     field('ddt', 'Numero DDT', 'text', { required: false }); field('photo', 'Foto DDT', 'file', { required: false });
     // v0.57 · Manuale §7.7: controllo all'arrivo registrato con il ricevimento
@@ -1640,14 +1746,19 @@
       if (!lines.length) { toast('Inserisci almeno una quantità ricevuta', 'err'); throw new Error('vuoto'); }
       const over = lines.filter(x => { const l = po.lines.find(p => p.sku === x.sku); return x.qty > Number(l.remaining) * 1.02; });
       if (over.length && !(await ask({ title: 'Più di quanto ordinato', lines: over.map(x => { const l = po.lines.find(p => p.sku === x.sku); return `${l.name}: ricevuti ${itN(x.qty)} ${l.unit}, ordinati ${itN(l.remaining)}`; }).concat('È giusto?') }))) throw stop();
+      // v0.98 (audit D-18): a DDT price far from the list is almost always a comma slip (410 for 4,10): it would become the new list price
+      const pricey = lines.filter(x => { const l = po.lines.find(p => p.sku === x.sku), lp = Number(l.unit_price_eur); return x.unit_price != null && lp > 0 && (x.unit_price > lp * 1.5 || x.unit_price < lp * 0.5); });
+      if (pricey.length && !(await ask({ danger: true, title: 'Prezzo molto diverso dal listino', yes: 'Sì, è il prezzo del DDT', no: 'Correggo',
+        lines: pricey.map(x => { const l = po.lines.find(p => p.sku === x.sku); return `${l.name}: ${itNum(x.unit_price, 4)} €/${l.unit} sul DDT, listino ${itNum(l.unit_price_eur, 4)} €.`; }).concat('Diventa il nuovo prezzo per i prossimi ordini. Controlla la virgola: è giusto?') }))) throw stop();
+      const confirmed = over.length > 0 || pricey.length > 0;
       const skipped = po.lines.filter(l => !lines.some(x => x.sku === l.sku));
       if (skipped.length && !(await ask({ title: 'Righe senza quantità', lines: [skipped.map(l => l.name).join(', ') + ': non arrivate (restano da ricevere).', 'È giusto?'], yes: 'Sì, non sono arrivate', no: 'Le scrivo' }))) throw stop();
       const ddt = val('ddt') || null, chk = val('chk'), chkNote = (val('chknote') || '').trim();
       if (chk === '') { toast('Registra il controllo all\'arrivo', 'err'); throw new Error('chk'); }
       if (chk === '0' && !chkNote) { toast('Scrivi cosa non va nella merce', 'err'); throw new Error('chknote'); }
-      await save([scanEvent(current.code, 'goods_receive', { payload: { po_number: po.po_number, ddt, lines, check_ok: chk === '1', check_note: chkNote || null } }),
-        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: me().id, p_ddt: ddt } },
-        { rpc: 'record_receipt_check', args: { p_po_number: po.po_number, p_ok: chk === '1', p_note: chkNote || null, p_staff_id: me().id, p_ddt: ddt } }]);
+      await saveConfirm([scanEvent(current.code, 'goods_receive', { payload: { po_number: po.po_number, ddt, lines, check_ok: chk === '1', check_note: chkNote || null } }),
+        { rpc: 'receive_purchase_order', args: { p_po_number: po.po_number, p_lines: lines, p_staff_id: me().id, p_ddt: ddt, ...(confirmed ? { p_confirm: true } : {}) } },
+        { rpc: 'record_receipt_check', args: { p_po_number: po.po_number, p_ok: chk === '1', p_note: chkNote || null, p_staff_id: me().id, p_ddt: ddt } }], 1);
       const f = $('photo').files[0];
       if (f && navigator.onLine) { const path = `ddt/${today()}_${po.po_number}.jpg`; const { error: ue } = await sb.storage.from('documents').upload(path, f, { upsert: true });
         if (!ue) await sb.from('documents').insert({ kind: 'ddt_in', storage_path: path, original_filename: f.name, mime_type: f.type, document_date: today(), related_table: 'purchase_orders', related_id: po.id, uploaded_by_id: me().id }); }
@@ -1668,25 +1779,25 @@
     let lastKind = '';
     lines.forEach((l, i) => {
       if (l.kind !== lastKind) { lastKind = l.kind; const h = document.createElement('h2'); h.style.marginTop = '18px'; h.textContent = l.kind === 'finished_good' ? 'Prodotto finito (per lotto)' : 'Consumabili e imballi'; $('form').append(h); }
-      const q = field('c' + i, `${l.name}${l.lot ? ' · ' + l.lot : ''} (${l.unit})`, 'number', { step: l.unit === 'pz' ? '1' : '0.1', required: false });
-      q.placeholder = 'contati'; q.dataset.sys = l.system_qty; q.dataset.line = l.line_id; q.min = '0';
+      const q = field('c' + i, `${l.name}${l.lot ? ' · ' + l.lot : ''} (${l.unit})`, 'number', { required: false, min: 0, max: 1000000, unit: l.unit });
+      q.placeholder = 'contati'; q.dataset.sys = l.system_qty; q.dataset.line = l.line_id;
       const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.style.marginTop = '4px';
       b.textContent = `✓ Ci sono ${Number(l.system_qty).toLocaleString('it-IT')} ${l.unit} (come a sistema)`;
-      b.onclick = () => { q.value = l.system_qty; q.dispatchEvent(new Event('input')); q.dataset.confirm = '1'; current.dirty = true; };
+      b.onclick = () => { setNum(q, l.system_qty); q.dispatchEvent(new Event('input')); q.dataset.confirm = '1'; current.dirty = true; };
       $('form').append(b);
-      q.oninput = e => { if (e.isTrusted) delete q.dataset.confirm; q.style.borderColor = q.value !== '' && Number(q.value) !== Number(q.dataset.sys) ? 'var(--warn)' : ''; };
+      q.oninput = e => { if (e.isTrusted) delete q.dataset.confirm; q.style.borderColor = numOf(q) != null && numOf(q) !== Number(q.dataset.sys) ? 'var(--warn)' : ''; };
     });
     field('note', 'Note (facoltative)', 'text', { required: false });
     openForm('Conta magazzino', `${lines.length} righe · conta e scrivi, oppure «✓ Ci sono» se il numero a sistema è giusto`, async () => {
       const inputs = [...$('form').querySelectorAll('input[data-line]')];
       const counted = inputs.filter(i => i.value !== '');
-      if (counted.some(i => Number(i.value) < 0)) throw new Error('Una quantità contata è negativa: scrivi 0 se non c\'è più niente');
-      const changed = counted.filter(i => Number(i.value) !== Number(i.dataset.sys));
-      const big = changed.filter(i => { const sys = Number(i.dataset.sys); return sys > 0 && Math.abs(Number(i.value) - sys) / sys > 0.5; });
+      if (counted.some(i => numOf(i) < 0)) throw new Error('Una quantità contata è negativa: scrivi 0 se non c\'è più niente');
+      const changed = counted.filter(i => numOf(i) !== Number(i.dataset.sys));
+      const big = changed.filter(i => { const sys = Number(i.dataset.sys); return sys > 0 && Math.abs(numOf(i) - sys) / sys > 0.5; });
       if (big.length && !(await ask({ title: 'Differenze grandi', lines: [`${big.length === 1 ? '1 riga ha' : big.length + ' righe hanno'} una differenza oltre il 50 % dal sistema: ricontrolla.`], yes: 'Ho ricontrollato: salva', no: 'Ricontrollo' }))) throw stop();
       const empty = inputs.length - counted.length;
       if (empty && !(await ask({ title: `${empty === 1 ? '1 riga senza numero' : empty + ' righe senza numero'}`, lines: ['Restano «non contate»: il sistema non le cambia.', 'Se non c\'è più niente, scrivi 0.'], yes: 'Salva così', no: 'Le conto' }))) throw stop();
-      const { data, error: pe } = await sb.rpc('post_stock_count', { p_count_id: sheet.count_id, p_lines: counted.map(i => i.dataset.confirm === '1' ? { line_id: i.dataset.line, confirm: true } : { line_id: i.dataset.line, counted_qty: Number(i.value) }), p_staff_id: me().id, p_note: val('note') || null });
+      const { data, error: pe } = await sb.rpc('post_stock_count', { p_count_id: sheet.count_id, p_lines: counted.map(i => i.dataset.confirm === '1' ? { line_id: i.dataset.line, confirm: true } : { line_id: i.dataset.line, counted_qty: numOf(i) }), p_staff_id: me().id, p_note: val('note') || null });
       if (pe) { toast(pe.message, 'err', 8000); throw pe; }
       await save([scanEvent('COUNT:', 'task_done', { payload: { count_id: sheet.count_id, changed: data.lines_changed, counted: data.lines_counted ?? counted.length } })]);
       await closeTask({ code: 'T-COUNT' });
@@ -1699,7 +1810,7 @@
   function stepEffluent() {
     $('form').innerHTML = ''; current = { code: 'EFFL:' };
     field('kind', 'Cosa', 'select', { options: [['scotta', 'Scotta (dopo la ricotta)'], ['siero', 'Siero (non lavorato)'], ['acque_lavaggio', 'Acque di lavaggio'], ['fanghi', 'Fanghi / residui'], ['altro', 'Altro']] });
-    field('qty', 'Quantità', 'number', { step: '10' });
+    field('qty', 'Quantità', 'number', { min: 0, max: 1000000 });
     field('unit', 'Unità', 'select', { options: [['l', 'litri'], ['m3', 'm³'], ['kg', 'kg']] });
     field('dest', 'Destinazione', 'select', { options: [['allevamento', 'Allevamento (sottoprodotto)'], ['fognatura', 'Fognatura (scarico autorizzato)'], ['trasportatore', 'Trasportatore autorizzato'], ['ricotta', 'Riusato per ricotta'], ['depuratore_interno', 'Depuratore interno'], ['altro', 'Altro']] });
     field('recipient', 'Chi ritira (allevamento / ditta)', 'text', { required: false });
@@ -1789,20 +1900,20 @@
           toast(v === a.lot ? 'Lotto confermato ✓' : bl ? `Lotto ${v}: scade il ${fmtDay(bl.expiry)}, prima del minimo — verrà chiesta conferma` : 'Lotto diverso da quello assegnato: controlla la scadenza', v === a.lot ? '' : 'err'); }; startScan(); };
         $('form').append(scanBtn);
         // v0.97 (audit A-09): the weight is read on the scale, not confirmed from the order: empty field, the planned kg as the hint
-        const q = field('q' + k, `Peso effettivo (${l.unit})${alloc.length > 1 ? ' da questo lotto' : ''} · pesa`, 'number', { step: '0.01', required: alloc.length === 1 });
+        const q = field('q' + k, `Peso effettivo (${l.unit})${alloc.length > 1 ? ' da questo lotto' : ''} · pesa`, 'number', { required: alloc.length === 1, min: 0, max: 1000, unit: l.unit });
         q.placeholder = `previsti ${fmtKg(a.qty)}`; q.dataset.weighed = '0';
         q.oninput = () => { q.dataset.weighed = '0'; current.force = false; };
         $('form').append(scaleButton(q, 'net'));
         rows.push({ l, lot, q });
       });
     });
-    const g = field('gross', 'Peso lordo collo (kg, facoltativo)', 'number', { step: '0.01', required: false }); $('form').append(scaleButton(g, 'gross'));
+    const g = field('gross', 'Peso lordo collo (kg, facoltativo)', 'number', { required: false, min: 0, max: 1000, unit: 'kg' }); $('form').append(scaleButton(g, 'gross'));
     const carrier = field('carrier', 'Vettore', 'text', { required: false }); carrier.value = o.channel === 'wholesale' ? (S['ship.wholesale_carrier'] || 'Consegna diretta') : (S['ship.default_carrier'] || 'BRT');
     field('tracking', 'Tracking / n. lettera di vettura (se già stampata)', 'text', { required: false });
     field('note', 'Note', 'text', { required: false });
     openForm(`Prepara ${o.order_number}`, `${o.customer || 'cliente online'} · ${o.lines.length} righe · tolleranza ±${S['ship.tolerance_pct'] || 5}%`, async () => {
       // v0.79: a row set to 0 (all the kg taken from the other lot of a split line) is left out instead of refusing the save
-      const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: Number(r.q.value) || 0, weighed: r.q.dataset.weighed === '1' })).filter(x => x.qty > 0);
+      const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: numOf(r.q) || 0, weighed: r.q.dataset.weighed === '1' })).filter(x => x.qty > 0);
       if (!lines.length) { toast('Nessuna quantità da spedire', 'err'); throw new Error('qty'); }
       if (lines.some(x => !x.lot_number)) { toast('Manca il lotto su una riga', 'err'); throw new Error('lot'); }
       // v0.97 (audit A-17): what needs confirming is a question with the reasons that stays until answered, then the same save with force
@@ -1831,7 +1942,7 @@
     const b = document.createElement('button'); b.type = 'button'; b.className = 'btn secondary'; b.style.marginTop = '6px'; b.textContent = '⚖ Leggi dalla bilancia';
     b.onclick = async () => {
       b.disabled = true; b.textContent = '⚖ lettura…';
-      try { const kg = await readScale(); input.value = Math.round(kg * 100) / 100; input.dataset.weighed = '1'; input.dispatchEvent(new Event('change')); toast(`Bilancia: ${fmtKg(kg)} kg`); }
+      try { const kg = await readScale(); setNum(input, Math.round(kg * 100) / 100); input.dataset.weighed = '1'; input.dispatchEvent(new Event('change')); toast(`Bilancia: ${fmtKg(kg)} kg`); }
       catch (e) { toast(e.message || 'Bilancia non collegata: inserisci il peso a mano', 'err'); }
       finally { b.disabled = false; b.textContent = '⚖ Leggi dalla bilancia'; }
     };
@@ -1915,6 +2026,11 @@
   // show in a unit people can weigh: litres → ml, small kg → g
   const disp = s => s.unit === 'l' ? { f: 1000, u: 'ml' } : (s.unit === 'kg' && s.qty < 1) ? { f: 1000, u: 'g' } : { f: 1, u: s.unit === 'pz' ? 'pz' : s.unit };
   const fmtQty = (q, s) => { const d = disp(s); const v = q * d.f; return (d.u === 'pz' ? Math.ceil(v) : Math.round(v * 10) / 10).toLocaleString('it-IT') + ' ' + d.u; };
+  // v0.98 (audit D-19): the lot of the pack in use (rennet, cultures, salt), kept per item for the day: the next vat shows it, and it
+  // is changed when a new pack is opened. It goes with each dose, so a recalled pack can be traced to the lots made with it.
+  const PACKK = 'perla_pack_lots_v1';
+  const packLot = sku => { const x = readObj(PACKK)[sku]; return x && x.day === today() ? x.lot : ''; };
+  const setPackLot = (sku, lot) => { const o = readObj(PACKK); if (lot) o[sku] = { lot, day: today() }; else delete o[sku]; writeObj(PACKK, o); };
   function runDosing(title, batchLot, steps, onDone, opts = {}) {
     let k = 0, readyAt = 0;
     const since = Math.min(Date.now(), (current && current.openedAt) || Date.now());   // v0.97: a rename found during the sequence applies to it
@@ -1937,6 +2053,8 @@
         $('d-mach').textContent = ''; $('d-qty').textContent = fmtQty(s.qty, s); $('d-src').textContent = s.source === 'placeholder' ? 'ricetta provvisoria' : '';
         $('d-diff').textContent = 'Ho usato una quantità diversa'; $('d-diff').style.display = ''; $('d-alt-l').textContent = 'Quantità usata'; $('d-alt-u').textContent = disp(s).u; $('d-alt-in').step = '0.1'; $('d-ok').textContent = '✓ Fatto';
       }
+      $('d-pack').style.display = s.kind === 'process' ? 'none' : ''; $('d-lot').value = s.kind === 'process' ? '' : packLot(s.sku);
+      $('d-alt-echo').textContent = ''; $('d-alt-echo').classList.remove('bad');
       $('d-instr').textContent = s.instruction_it || '';
       $('d-skip').style.display = opts.skippable ? '' : 'none'; $('d-pause').style.display = '';   // v0.96 (audit A-03): every sequence can be left and resumed
       $('d-alt').style.display = 'none'; $('d-alt-in').value = ''; $('d-warn').textContent = ''; $('d-ok').style.display = '';
@@ -1958,11 +2076,15 @@
         $('d-prog').textContent = 'Passi registrati · chiusura non salvata'; $('d-ok').textContent = '↻ Riprova a chiudere'; $('d-ok').style.display = ''; btns.forEach(b => b.disabled = false); show('dose');
       }
     };
-    const next = async q => {
+    const next = async (q, confirmed = false) => {
       const s = steps[k]; btns.forEach(b => b.disabled = true);
       try {
         if (s.kind === 'process') await save([{ rpc: 'log_batch_step', args: { p_batch_lot: batchLot, p_step_id: s.step_id, p_actual: q, p_staff_id: me().id, ...(opts.at ? { p_at: opts.at } : {}) } }], since);
-        else await save([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: me().id } }], since);
+        else {
+          const lot = String($('d-lot').value || '').trim().toUpperCase(); setPackLot(s.sku, lot);   // v0.98 (D-19)
+          await saveConfirm([{ rpc: 'record_batch_consumable', args: { p_batch_lot: batchLot, p_sku: s.sku, p_qty: q, p_qty_standard: s.qty, p_staff_id: me().id,
+            ...(lot ? { p_lot: lot } : {}), ...(confirmed ? { p_confirm: true } : {}) } }], 0, since);
+        }
       } finally { btns.forEach(b => b.disabled = false); }
       lastLine(s, q);
       // v0.97 (audit A-07): a CCP step out of its critical limit holds the lot — said now, in a card that waits for «Ho capito»
@@ -1981,21 +2103,29 @@
     $('d-alt-ok').onclick = async () => {
       if (!ready()) return;
       if (k >= steps.length) return finish();
-      const s = steps[k], raw = String($('d-alt-in').value).replace(',', '.');
-      if (raw === '' || isNaN(Number(raw))) return toast(s.kind === 'process' ? 'Scrivi il valore misurato' : 'Scrivi la quantità usata', 'err');
+      const s = steps[k], pn = parseNum($('d-alt-in').value);   // v0.98 (audit A-13): read the Italian way, «1.200» refused
+      if (pn.amb) return toast(`«${$('d-alt-in').value}»: scrivi il numero senza punto, oppure con la virgola per i decimali`, 'err', 6000);
+      if (pn.bad || pn.v == null) return toast(s.kind === 'process' ? 'Scrivi il valore misurato' : 'Scrivi la quantità usata', 'err');
+      const raw = pn.v;
       if (s.kind === 'process') {
-        const v = Number(raw), out = (s.lo != null && v < s.lo) || (s.hi != null && v > s.hi);
+        const v = raw, out = (s.lo != null && v < s.lo) || (s.hi != null && v > s.hi);
         try { if (s.ccp) plausCheck(s.ccp, v); if (s.metric === 'ph') phCheck(v); } catch (e) { return toast(e.message, 'err', 6000); }   // v0.95 (audit D-12)
         if (s.ccp && ccpOut(s.ccp, v)) { if (!(await confirmOut(s.ccp, v, batchLot))) return; }               // v0.97 (audit A-07): red, the lot is held
         else if (out && !(await ask({ title: 'Fuori dall\'intervallo', lines: [`Hai scritto ${itN(v)} ${unit(s)}: l'intervallo è ${s.lo ?? '…'}–${s.hi ?? '…'} ${unit(s)}.`, 'È giusto?'] }))) return;   // v0.97 (A-17)
         return next(v);
       }
-      if (!(Number(raw) >= 0)) return toast('Scrivi la quantità usata', 'err');
-      const q = Number(raw) / disp(s).f, dev = Math.abs(q - s.qty) / s.qty;
-      if (dev > 0.2 && !(await ask({ title: 'Quantità diversa dalla ricetta', lines: [`${s.name}: hai scritto ${fmtQty(q, s)}, la ricetta dice ${fmtQty(s.qty, s)} (${Math.round(dev * 100)} % di differenza).`, 'È giusto?'] }))) return;
-      next(s.unit === 'pz' ? Math.ceil(q) : Math.round(q * 1000) / 1000);
+      if (!(raw >= 0)) return toast('Scrivi la quantità usata (0 se non l\'hai messo)', 'err');
+      const q = raw / disp(s).f, dev = Math.abs(q - s.qty) / s.qty;
+      // v0.98 (audit D-19): more than 3 times or under a third of the recipe is a red question (the database asks for it too)
+      const far = q > s.qty * 3 || q < s.qty / 3;
+      if (dev > 0.2 && !(await ask({ danger: far, title: far ? 'Controlla la virgola' : 'Quantità diversa dalla ricetta',
+        lines: [`${s.name}: hai scritto ${fmtQty(q, s)}, la ricetta dice ${fmtQty(s.qty, s)} (${Math.round(dev * 100)} % di differenza).`, 'È giusto?'] }))) return;
+      next(s.unit === 'pz' ? Math.ceil(q) : Math.round(q * 1000) / 1000, dev > 0.2);
     };
     if ($('d-last')) $('d-last').textContent = '';
+    $('d-alt-in').oninput = () => { const s = steps[k], pn = parseNum($('d-alt-in').value), e = $('d-alt-echo');
+      e.textContent = pn.amb ? 'senza punto: 1200, oppure 1,2' : pn.bad ? 'solo il numero, con la virgola (es. 4,5)' : pn.v == null ? '' : `= ${itNum(pn.v)} ${s && s.kind === 'process' ? unit(s) : disp(s || {}).u || ''}`.trim();
+      e.classList.toggle('bad', !!(pn.amb || pn.bad)); };
     render();
   }
 
@@ -2055,10 +2185,11 @@
       field('v', 'Esito della verifica', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']], limit: cp.monitoring_it || 'NON ok = non pastorizzare, chiama il responsabile' });
       field('action', 'Note / cosa hai fatto (se NON ok)', 'text', { required: false });
     } else {
-      const v = field('v', `${cp.name} (${cp.unit || ''})`, 'number', { step: cp.unit === 'mg/l' ? '0.01' : '0.1', limit: lim ? `${cp.ccp_no || ''} limite ${lim} ${cp.unit || ''}`.trim() : 'Intervallo da fissare con il casaro: scrivi il valore letto' });
+      const v = field('v', `${cp.name} (${cp.unit || ''})`, 'number', { ...cpRange(cp.code), limit: lim ? `${cp.ccp_no || ''} limite ${lim} ${cp.unit || ''}`.trim() : 'Intervallo da fissare con il casaro: scrivi il valore letto' });
       if (!cp.is_ccp && cp.min_value == null && cp.max_value == null) field('action', cp.code === 'PRP-BRINE' ? 'Note: rinnovata, filtrata, rabbocco, aspetto' : 'Note (es. pH, innesto nuovo)', 'text', { required: false });
       let note = null;
-      v.oninput = () => { const x = Number(v.value); const bad = (cp.min_value != null && x < cp.min_value) || (cp.max_value != null && x > cp.max_value); if (bad && !note) note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); v.style.borderColor = bad ? 'var(--warn)' : ''; };
+      v.oninput = () => { const x = v.validity.customError ? null : numOf(v); const bad = x != null && ((cp.min_value != null && x < cp.min_value) || (cp.max_value != null && x > cp.max_value));
+        if (bad && !note) note = field('action', 'Fuori limite: cosa hai fatto?', 'text'); noteShow(note, bad); v.style.borderColor = bad ? 'var(--warn)' : ''; };
     }
     openForm(`${cp.ccp_no || ''} ${cp.name}`.trim(), lot ? 'lotto ' + lot : (cp.monitoring_it || ''), async () => {
       const value = (cp.code === 'CCP-MILK-ABX' || cp.unit === 'esito') ? (val('v') === '' ? null : Number(val('v'))) : val('v');
@@ -2118,7 +2249,7 @@
     else if (cp.code === 'PRP-CLEAN') field('v', 'Sanificazione', 'select', { options: [['0', 'Fatta']] });
     else {
       const lim = [cp.min_value != null ? `≥ ${Number(cp.min_value)}` : null, cp.max_value != null ? `≤ ${Number(cp.max_value)}` : null].filter(Boolean).join(' e ');
-      field('v', `${cp.name} (${cp.unit || ''})`, 'number', { limit: lim ? `limite ${lim} ${cp.unit || ''}`.trim() : '' });
+      field('v', `${cp.name} (${cp.unit || ''})`, 'number', { ...cpRange(cp.code), limit: lim ? `limite ${lim} ${cp.unit || ''}`.trim() : '' });
     }
     field('action', 'Note / azione scritta sul foglio (se fuori limite)', 'text', { required: false });
     openForm(`📝 ${cp.ccp_no || ''} ${cp.name}`.trim(), 'Ricopia dal foglio di carta', async () => {
@@ -2153,14 +2284,14 @@
     let method, pts;
     const isPh = eq.code.startsWith('PH-'), isScale = eq.kind === 'scale', isHot = eq.code === 'TERM-02', isRoom = eq.kind === 'cold_room';
     if (eq.reference_instrument) { toast('Il termometro di riferimento si tara solo in laboratorio: registra il certificato nella console HACCP', 'err'); return show('home'); }
-    if (isPh) { method = 'tamponi_ph'; field('r4', 'Lettura nel tampone pH 4,01', 'number', { step: '0.01' }); field('r7', 'Lettura nel tampone pH 7,00', 'number', { step: '0.01' }); field('slope', 'Pendenza % (se lo strumento la mostra)', 'number', { step: '0.1', required: false, limit: 'Tolleranza ±0,05 pH · pendenza 95–105 %' }); }
-    else if (isScale) { method = 'pesi_campione'; field('ref', 'Peso campione (kg)', 'number', { step: '0.001' }); field('read', 'Lettura bilancia (kg)', 'number', { step: '0.001' }); }
-    else if (isRoom) { method = 'confronto_display'; field('ref', 'Termometro sonda TERM-01 nella cella (°C)', 'number'); field('read', 'Display della cella (°C)', 'number', { limit: 'Tolleranza ±1 °C' }); }
+    if (isPh) { method = 'tamponi_ph'; field('r4', 'Lettura nel tampone pH 4,01', 'number', { min: 0, max: 14 }); field('r7', 'Lettura nel tampone pH 7,00', 'number', { min: 0, max: 14 }); field('slope', 'Pendenza % (se lo strumento la mostra)', 'number', { required: false, min: 50, max: 150, unit: '%', limit: 'Tolleranza ±0,05 pH · pendenza 95–105 %' }); }
+    else if (isScale) { method = 'pesi_campione'; field('ref', 'Peso campione (kg)', 'number', { min: 0, max: 1000, unit: 'kg' }); field('read', 'Lettura bilancia (kg)', 'number', { min: 0, max: 1000, unit: 'kg' }); }
+    else if (isRoom) { method = 'confronto_display'; field('ref', 'Termometro sonda TERM-01 nella cella (°C)', 'number', { min: -30, max: 50, unit: '°C' }); field('read', 'Display della cella (°C)', 'number', { min: -30, max: 50, unit: '°C', limit: 'Tolleranza ±1 °C' }); }
     else {
       method = 'confronto_riferimento';
-      field('p1', isHot ? 'Acqua in ebollizione: lettura (riferimento 100 °C)' : 'Ghiaccio fondente: lettura (riferimento 0 °C)', 'number');
-      field('ref', `Termometro di riferimento TERM-REF a ~${isHot ? 90 : 60} °C`, 'number', { required: false });
-      field('read', `${eq.code} nello stesso punto`, 'number', { required: false, limit: `Tolleranza ±${eq.tolerance ?? 0.5} °C` });
+      field('p1', isHot ? 'Acqua in ebollizione: lettura (riferimento 100 °C)' : 'Ghiaccio fondente: lettura (riferimento 0 °C)', 'number', { min: -20, max: 120, unit: '°C' });
+      field('ref', `Termometro di riferimento TERM-REF a ~${isHot ? 90 : 60} °C`, 'number', { required: false, min: -20, max: 150, unit: '°C' });
+      field('read', `${eq.code} nello stesso punto`, 'number', { required: false, min: -20, max: 150, unit: '°C', limit: `Tolleranza ±${eq.tolerance ?? 0.5} °C` });
     }
     openForm('Verifica ' + eq.name, eq.code, async () => {
       if (isPh) pts = [{ ref: 4.01, reading: val('r4') }, { ref: 7.00, reading: val('r7') }, ...(val('slope') != null ? [{ slope: val('slope') }] : [])];
