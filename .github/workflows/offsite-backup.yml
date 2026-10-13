@@ -1,0 +1,105 @@
+# v1.00 (audit E-24, E-25): every night after the database's own backup (21:15 Rome), GitHub fetches it, checks it,
+# encrypts it with the BACKUP_PASSPHRASE secret and keeps it here as a run artifact for 90 days: a copy outside Supabase.
+# Three slots a night (GitHub skips scheduled runs of public repos): the first that runs makes the copy, the others see
+# it is kept and stop. Once a month (the first copy of a month with no drill kept, or when started by hand with «drill»)
+# it also restores the copy into an empty Postgres built from the migrations and records the result, so «Backup restore
+# tested» on the board no longer depends on anyone. Results go to the database (board); a copy still failing at the
+# night's last slot goes to the partners' Telegram group. tools/offsite/offsite_backup.sh.
+# Secrets: BACKUP_EXPORT_TOKEN, BACKUP_PASSPHRASE, TELEGRAM_BOT_TOKEN, TELEGRAM_ALERT_CHAT_ID — each only on the steps that
+# use it; actions pinned to a commit. The repo is public: artifacts are only ever encrypted files, never the plain backup.
+name: Off-site backup
+on:
+  schedule:
+    - cron: '40 21 * * *'
+    - cron: '40 0 * * *'
+    - cron: '40 3 * * *'
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: 'Also run the restore drill'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: offsite-backup
+  cancel-in-progress: false
+jobs:
+  copy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OUT: offsite
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Fetch, check and encrypt tonight's backup
+        id: copy
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          GH_TOKEN: ${{ github.token }}
+          DRILL: ${{ inputs.drill || false }}
+        run: bash tools/offsite/offsite_backup.sh prepare
+      - name: Keep the encrypted copy for 90 days
+        if: steps.copy.outputs.skip != '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: caseificio-backup-${{ steps.copy.outputs.day }}
+          path: |
+            offsite/*.enc
+            offsite/manifest.json
+          retention-days: 90
+          compression-level: 0
+          if-no-files-found: error
+      - name: Record the copy on the board
+        id: recorded
+        if: steps.copy.outputs.skip != '1'
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+        run: bash tools/offsite/offsite_backup.sh report-ok
+      - name: Postgres 16 for the restore drill
+        if: steps.copy.outputs.drill == '1'
+        run: |
+          if ! pg_lsclusters 2>/dev/null | grep -q '^16 '; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16
+          fi
+          sudo pg_ctlcluster 16 main start || true
+      - name: Restore drill (monthly, or on request)
+        id: drill
+        if: steps.copy.outputs.drill == '1'
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
+        run: sudo -E bash tools/offsite/offsite_backup.sh drill
+      - name: Keep the drill log (encrypted)
+        if: always() && steps.copy.outputs.drill == '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: caseificio-drill-${{ steps.copy.outputs.month }}
+          path: offsite/drill/*.enc
+          retention-days: 90
+          if-no-files-found: ignore
+      - name: Report a drill that did not run
+        if: failure() && steps.copy.outputs.drill == '1' && steps.recorded.outcome == 'success'
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
+        run: bash tools/offsite/offsite_backup.sh drill-check
+      - name: Report a failed copy
+        if: failure() && steps.recorded.outcome != 'success'
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
+          LAST_TRY: ${{ github.event_name != 'schedule' || github.event.schedule == '40 3 * * *' }}
+        run: bash tools/offsite/offsite_backup.sh report-fail
+      - name: Remove the plain copy
+        if: always()
+        run: sudo rm -rf offsite/backup.json.gz offsite/fetch.json offsite/drill.log /tmp/drill.*

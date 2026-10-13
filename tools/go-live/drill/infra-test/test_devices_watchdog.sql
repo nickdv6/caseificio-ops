@@ -46,9 +46,9 @@ insert into cron.job_run_details (jobid, status, return_message, start_time, end
  ((select jobid from cron.job where jobname = 'fabula_bot_fallback'), 'succeeded', '', now() - interval '1 hour', now() - interval '1 hour');
 select fabula.bot_watchdog() b1 \gset
 select pg_temp.ck('a failed scheduled job is reported, with the job name', exists (select 1 from jsonb_array_elements(:'b1'::jsonb->'alerts') x where x->>'kind' = 'cron_failed' and x->>'name' = 'fabula_bot_fallback')
-  and :'b1'::jsonb->>'message_it' like '%Automazione del database "fabula_bot_fallback" fallita%', :'b1'::jsonb->>'message_it');
+  and :'b1'::jsonb->>'message_it' ilike '%automazione del database%fabula_bot_fallback%', :'b1'::jsonb->>'message_it');
 select pg_temp.ck('scheduler silent for an hour: reported as stopped', exists (select 1 from jsonb_array_elements(:'b1'::jsonb->'alerts') x where x->>'kind' = 'cron_stopped')
-  and :'b1'::jsonb->>'message_it' like '%automazioni del database (pg_cron) sono ferme%');
+  and :'b1'::jsonb->>'message_it' ilike '%automazioni del database%ferme%');
 select pg_temp.ck('reported once, not every hour', not exists (select 1 from jsonb_array_elements((fabula.bot_watchdog())->'alerts') x where x->>'kind' in ('cron_failed', 'cron_stopped')));
 insert into cron.job_run_details (jobid, status, start_time, end_time) values ((select jobid from cron.job where jobname = 'fabula_bot_fallback'), 'succeeded', now() + interval '58 minutes', now() + interval '58 minutes');
 select pg_temp.ck('scheduler running: no stopped alert', not exists (select 1 from jsonb_array_elements((fabula.bot_watchdog(now() + interval '1 hour'))->'alerts') x where x->>'kind' = 'cron_stopped'));

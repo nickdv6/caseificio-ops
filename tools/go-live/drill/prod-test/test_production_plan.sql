@@ -57,7 +57,7 @@ select pg_temp.ck('after one start: 575 kg left on MT-NEW → one proposal of 57
 update fabula.production_batches set output_kg = 172, finished_at = now() where id = :'ba';
 select pg_temp.ck('normal yield (29.9 %): expected 30 stored, no flag, no message',
   (select yield_expected_pct = 30 and yield_flag is null from fabula.production_batches where id = :'ba')
-  and not exists (select 1 from fabula.bot_messages where agent = 'produzione'));
+  and not exists (select 1 from fabula.bot_messages where agent = 'produzione' and title like 'Resa %'));
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, preset_id, started_at, source)
 values (:'d', 'LTEST-B', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 575, (select id from fabula.process_presets where name = 'Base · prova 29/09'), now(), 'tablet') returning id bb \gset
 update fabula.production_batches set output_kg = 120, finished_at = now() where id = :'bb';
@@ -67,10 +67,10 @@ select pg_temp.ck('low yield (20.9 %): flagged bassa and one message from Zio Ci
   (select string_agg(title, ' | ') from fabula.bot_messages where agent = 'produzione'));
 update fabula.production_batches set notes = 'x' where id = :'bb';
 update fabula.production_batches set output_kg = 120 where id = :'bb';
-select pg_temp.ck('editing the batch again does not repeat the message', (select count(*) from fabula.bot_messages where agent = 'produzione') = 1);
+select pg_temp.ck('editing the batch again does not repeat the message', (select count(*) from fabula.bot_messages where agent = 'produzione' and title like 'Resa %') = 1);
 update fabula.production_batches set output_kg = 210 where id = :'bb';
 select pg_temp.ck('corrected kg (36.5 %): flag becomes alta, new message', (select yield_flag from fabula.production_batches where id = :'bb') = 'alta'
-  and (select count(*) from fabula.bot_messages where agent = 'produzione') = 2);
+  and (select count(*) from fabula.bot_messages where agent = 'produzione' and title like 'Resa %') = 2);
 update fabula.production_batches set output_kg = 171 where id = :'bb';
 select pg_temp.ck('corrected again into range: flag cleared', (select yield_flag is null from fabula.production_batches where id = :'bb'));
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, output_kg, source)

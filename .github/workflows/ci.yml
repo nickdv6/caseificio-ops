@@ -1,0 +1,30 @@
+# v1.00 (audit E-29): on every push and pull request GitHub replays all migrations on Postgres 16, runs the security scan
+# and every SQL suite (tools/ci/run_sql_ci.py). A red run means a migration or a check broke: fix it before it goes live.
+# The result table is on the run's Summary page; known failures are listed in tools/ci/known_failures.txt with a reason.
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  database:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Postgres 16
+        run: |
+          if ! pg_lsclusters 2>/dev/null | grep -q '^16 '; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16
+          fi
+          sudo pg_ctlcluster 16 main start || true
+          pg_lsclusters
+      - name: Migrations, security scan and SQL suites
+        run: sudo -E python3 tools/ci/run_sql_ci.py

@@ -12,13 +12,28 @@ Decided 03/10/2026: free off-database export instead of the Supabase PITR add-on
 | Supabase Pro | daily database backup | Supabase (Database → Backups) | 7 days |
 | `backup-export` (v0.43) | gzipped JSON of **every** `fabula` table | Storage → `documents` (private) → `backups/latest.json.gz` | overwritten every 2 h, Mon–Sat 07:05–21:05 Rome (summer) |
 | `backup-export` nightly | same, dated | `documents/backups/daily/YYYY-MM-DD.json.gz` | 90 days |
+| Off-site copy (v1.00, audit E-24) | the nightly file, **encrypted** (AES-256) | GitHub → Actions → «Off-site backup» → run → artifact `caseificio-backup-YYYY-MM-DD` | 90 days |
 
 Worst case after losing the database: restore Supabase's daily backup, then replay anything newer from `latest.json.gz` (at most ~2 h of HACCP, lots, sales lost during working hours).
+Worst case after losing the **whole Supabase project** (account, billing, region): the off-site copy on GitHub — usually one
+day lost, two if GitHub skipped a whole night (three tries each night make that rare).
 
-Scheduling: pg_cron jobs `fabula_backup_latest` (`5 5-19/2 * * 1-6` UTC) and `fabula_backup_nightly` (`15 19 * * *` UTC) call `fabula.backup_export_call(mode)`, which POSTs to the edge function with the token from Vault secret **`backup_export_token`**. Every run is an `agent_runs` row (`agent = 'backup_export'`); the bot heartbeat flags a missed nightly run, and the go-live board shows "Off-database backup in the last 26 h".
+Scheduling: pg_cron jobs `fabula_backup_latest` (`5 5-19/2 * * 1-6` UTC) and `fabula_backup_nightly` (`15 19,20 * * *` UTC → `fabula.backup_nightly_rome()`, which runs only at 21:15 Rome) call `fabula.backup_export_call(mode)`, which POSTs to the edge function with the token from Vault secret **`backup_export_token`**. Every run is an `agent_runs` row (`agent = 'backup_export'`); the bot heartbeat flags a missed nightly run, and the go-live board shows "Off-database backup in the last 26 h".
 
 ## One-time setup (Nick)
 Supabase → Project Settings → **Vault** → *Add new secret* — name `backup_export_token`, value: any long random string (e.g. 40+ characters from a password manager). Nobody needs to know it afterwards; the database reads it and sends it to the function.
+
+v1.00 — GitHub → the repo → Settings → Secrets and variables → **Actions** → *New repository secret*, four times:
+
+| Secret | Value | Used by |
+|---|---|---|
+| `BACKUP_EXPORT_TOKEN` | the same value as the Vault secret `backup_export_token` | off-site copy (fetch) · both workflows (report to the board) |
+| `BACKUP_PASSPHRASE` | a **new** passphrase, 20+ characters, saved in the password manager as «Caseificio backup off-site» | off-site copy (encryption) |
+| `TELEGRAM_BOT_TOKEN` | the dairy bot's token (the same as the Supabase function secret used by `notify`) | alerts |
+| `TELEGRAM_ALERT_CHAT_ID` | the partners' group id (create the group, add the bot, open it on web.telegram.org: the number after `#` in the address, e.g. `-1001234567890`) | alerts |
+
+Without `BACKUP_PASSPHRASE` the copy is not made (never unencrypted: the repo is public). **Losing the passphrase makes
+every copy unreadable** — it is not stored anywhere else. Changing it only affects the copies made afterwards.
 
 ## File format
 ```json
@@ -60,8 +75,30 @@ significant digits would be rounded — none exist in the data today.
 - Vault secret `backup_export_token`, edge-function secrets (Predis key), Netlify site — set them up again.
 - The schema itself is not in the file: build it from `supabase/migrations/` (`supabase db push`), then load the data.
 
+## Off-site copy on GitHub (v1.00, audit E-24)
+`.github/workflows/offsite-backup.yml` is scheduled three times a night (21:40, 00:40, 03:40 UTC), because GitHub skips
+scheduled runs of public repos; the nightly export is at 21:15 Rome. `tools/offsite/offsite_backup.sh` picks tonight's
+`backups/daily/` file (after 21:30 Rome today's, before that yesterday's) and stops if GitHub already keeps a copy of it.
+Otherwise it fetches it (yesterday's if tonight's is missing and not yet copied — marked «stale»), checks its SHA-256
+against the server's, gzip, JSON and age (≤ 30 h), encrypts it, decrypts it again to prove the copy opens to the same
+bytes, and keeps `caseificio-backup-<day>.json.gz.enc` + `manifest.json` (sizes, row counts, both SHA-256s) as the run's
+artifact for 90 days. The plain file is deleted at the end of the run.
+
+Each copy is reported to the database (`fabula.infra_status`, key `offsite_backup`) → board check «Off-site backup copy in
+the last 2 nights». The database raises a notice and a Telegram message (topic `infra`, via `notify`) when no copy has
+succeeded for 50 h, or none ever did. A copy still failing at the night's last slot (03:40 UTC) also goes straight to the
+partners' Telegram group from GitHub; earlier slots only record it and let the next slot retry.
+
+**Open a copy** (needs OpenSSL 1.1.1 or newer — on a Mac check `openssl version`: an old «LibreSSL 2.x» doesn't know
+`-pbkdf2`; then `brew install openssl@3` and use `$(brew --prefix openssl@3)/bin/openssl`):
+1. GitHub → Actions → «Off-site backup» → the night you want → *Artifacts* → download, unzip.
+2. `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -in caseificio-backup-YYYY-MM-DD.json.gz.enc -out backup.json.gz`
+   (asks for the passphrase from the password manager).
+3. `shasum -a 256 backup.json.gz` must equal `sha256_plain_gz` in `manifest.json`; then continue from «How to restore» step 2.
+
 ## How to restore
 1. **Get the file.** Supabase → Storage → `documents` → `backups/` → download (dashboard, logged in as owner).
+   If Supabase itself is gone: the off-site copy above.
    Without dashboard access the database can fetch it: `select fabula.backup_fetch_call('backups/latest.json.gz');`
    (or `backups/daily/AAAA-MM-GG.json.gz`), then read the answer with
    `select content from net._http_response where id = <the number returned>;` → JSON with `b64` (base64 of the .gz) and `sha256`.
@@ -87,8 +124,20 @@ significant digits would be rounded — none exist in the data today.
    is re-linked by email), re-upload the files listed by `restore_backup.py files`, re-add the Vault secret, run `select fabula.backup_export_call('latest');`
    and confirm a new `backup_export` run with status ok.
 
-## Repeating the drill (every 3 months — scheduled 5 Jan / Apr / Jul / Oct)
-Everything needed is in `tools/go-live/drill/`:
+## Repeating the drill — automatic every month since v1.00 (audit E-25)
+Once a month the off-site workflow also restores the copy it just made into an empty Postgres 16 built from every
+migration (`run_drill.sh`): the first copy of a month for which GitHub keeps no `caseificio-drill-YYYY-MM` artifact. It
+records the result as `agent_runs` `restore_drill` (`details.via = 'github'`), so board check «Backup restore tested»
+stays green without anyone doing it. A failed drill becomes a bot message (topic `infra`) from the database; GitHub
+writes to the partners' group only if the database can't be reached. The run log shows only the step lines: the full
+log can contain rows of the backup (a failed INSERT prints them), so it is kept only encrypted, as the artifact
+`caseificio-drill-YYYY-MM` (opens like the copies). Run it by hand any time: GitHub → Actions → «Off-site backup» →
+*Run workflow* → tick «Also run the restore drill». It checks row counts against the backup, foreign keys and
+`ops_dashboard()`; it does not compare with live checksums — do the manual drill below for that, after big schema changes.
+Known limit: a check constraint added `NOT VALID` and never validated would make the full restore refuse old rows that
+break it (none today: all `fabula` constraints are validated, 13/10/2026).
+
+Manual drill — everything needed is in `tools/go-live/drill/`:
 1. Fetch the latest backup as in step 1 above (`backup_fetch_call` → `net._http_response`), decode `b64` to
    `latest.json.gz` and check its SHA-256.
 2. Run the `CHECKSUM_SQL` from `restore_backup.py` on the live database right after, and save the result as `live_checksums.json`.

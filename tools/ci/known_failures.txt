@@ -1,0 +1,6 @@
+# Checks that are known to fail, one per line:  suite | start of the check name | why, and when it goes
+# CI reports them but stays green. When one passes again, CI lists it under «Known failures that passed»: remove its line.
+# Add a line only with a reason and an owner release; a real regression is never parked here.
+
+prod-test/test_placeholders_autoread.sql | after renaming Cliente 1: its order is booked | since v0.83 bookings come from the trade portal, not the old «Ordini fissi» grid (audit B-19, planned in v0.99): rewrite with B-19
+prod-test/test_placeholders_autoread.sql | running again does not book twice | same as above (B-19, v0.99)
