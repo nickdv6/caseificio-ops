@@ -417,3 +417,20 @@ enabled = true
 # v0.96 (audit E-01): Telegram (webhook) and pg_cron (pg_net) call it without a Supabase login; see the function header
 [functions.notify]
 verify_jwt = false
+
+# Same as live (checked 13/10/2026): these are called without a Supabase login, so a deploy must not turn JWT checking on.
+# trade-portal: the wholesale portal (customers use a portal link, not a login; staff actions check the login inside).
+[functions.trade-portal]
+verify_jwt = false
+
+# farm-order: the Masseria page (its own key in the link).
+[functions.farm-order]
+verify_jwt = false
+
+# backup-export: the nightly backup (its own token).
+[functions.backup-export]
+verify_jwt = false
+
+# predis-webhook: Predis.ai callbacks.
+[functions.predis-webhook]
+verify_jwt = false
