@@ -16,7 +16,10 @@
    ?stampa=1 prints the QR poster for the farm.
    v0.94 (audit A-10/FARM-02b): a load still «in viaggio» can be corrected (kg) or cancelled from here, with a reason; the dairy
    is told in its Bot feed and the tablet stops offering a cancelled load. The lot is shown big after registering, because the
-   dairy now checks it on the DDT or the tank when two loads are on the road. */
+   dairy now checks it on the DDT or the tank when two loads are on the road.
+   v0.95 (audit FARM-01): the weight is read the Italian way ("1.050" = 1050, "1050,5"), under 50 kg is refused, and a weight far
+   (±30 %) from today's order and from the usual loads is spelled out big with «Sì, 105 kg» / «Correggi» before it is recorded.
+   The server does the same check (farm_milk_ship p_confirm) and answers needs_confirm if the page's data was old. */
 :root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--ok:#1f6b3a;--warn:#b3261e;--amber:#8a5a00;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.5 var(--body)}
@@ -52,6 +55,9 @@ input.kgin{font-family:var(--display);font-size:2rem;font-weight:600;padding:10p
 .lotbig{font-family:var(--display);font-size:1.6rem;font-weight:600;letter-spacing:.02em;margin-top:6px}
 .btn.warn{background:var(--warn)}.lnk{color:var(--accent);background:none;border:0;padding:0;font:inherit;font-size:.9rem;text-decoration:underline;cursor:pointer}
 #amend-form{border-color:var(--amber)}
+.warnbox{border:2px solid var(--warn);background:#fbe9e7;border-radius:10px;padding:14px;margin-top:12px}
+.warnbox .wk{font-family:var(--display);font-size:2.6rem;font-weight:700;color:var(--warn);line-height:1.05}
+.warnbox .btn{flex:1;padding:16px;font-size:1.1rem}
 footer{color:var(--muted);font-size:.85rem;margin-top:26px}
 /* print poster */
 .poster{display:none;text-align:center;padding:40px 20px}
@@ -71,18 +77,20 @@ body.print .box{display:none}body.print .poster{display:block}
     <div class="card" id="ship-form" hidden>
       <div class="day">Nuova spedizione al caseificio</div>
       <div class="meta">Il peso che scrivi qui è quello che vale: il caseificio conferma solo l'arrivo.</div>
-      <label for="kg">Latte spedito (kg)</label><input id="kg" class="kgin" type="number" inputmode="decimal" step="any" min="1" max="5000" placeholder="es. 1050">
+      <label for="kg">Latte spedito (kg)</label><input id="kg" class="kgin" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 1050">
       <label for="temp">Temperatura del latte alla partenza (°C, se misurata)</label><input id="temp" type="number" inputmode="decimal" step="0.1">
       <label for="ddt">Numero DDT (se c'è)</label><input id="ddt" type="text" maxlength="40">
       <label for="note">Note</label><input id="note" type="text" maxlength="300" placeholder="es. cisterna 2">
       <div class="row" style="margin-top:14px"><button class="btn sec" id="ship-cancel">Annulla</button><button class="btn grow" id="ship-go">Registra spedizione</button></div>
+      <div class="warnbox" id="ship-warn" hidden><div>Controlla il peso</div><div class="wk" id="ship-warn-kg"></div><div id="ship-warn-msg"></div>
+        <div class="row" style="margin-top:12px"><button class="btn sec" id="ship-warn-no">Correggi</button><button class="btn warn" id="ship-warn-yes">Sì</button></div></div>
       <div class="err" id="ship-err"></div>
     </div>
     <div id="ship-ok" class="card" hidden></div>
     <div class="card" id="amend-form" hidden>
       <div class="day" id="am-title">Correggi la spedizione</div>
       <div class="meta">Si può cambiare solo finché il caseificio non l'ha ricevuta. Il caseificio vede la correzione e il motivo.</div>
-      <label for="am-kg">Peso giusto (kg)</label><input id="am-kg" class="kgin" type="number" inputmode="decimal" step="any" min="1" max="5000">
+      <label for="am-kg">Peso giusto (kg)</label><input id="am-kg" class="kgin" type="text" inputmode="decimal" autocomplete="off">
       <label for="am-why">Motivo (obbligatorio)</label><input id="am-why" type="text" maxlength="300" placeholder="es. peso sbagliato · registrata due volte">
       <div class="row" style="margin-top:14px"><button class="btn sec" id="am-close">Chiudi</button><button class="btn grow" id="am-save">Salva il peso giusto</button></div>
       <button class="btn warn big" id="am-cancel" style="margin-top:10px">Annulla questa spedizione (registrata per errore)</button>
@@ -139,14 +147,46 @@ body.print .box{display:none}body.print .poster{display:block}
   const openForm = () => { $('ship-form').hidden = false; $('ship-open').hidden = true; $('ship-ok').hidden = true; $('ship-err').textContent = ''; setTimeout(() => $('kg').focus(), 50); };
   $('ship-open').onclick = openForm;
   $('ship-cancel').onclick = () => { $('ship-form').hidden = true; $('ship-open').hidden = false; };
-  let confirmKg = null;
-  $('ship-go').onclick = async () => {
-    const v = $('kg').value.trim().replace(',', '.'), k = Number(v);
-    if (!v || !(k > 0) || k > 5000) { $('ship-err').textContent = 'Scrivi i kg di latte spediti (tra 1 e 5.000).'; return; }
+  // v0.95 (audit FARM-01): Italian numbers — "1.050" is one thousand and fifty, "1050,5" has a decimal; anything else is refused, never guessed
+  const parseKg = v => { let t = String(v || '').trim().replace(/\s|kg/gi, '');
+    if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.');
+    else if (t.includes(',')) t = t.replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    return /^\d+(\.\d+)?$/.test(t) ? Number(t) : NaN; };
+  let D = null;                                            // last data read (orders, loads) for the weight check
+  // the weight against today's order (and what is still missing of it) and the median of the last 10 loads: ±30 % of any is fine
+  const plaus = k => {
+    if (!D) return null;
+    const o = (D.orders || []).find(x => x.plan_date === D.today), order = o ? Number(o.milk_kg) : null;
+    const live = (D.shipments || []).filter(x => x.status !== 'cancelled');
+    const left = order != null ? order - live.filter(x => x.ship_date === D.today).reduce((a, x) => a + Number(x.kg), 0) : null;
+    const last = live.slice(0, 10).map(x => Number(x.kg)).sort((a, b) => a - b), n = last.length;
+    const med = n >= 3 ? (n % 2 ? last[(n - 1) / 2] : (last[n / 2 - 1] + last[n / 2]) / 2) : null;
+    const near = ref => ref > 0 && k >= ref * 0.7 && k <= ref * 1.3;
+    if ((order == null && med == null) || near(order) || near(left) || near(med)) return null;
+    return order != null ? `Hai scritto ${kg(k)} kg ma l'ordine di oggi è ${kg(order)} kg${left > 0 && left < order ? ` (ne mancano ${kg(left)})` : ''}. È giusto?`
+                         : `Hai scritto ${kg(k)} kg: di solito una spedizione è di circa ${kg(Math.round(med))} kg. È giusto?`;
+  };
+  let confirmKg = null, warnKg = null;
+  const showWarn = (k, msg) => { warnKg = k; $('ship-warn-kg').textContent = kg(k) + ' kg'; $('ship-warn-msg').textContent = msg; $('ship-warn-yes').textContent = `Sì, ${kg(k)} kg`;
+    $('ship-warn').hidden = false; $('ship-go').hidden = true; $('ship-err').textContent = ''; $('ship-warn').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  const hideWarn = () => { warnKg = null; $('ship-warn').hidden = true; $('ship-go').hidden = false; };
+  $('ship-warn-no').onclick = () => { hideWarn(); confirmKg = null; $('ship-go').textContent = 'Registra spedizione'; $('kg').focus(); $('kg').select(); };
+  $('ship-warn-yes').onclick = () => send(warnKg, true);
+  $('ship-go').onclick = () => {
+    const k = parseKg($('kg').value);
+    if (!Number.isFinite(k)) { $('ship-err').textContent = 'Scrivi i kg di latte spediti, solo il numero (es. 1050).'; return; }
+    if (k < 50 || k > 5000) { $('ship-err').textContent = `${kg(k)} kg? Scrivi i kg di latte spediti: tra 50 e 5.000 (es. 1050).`; return; }
+    const w = plaus(k); if (w) { showWarn(k, w); return; }                                     // far from the order: spelled out big
     if (confirmKg !== k) { confirmKg = k; $('ship-err').textContent = ''; $('ship-go').textContent = `Confermo ${kg(k)} kg`; return; }   // second tap confirms the weight
-    $('ship-go').disabled = true;
+    send(k, false);
+  };
+  async function send(k, confirmed) {
+    $('ship-go').disabled = true; $('ship-warn-yes').disabled = true;
     try {
-      const d = await post({ action: 'ship', kg: k, temp: $('temp').value.trim() || null, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null });
+      const d = await post({ action: 'ship', kg: k, confirm: confirmed, temp: $('temp').value.trim() || null, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null });
+      if (d.needs_confirm) { showWarn(k, d.message || `Hai scritto ${kg(k)} kg. È giusto?`); return; }   // the server's numbers were newer than the page's
+      hideWarn();
       $('ship-form').hidden = true; $('ship-open').hidden = false;
       try { history.replaceState(null, '', location.pathname + '?t=' + encodeURIComponent(token)); } catch {}   // a reload doesn't reopen the form
       ['kg', 'temp', 'ddt', 'note'].forEach(i => $(i).value = '');
@@ -154,9 +194,9 @@ body.print .box{display:none}body.print .poster{display:block}
       $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="lotbig">Lotto ${esc(d.shipment.milk_lot)}</div><div class="meta"><b>Scrivi il lotto sul DDT e sulla cisterna</b>: all'arrivo il caseificio lo controlla per sapere quale cisterna è. Sbagliato qualcosa? «Correggi o annulla» qui sotto.</div>`;
       load();
     } catch (e) { $('ship-err').textContent = 'Non registrata: ' + e.message + '. Riprova.'; }
-    finally { $('ship-go').disabled = false; $('ship-go').textContent = 'Registra spedizione'; confirmKg = null; }
-  };
-  $('kg').addEventListener('input', () => { confirmKg = null; $('ship-go').textContent = 'Registra spedizione'; });
+    finally { $('ship-go').disabled = false; $('ship-warn-yes').disabled = false; $('ship-go').textContent = 'Registra spedizione'; confirmKg = null; }
+  }
+  $('kg').addEventListener('input', () => { confirmKg = null; hideWarn(); $('ship-go').textContent = 'Registra spedizione'; });
 
   // ---- v0.94: correct or cancel a load still in transit ----
   let amendLot = null, amendKg = null, confirmAm = null;
@@ -171,8 +211,8 @@ body.print .box{display:none}body.print .poster{display:block}
   $('am-close').onclick = closeAmend;
   ['am-kg', 'am-why'].forEach(i => $(i).addEventListener('input', () => { confirmAm = null; $('am-save').textContent = 'Salva il peso giusto'; $('am-cancel').textContent = 'Annulla questa spedizione (registrata per errore)'; }));
   const amend = async (cancel, btn) => {
-    const why = $('am-why').value.trim(), v = $('am-kg').value.trim().replace(',', '.'), k = Number(v);
-    if (!cancel && (!v || !(k > 0) || k > 5000)) { $('am-err').textContent = 'Scrivi il peso giusto in kg (tra 1 e 5.000).'; return; }
+    const why = $('am-why').value.trim(), k = parseKg($('am-kg').value);
+    if (!cancel && !(k >= 50 && k <= 5000)) { $('am-err').textContent = 'Scrivi il peso giusto in kg, solo il numero (tra 50 e 5.000, es. 1050).'; return; }
     if (!cancel && k === amendKg) { $('am-err').textContent = `Il peso è già ${kg(k)} kg.`; return; }
     if (why.length < 3) { $('am-err').textContent = 'Scrivi il motivo (es. «peso sbagliato», «registrata due volte»).'; $('am-why').focus(); return; }
     const key = cancel ? 'cancel' : 'kg:' + k;
@@ -202,6 +242,7 @@ body.print .box{display:none}body.print .poster{display:block}
       const r = await fetch(FN + '?t=' + encodeURIComponent(token), { headers: { apikey: KEY } });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'errore');
+      D = d;
       $('co').textContent = 'Latte per ' + (d.company || 'il caseificio'); document.title = 'Latte · ' + (d.company || '');
       $('sub').textContent = 'Aggiornato ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ' · la pagina si aggiorna da sola';
       const sh = d.shipments || [];

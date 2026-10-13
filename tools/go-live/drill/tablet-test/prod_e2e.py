@@ -1,6 +1,6 @@
 """v0.70 production autopilot on the tablet, against the local copy (same setup as e2e.py: restore_drill + setup.sql +
 PostgREST on :3000; run e2e.py or add a milk supplier first). A 1,150 kg delivery → Home shows two 575 kg loads; one tap
-opens the batch start filled in; more milk than is left asks to confirm; the second load starts offline from the plan kept
+opens the batch start filled in; more milk than is left is refused (v0.95); the second load starts offline from the plan kept
 on the tablet; after reconnect both batches are in the database; closing at a normal yield saves at once with the
 expected kg shown."""
 import json, subprocess, time, os, hmac, hashlib, base64
@@ -78,7 +78,7 @@ try:
     check('one tap: batch start filled in (kg, product, preset, expected kg)', view() == 'v-form' and f['kg'] == '575' and f['prod'].startswith('Mozzarella') and f['pre'].startswith('Base · prova 29/09') and '≈ 172,5 kg' in (f['hint'] or ''), json.dumps(f, ensure_ascii=False))
     pg.screenshot(path='/tmp/prod_start.png')
     setf({'kg': 1200}); save_form()
-    check('more milk than is left on the lot asks to confirm', view() == 'v-form' and 'più del latte rimasto' in toast(), toast())
+    check('more milk than is left on the lot is refused, saying what is left (v0.95 audit D-09: the database refuses it too)', view() == 'v-form' and 'restano' in toast() and 'hai scritto 1.200 kg' in toast(), toast())
     pg.evaluate("document.getElementById('kg').value = '575'; document.getElementById('kg').dispatchEvent(new Event('input', { bubbles: true }))")
     save_form(); n = dose_through()
     check('batch started from the plan, start doses run', n >= 2 and 'avviato' in toast(), f'{n} steps · {toast()}')
@@ -112,7 +112,7 @@ try:
     hint = pg.evaluate("(document.querySelector('#form .hint')||{}).textContent || ''")
     check('close form shows the expected kg', view() == 'v-form' and 'Attesi ≈ 172,5 kg' in hint, hint)
     setf({'out': 170, 'n': 1})
-    if pg.evaluate("!!document.getElementById('whey')"): setf({'whey': 0})
+    if pg.evaluate("!!document.getElementById('ricyn')"): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form(); dose_through()
     row = sql(f"select output_kg||'|'||yield_expected_pct||'|'||coalesce(yield_flag,'-') from fabula.production_batches where batch_lot = '{lot1}'")
     check('normal yield (29.6 %) saved at once, no flag', row == '170.000|30.00|-', row)

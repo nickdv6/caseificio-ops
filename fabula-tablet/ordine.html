@@ -42,11 +42,13 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
 .sig div{border-top:1px solid var(--rule);padding-top:4px}
 .empty{color:var(--muted);font-style:italic}
 @media (max-width:600px){ .parties,.top,.foot{grid-template-columns:1fr} .ponum{text-align:left} .sheet{padding:18px} }
-@media print{ body{background:#fff;padding:0} .ctl{display:none} .sheet{border:0;border-radius:0;max-width:none;padding:0} :root{--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--tile:#eef2f7;--accent:#1e3a5f} }
+.incomplete{max-width:800px;margin:0 auto 12px;background:#fbe9e7;border:2px solid var(--warn);color:var(--warn);border-radius:8px;padding:10px 14px;font-weight:600}
+@media print{ .incomplete{display:none} body{background:#fff;padding:0} .ctl{display:none} .sheet{border:0;border-radius:0;max-width:none;padding:0} :root{--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--tile:#eef2f7;--accent:#1e3a5f} }
 </style>
 </head>
 <body>
 <div class="ctl"><label for="po">Ordine</label><input type="text" id="po" placeholder="PO-20261001-01" style="width:190px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
+<div class="incomplete" id="incomplete" hidden></div>
 <div class="sheet" id="sheet"><div class="empty">Accedi dalla console, poi indica il numero d'ordine.</div></div>
 <script src="vendor/supabase.js"></script>
 <script src="vendor/qrcode.min.js"></script>
@@ -64,14 +66,21 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
   // Company block comes from settings company.* (admin → Azienda); defaults until they are filled in.
   const COMPANY = { name: BRAND.name, line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)', legal: '', piva: '', email: '', hours: '' };
 
+  // v0.95 (audit PRINT-03): the document header needs the legal name, the P.IVA and a street address (Configurazione → Azienda)
+  const STREET = /(^|[\s,])(via|v\.le|viale|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|traversa|borgo|frazione|fraz\.|s\.s\.|ss|s\.p\.|sp)(?=[\s.,]|$)/i;
+  const companyGaps = (cs, legal, piva, address) => !cs || !cs.length ? ['i dati azienda (non letti: ricarica la pagina)']
+    : [!String(legal || '').trim() && 'ragione sociale', !/^(IT)?\s*\d{11}$/i.test(String(piva || '').trim()) && 'P.IVA', !STREET.test(String(address || '')) && 'indirizzo (via e numero)'].filter(Boolean);
   async function show(poNumber) {
     const sheet = $('sheet');
+    $('incomplete').hidden = true;
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
     if (!poNumber) { sheet.innerHTML = '<div class="empty">Indica il numero d\'ordine (es. PO-20261001-01).</div>'; return; }
     const { data: cs } = await sb.from('settings').select('key, value').like('key', 'company.%');
     (cs || []).forEach(r => { const v = (r.value || '').trim(); if (!v) return; ({ 'company.name': () => COMPANY.name = v, 'company.legal_name': () => COMPANY.legal = v, 'company.piva': () => COMPANY.piva = v, 'company.address': () => COMPANY.line1 = v, 'company.email': () => COMPANY.email = v, 'company.receiving_hours': () => COMPANY.hours = v }[r.key] || (() => {}))(); });
     BRAND.set(Object.fromEntries((cs || []).map(r => [r.key, r.value])), true);
+    const CV = Object.fromEntries((cs || []).map(r => [r.key, r.value])), gaps = companyGaps(cs, CV['company.legal_name'], CV['company.piva'], CV['company.address']);
+    if (gaps.length) { $('incomplete').textContent = `Documento incompleto: mancano ${gaps.join(', ')} (Configurazione → Azienda).`; $('incomplete').hidden = false; }
     const { data: po, error } = await sb.from('purchase_orders').select('*, supplier:parties(legal_name, address, city, province, postcode, email, phone, piva, payment_terms_days), lines:purchase_order_lines(qty_ordered, qty_received, unit_price_eur, iva_rate, product:products(sku, name, unit))').eq('po_number', poNumber).maybeSingle();
     if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!po) { sheet.innerHTML = `<div class="empty">Ordine ${esc(poNumber)} non trovato.</div>`; return; }

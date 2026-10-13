@@ -25,6 +25,21 @@
   const badge = (id, n) => { const e = $(id); if (!e) return; e.textContent = n || ''; e.classList.toggle('on', !!n); };
   const fail = (r, what) => { if (r.error) { toast(`${what}: ${r.error.message}`, 'err'); throw r.error; } return r.data; };
   const failNone = (r, what) => { fail(r, what); if (!(r.data || []).length) { toast(`${what}: ${PERM.NOT_SAVED}`, 'err'); throw new Error(PERM.NOT_SAVED); } return r.data; };   // v0.56
+  // v0.95 (audit B-02/B-04/B-05): a small dialog for choices a browser prompt cannot offer (lot picker, review, correction).
+  // check(form) returns the value or throws an Error whose message is shown in the dialog; Annulla / Esc resolve null.
+  function ask(title, html, okText, check) {
+    return new Promise(res => {
+      const d = $('dlg'), f = $('dlg-form');
+      $('dlg-title').textContent = title; $('dlg-body').innerHTML = html; $('dlg-ok').textContent = okText; $('dlg-err').textContent = '';
+      f.onsubmit = async e => {
+        if (e.submitter && e.submitter.value === 'cancel') return;          // method=dialog closes it
+        e.preventDefault();
+        try { const v = await check(f); d.close(); res(v); } catch (er) { $('dlg-err').textContent = er.message; }
+      };
+      d.onclose = () => res(null);
+      d.showModal(); const first = $('dlg-body').querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
+    });
+  }
   const dueCell = d => { const k = daysTo(d); if (d == null) return '<span class="ko">data da impostare</span>'; return `${fmtD(d)} ${k < 0 ? `<span class="ko">scaduto da ${-k} g</span>` : k <= 30 ? `<span class="ko">tra ${k} g</span>` : ''}`; };
 
   async function upload(file, folder, kind, relatedTable) {     // → documents.id
@@ -128,14 +143,40 @@
     const period = () => ({ from: $('rg-from').value || addDays(todayRome(), -6), to: $('rg-to').value || todayRome() });
     $('forms').querySelectorAll('[data-print]').forEach(a => a.onclick = e => { e.preventDefault(); const p = period(); window.open(`registro.html?mod=${a.dataset.print}&from=${p.from}&to=${p.to}`, '_blank', 'noopener'); });
     $('forms').querySelectorAll('[data-blank]').forEach(a => a.onclick = e => { e.preventDefault(); window.open(`registro.html?mod=${a.dataset.blank}&blank=1`, '_blank', 'noopener'); });
+    // v0.95 (audit B-04): the review covers "from the last review to today" (never days still to come), shows how many records and
+    // how many out of limit, and needs an explicit "Ho letto le registrazioni" tick instead of OK on an empty prompt
     $('forms').querySelectorAll('[data-review]').forEach(b => b.onclick = async () => {
-      const p = period(), code = b.dataset.review;
-      const note = prompt(`Verifica del registro ${code} dal ${fmtD(p.from)} al ${fmtD(p.to)}.\nHai letto le registrazioni del periodo? Scrivi i rilievi, oppure lascia vuoto se è tutto in ordine.`, '');
-      if (note === null) return;
+      const code = b.dataset.review, f = rows.find(x => x.code === code) || {}, today = todayRome();
+      const from0 = f.last_review_to && String(f.last_review_to) < today ? addDays(String(f.last_review_to).slice(0, 10), 1) : addDays(today, -6);
+      const count = async () => {
+        const fr = $('rv-from').value, to = $('rv-to').value, out = $('rv-count');
+        if (!fr || !to || fr > to) { out.textContent = 'Periodo non valido'; return; }
+        const r = await sb.rpc('haccp_register', { p_form: code, p_from: fr, p_to: to });
+        if (r.error) { out.textContent = r.error.message; return; }
+        const rs = r.data.rows || [], ko = rs.filter(x => x._ko).length, w = rs.filter(x => x._warn && !x._ko).length;
+        out.innerHTML = `<b>${rs.length} registrazion${rs.length === 1 ? 'e' : 'i'}</b> nel periodo${ko ? ` · <span class="ko">${ko} fuori limite o mancanti</span>` : ''}${w ? ` · ${w} in allerta` : ''} · <a href="registro.html?mod=${esc(code)}&from=${fr}&to=${to}" target="_blank" rel="noopener">apri il registro</a>`;
+      };
+      const pr = ask(`Verifica del registro ${code}`,
+        `<div class="hint">${esc(f.title_it || '')}</div>
+         <div class="form"><div><label>Dal</label><input id="rv-from" type="date" required max="${today}" value="${from0}"></div><div><label>Al</label><input id="rv-to" type="date" required max="${today}" value="${today}"></div></div>
+         <p id="rv-count" class="hint" style="margin:10px 0">…</p>
+         <label class="chk"><input type="checkbox" id="rv-read" required> Ho letto le registrazioni del periodo</label>
+         <div class="form" style="margin-top:8px"><div><label>Esito</label><select id="rv-out" required><option value="" selected disabled>— scegli —</option><option value="ok">Tutto in ordine</option><option value="con_rilievi">Con rilievi</option></select></div></div>
+         <label style="margin-top:8px">Rilievi (obbligatori se «Con rilievi»)</label><textarea id="rv-note" rows="3" style="width:100%"></textarea>`,
+        'Firma la verifica', () => {
+          const fr = $('rv-from').value, to = $('rv-to').value;
+          if (to > today || fr > today) throw new Error('La verifica copre solo giorni già passati: «Al» al massimo oggi');
+          if (fr > to) throw new Error('«Dal» deve essere prima di «Al»');
+          if ($('rv-out').value === 'con_rilievi' && !$('rv-note').value.trim()) throw new Error('Scrivi i rilievi');
+          return { fr, to, out: $('rv-out').value, note: $('rv-note').value.trim() };
+        });
+      $('rv-from').onchange = $('rv-to').onchange = count; count();            // the dialog is already in the page: count the records now
+      const v = await pr;
+      if (!v) return;
       b.disabled = true;
       try {
-        fail(await sb.rpc('mark_register_reviewed', { p_form: code, p_from: p.from, p_to: p.to, p_staff_id: staff.id, p_outcome: note.trim() ? 'con_rilievi' : 'ok', p_note: note.trim() || null }), 'Verifica');
-        toast(`${code} verificato ${note.trim() ? 'con rilievi' : '· tutto in ordine'}`); load();
+        fail(await sb.rpc('mark_register_reviewed', { p_form: code, p_from: v.fr, p_to: v.to, p_staff_id: staff.id, p_outcome: v.out, p_note: v.note || null }), 'Verifica');
+        toast(`${code} verificato dal ${fmtD(v.fr)} al ${fmtD(v.to)} ${v.out === 'con_rilievi' ? 'con rilievi' : '· tutto in ordine'}`); load();
       } finally { b.disabled = false; }
     });
   }
@@ -249,11 +290,28 @@
       <td style="min-width:200px"><small>${esc(r.limit_it || '')}</small></td><td class="num">${r.frequency_days} gg</td>
       <td class="nw">${r.last_taken ? fmtD(r.last_taken) + ' ' + (out[r.last_outcome] || (r.pending ? pill('in attesa') : '')) : '—'}</td>
       <td class="nw">${r.plan_active ? dueCell(r.next_due) : '—'}</td><td><button class="btn sm sec" data-take="${esc(r.code)}">Prelevato</button></td></tr>`).join('')}</table>`;
+    // v0.95 (audit B-05): the lot is chosen from the recent lots (or typed and checked), never free text that a positive result cannot find
     $('labplan').querySelectorAll('[data-take]').forEach(b => b.onclick = async () => {
-      const lot = prompt(`Campione ${b.dataset.take}: lotto di prodotto (vuoto se non serve)`, '');
+      const t = rows.find(r => r.code === b.dataset.take) || {}, milk = /^latte/.test(t.matrix || ''), noLot = /^(acqua|ambiente)$/.test(t.matrix || '');
+      const [pb, mi] = await Promise.all([
+        milk ? { data: [] } : sb.from('production_batches').select('batch_lot, batch_date, output_kg, products(name)').gte('batch_date', addDays(todayRome(), -14)).not('output_kg', 'is', null).order('batch_date', { ascending: false }).order('batch_lot').limit(60),
+        milk ? sb.from('milk_intake').select('milk_lot, intake_date, qty_kg').gte('intake_date', addDays(todayRome(), -7)).order('intake_date', { ascending: false }).limit(30) : { data: [] }]);
+      const opts = [...(pb.data || []).map(x => [x.batch_lot, `${x.batch_lot} · ${x.products?.name || ''} · ${fmtD(x.batch_date)} · ${num(x.output_kg)} kg`]),
+                    ...(mi.data || []).map(x => [x.milk_lot, `${x.milk_lot} · latte del ${fmtD(x.intake_date)} · ${num(x.qty_kg, 0)} kg`])];
+      const known = new Set(opts.map(o => o[0].toUpperCase()));
+      const lot = await ask(`Campione ${b.dataset.take} · ${t.analyte_it || ''}`,
+        `<div class="form"><div><label>Lotto</label><select id="sm-lot"><option value="">${noLot ? '— nessun lotto (acqua / ambiente) —' : '— scegli il lotto —'}</option>${opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('')}<option value="__none">Nessun lotto: il campione non è di un lotto</option></select></div>
+         <div><label>Oppure scrivi il lotto (es. L20261012-A)</label><input id="sm-typed" type="text" autocomplete="off" style="text-transform:uppercase"></div></div>`,
+        'Registra il prelievo', () => {
+          const typed = $('sm-typed').value.replace(/\s/g, '').toUpperCase(), sel = $('sm-lot').value;
+          if (typed) { if (!known.has(typed) && !/^[LRM]\d/.test(typed)) throw new Error(`Lotto ${typed} non riconosciuto: controlla il codice sull'etichetta`); return typed; }
+          if (sel === '__none' || (noLot && !sel)) return '';
+          if (!sel) throw new Error('Scegli il lotto dall\'elenco, scrivilo, oppure scegli «Nessun lotto»');
+          return sel;
+        });
       if (lot === null) return;
       const r = fail(await sb.rpc('record_sample_taken', { p_test_code: b.dataset.take, p_lot: lot || null, p_staff_id: staff.id }), 'Campione');
-      toast(`Campione ${r.sample_code}: scrivilo sul contenitore`); load();
+      toast(`Campione ${r.sample_code}${lot ? ' · lotto ' + lot : ''}: scrivilo sul contenitore`); load();
     });
   }
   function renderSamples(rows) {
@@ -262,11 +320,14 @@
     $('samples').innerHTML = `<table><tr><th>Campione</th><th>Analisi</th><th>Lotto</th><th>Esito</th><th>Referto</th></tr>${rows.map(s => `
       <tr data-sample="${esc(s.sample_code)}"><td class="nw"><b>${esc(s.sample_code)}</b><br><small>${fmtD(s.taken_on)}${s.taken_by ? ' · ' + esc(s.taken_by) : ''}</small></td><td>${esc(s.test_code)}<br><small>${esc(s.analyte_it)}</small></td><td class="nw">${esc(s.lot_number || '')}</td>
       <td>${out[s.outcome] || esc(s.outcome)}${s.outcome === 'in_attesa' && s.days_waiting > 14 ? `<br><span class="ko">da ${s.days_waiting} g</span>` : ''}${s.result_it ? `<br><small>${esc(s.result_it)}</small>` : ''}</td>
-      <td>${s.outcome === 'in_attesa' ? `<div class="form" style="min-width:420px"><div><label>Esito</label><select data-k="outcome"><option value="conforme">Conforme</option><option value="attenzione">Attenzione</option><option value="non_conforme">NON conforme</option><option value="annullato">Annullato</option></select></div>
+      <td>${s.outcome === 'in_attesa' ? `<div class="form" style="min-width:420px"><div><label>Esito</label><select data-k="outcome"><option value="" selected disabled>— scegli l'esito —</option><option value="conforme">Conforme</option><option value="attenzione">Attenzione</option><option value="non_conforme">NON conforme</option><option value="annullato">Annullato</option></select></div>
           <div><label>Risultato</label><input type="text" data-k="text" placeholder="es. assente in 25 g"></div><div><label>N. referto</label><input type="text" data-k="report"></div><div><label>PDF</label><input type="file" data-k="file" accept="application/pdf,image/*"></div><div><button class="btn sm" data-res>Registra</button></div></div>`
-        : `${esc(s.report_no || '')} ${s.report_date ? fmtD(s.report_date) : ''} ${s.document_id ? `<a href="#" data-doc="${s.document_id}">PDF</a>` : ''}`}</td></tr>`).join('')}</table>`;
+        : `${esc(s.report_no || '')} ${s.report_date ? fmtD(s.report_date) : ''} ${s.document_id ? `<a href="#" data-doc="${s.document_id}">PDF</a>` : ''}${s.outcome !== 'annullato' ? ` <button class="btn sm sec" data-fix="${esc(s.sample_code)}" data-was="${esc(s.outcome)}">Correggi esito</button>` : ''}`}</td></tr>`).join('')}</table>`;
     $('samples').querySelectorAll('[data-res]').forEach(b => b.onclick = async () => {
       const tr = b.closest('tr'), g = k => tr.querySelector(`[data-k=${k}]`), outcome = g('outcome').value;
+      // v0.95 (audit B-02): no default outcome — one tap on Registra can no longer write "conforme" into the register
+      if (!outcome) { toast('Scegli l\'esito del referto', 'err'); g('outcome').focus(); return; }
+      if ((outcome === 'conforme' || outcome === 'non_conforme') && !g('text').value.trim()) { toast('Scrivi il risultato come sul referto (es. assente in 25 g)', 'err'); g('text').focus(); return; }
       if (outcome === 'non_conforme' && !confirm('Esito NON conforme: si apre una non conformità e, per le analisi di sicurezza, il lotto viene bloccato e si chiede la valutazione del ritiro. Confermi?')) return;
       b.disabled = true;
       try {
@@ -276,6 +337,27 @@
         else toast('Referto registrato');
         load();
       } finally { b.disabled = false; }
+    });
+    // v0.95 (audit B-02): correct an outcome recorded by mistake — with a reason; the first outcome stays on the sample and in the audit log
+    const OUT = { conforme: 'Conforme', attenzione: 'Attenzione', non_conforme: 'NON conforme', annullato: 'Annullato' };
+    $('samples').querySelectorAll('[data-fix]').forEach(b => b.onclick = async () => {
+      const sc = b.dataset.fix, was = b.dataset.was;
+      const v = await ask(`Correggi l'esito del campione ${sc}`,
+        `<div class="hint">Esito registrato: <b>${esc(OUT[was] || was)}</b>. Resta scritto sul campione insieme al motivo.</div>
+         <div class="form"><div><label>Esito giusto</label><select id="fx-out" required><option value="" selected disabled>— scegli —</option>${Object.entries(OUT).filter(([k]) => k !== was).map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select></div>
+         <div><label>Risultato (come sul referto)</label><input id="fx-text" type="text" placeholder="es. presente in 25 g"></div></div>
+         <label style="margin-top:8px">Motivo della correzione (obbligatorio)</label><input id="fx-why" type="text" required minlength="3" style="width:100%" placeholder="es. esito letto male dal referto">`,
+        'Correggi', () => {
+          const out = $('fx-out').value, why = $('fx-why').value.trim();
+          if (!out) throw new Error('Scegli l\'esito giusto'); if (why.length < 3) throw new Error('Scrivi il motivo');
+          if (out === 'non_conforme' && !confirm('Esito NON conforme: si apre una non conformità e, per le analisi di sicurezza, il lotto viene bloccato e si chiede la valutazione del ritiro. Confermi?')) throw new Error('Non salvato');
+          return { out, why, text: $('fx-text').value.trim() };
+        });
+      if (!v) return;
+      const r = fail(await sb.rpc('correct_lab_result', { p_sample_code: sc, p_outcome: v.out, p_reason: v.why, p_text: v.text || null, p_staff_id: staff.id }), 'Correzione');
+      if (r.nc_id) alert('NON CONFORMITÀ aperta.\n\nCosa fare:\n• ' + (r.actions_it || []).join('\n• '));
+      else toast(was === 'non_conforme' ? 'Esito corretto. La non conformità e l\'eventuale blocco del lotto restano: chiudili da Non conformità e Lotti bloccati se l\'esito giusto lo permette.' : 'Esito corretto', was === 'non_conforme' ? 'err' : '');
+      load();
     });
   }
 
@@ -340,21 +422,29 @@
       <td class="num">${r.tolerance != null ? '±' + num(r.tolerance, 2) + ' ' + esc(r.tolerance_unit || '') : '—'}</td>
       <td class="nw">${r.check_interval_days ? `ogni ${r.check_interval_days} gg<br>${r.check_interval_days >= 7 ? dueCell(r.next_check_on) : (r.last_checked_on ? 'ultima ' + fmtD(r.last_checked_on) : '<span class="ko">mai</span>')}` : '—'}</td>
       <td class="nw">${r.calibration_interval_days ? `ogni ${r.calibration_interval_days} gg<br>${dueCell(r.next_calibration_on)}${r.calibration_cert_ref ? '<br><small>cert. ' + esc(r.calibration_cert_ref) + '</small>' : ''}` : '—'}</td>
-      <td class="nw">${r.last_result ? (r.last_result === 'ok' ? pill('ok', 'ok') : pill('fuori tolleranza', 'ko')) + `<br><small>${fmtDT(r.last_check_at)}${r.last_deviation != null ? ' · scarto ' + num(r.last_deviation, 2) : ''}</small>` : '—'}</td></tr>`).join('')}</table>`;
+      <td class="nw">${r.last_result ? (r.last_result === 'ok' ? pill('ok', 'ok') : r.last_result === 'da_verificare' ? pill('da verificare', 'warn') : pill('fuori tolleranza', 'ko')) + `<br><small>${fmtDT(r.last_check_at)}${r.last_deviation != null ? ' · scarto ' + num(r.last_deviation, 2) : ''}</small>` : '—'}</td></tr>`).join('')}</table>`;
     const keep = $('ce-code').value;
     $('ce-code').innerHTML = rows.filter(r => r.calibration_interval_days || r.reference_instrument).map(r => `<option value="${esc(r.code)}">${esc(r.code)} · ${esc(r.name)}</option>`).join('');
     if (keep) $('ce-code').value = keep;
-    $('ce-date').value = $('ce-date').value || todayRome();
+    $('ce-date').value = $('ce-date').value || todayRome(); $('ce-date').max = todayRome();
   }
   $('ce-save').onclick = async () => {
+    // v0.95 (audit B-03): certificate number + (deviation or PDF), no future date; without the deviation the instrument does not go back in service
     if (!$('ce-provider').value.trim()) return toast('Scrivi il centro o il tecnico', 'err');
+    if (!$('ce-cert').value.trim()) return toast('Scrivi il numero del certificato', 'err');
+    const devTxt = $('ce-dev').value.trim().replace(',', '.');
+    if (devTxt !== '' && !/^\d+(\.\d+)?$/.test(devTxt)) return toast('Scarto max: scrivi un numero (es. 0,2)', 'err');
+    if (devTxt === '' && !$('ce-file').files[0]) return toast('Scrivi lo scarto massimo del certificato oppure allega il PDF', 'err');
+    if ($('ce-date').value && $('ce-date').value > todayRome()) return toast('La data è nel futuro: scrivi il giorno della taratura', 'err');
     $('ce-save').disabled = true;
     try {
       const docId = await upload($('ce-file').files[0], 'tarature', 'calibration_cert', 'equipment');
-      const dev = $('ce-dev').value === '' ? null : Number($('ce-dev').value);
+      const dev = devTxt === '' ? null : Number(devTxt);
       const r = fail(await sb.rpc('record_calibration_check', { p_code: $('ce-code').value, p_kind: 'taratura_esterna', p_method: 'certificato_lab', p_points: dev == null ? [] : [{ ref: 0, reading: dev }],
         p_staff_id: staff.id, p_provider: $('ce-provider').value.trim(), p_certificate_no: $('ce-cert').value || null, p_document_id: docId, p_on: $('ce-date').value || null }), 'Taratura');
-      toast(r.result === 'ok' ? 'Taratura registrata · prossima scadenza aggiornata' : 'Scarto oltre la tolleranza: strumento fuori servizio', r.result === 'ok' ? '' : 'err');
+      toast(r.result === 'ok' ? 'Taratura registrata · prossima scadenza aggiornata'
+          : r.result === 'da_verificare' ? (r.out_of_service ? 'Taratura registrata DA VERIFICARE: senza lo scarto lo strumento resta fuori servizio. Registrala di nuovo con lo scarto letto sul certificato.' : 'Taratura registrata DA VERIFICARE: aggiungi lo scarto letto sul certificato appena puoi.')
+          : 'Scarto oltre la tolleranza: strumento fuori servizio', r.result === 'ok' ? '' : 'err');
       ['ce-provider', 'ce-cert', 'ce-dev', 'ce-file'].forEach(id => $(id).value = ''); load();
     } finally { $('ce-save').disabled = false; }
   };
@@ -363,7 +453,7 @@
     const M = { ghiaccio_fondente: 'ghiaccio fondente', acqua_bollente: 'acqua bollente', confronto_riferimento: 'confronto col riferimento', tamponi_ph: 'tamponi pH', pesi_campione: 'pesi campione', certificato_lab: 'certificato', confronto_display: 'confronto display' };
     $('checks').innerHTML = `<table><tr><th>Quando</th><th>Strumento</th><th>Tipo</th><th class="num">Scarto</th><th>Esito</th><th></th></tr>${rows.map(c => `
       <tr><td class="nw">${fmtDT(c.checked_at)}</td><td>${esc(c.equipment?.code || '')}</td><td>${c.kind === 'taratura_esterna' ? 'taratura esterna' : 'verifica interna'} · ${esc(M[c.method] || c.method)}${c.provider ? '<br><small>' + esc(c.provider) + (c.certificate_no ? ' · ' + esc(c.certificate_no) : '') + '</small>' : ''}</td>
-      <td class="num">${c.max_deviation != null ? num(c.max_deviation, 2) : '—'}${c.tolerance != null ? ` / ±${num(c.tolerance, 2)}` : ''}</td><td>${c.result === 'ok' ? pill('ok', 'ok') : pill('fuori tolleranza', 'ko')}</td>
+      <td class="num">${c.max_deviation != null ? num(c.max_deviation, 2) : '—'}${c.tolerance != null ? ` / ±${num(c.tolerance, 2)}` : ''}</td><td>${c.result === 'ok' ? pill('ok', 'ok') : c.result === 'da_verificare' ? pill('da verificare', 'warn') : pill('fuori tolleranza', 'ko')}</td>
       <td>${c.certificate_document_id ? `<a href="#" data-doc="${c.certificate_document_id}">PDF</a>` : ''}</td></tr>`).join('')}</table>`;
   }
 

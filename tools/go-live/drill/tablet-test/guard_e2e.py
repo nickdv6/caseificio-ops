@@ -23,6 +23,8 @@ sql("update fabula.haccp_log set logged_at = logged_at - interval '1 day' where 
 sup = sql("select id from fabula.parties where is_milk_supplier and active order by created_at limit 1")
 moz = sql("select id from fabula.products where sku = 'MOZ-DOP-KG'")
 sql(f"insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source) values ((now() at time zone 'Europe/Rome')::date, '07:00', '{sup}', '{LOT}', 500, true, 4, 'tablet')")
+# a milk product with no process preset (so no pasteurisation step): the start form must ask CCP 2 itself. Switched off at the end.
+sql("insert into fabula.products (sku, name, kind, unit, active) values ('E2E-SCAM', 'Scamorza E2E', 'finished_good', 'kg', true) on conflict (sku) do update set active = true")
 srv = subprocess.Popen(['python3', '-m', 'http.server', '8772'], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(1)
 sess = {"access_token": JWT, "refresh_token": "r", "expires_at": int(time.time()) + 86400, "expires_in": 86400, "token_type": "bearer",
         "user": {"id": "00000000-0000-4000-a000-000000000001", "email": "casaro@test.it", "aud": "authenticated", "role": "authenticated"}}
@@ -81,8 +83,11 @@ try:
     home(); code('LOT:' + LOT)
     check('after a NON ok the check is asked again', view() == 'v-form' and has('valve'))
     pick = lambda rx: pg.evaluate("rx => { const s = document.getElementById('product'); const o = [...s.options].find(x => new RegExp(rx, 'i').test(x.text)); s.value = o.value; s.dispatchEvent(new Event('change')); }", rx)
-    pick('ricotta')
-    check('preset without a pasteurisation step: CCP 2 asked in the form', has('past'), pg.evaluate("document.getElementById('preset').selectedOptions[0].text"))
+    # v0.95 (audit A-16): ricotta starts from a closed lot's whey, never from milk — so a test product with no preset stands in here
+    check('ricotta is not offered when a vat starts from milk', not pg.evaluate("[...document.getElementById('product').options].some(o => /ricotta/i.test(o.text))"),
+          str(pg.evaluate("[...document.getElementById('product').options].map(o => o.text)")))
+    pick('scamorza e2e')
+    check('product without a pasteurisation step: CCP 2 asked in the form', has('past'), pg.evaluate("document.getElementById('preset').selectedOptions[0].text"))
     pick('mozzarella')
     check('preset with a pasteurisation step: no separate CCP 2 field', not has('past'), pg.evaluate("document.getElementById('preset').selectedOptions[0].text"))
     setf({'kg': 250, 'valve': '0'}); save_form()
@@ -114,7 +119,7 @@ try:
     if view() != 'v-form': home(); code('LOT:' + lot1)
     check('close form: CCP 3 already recorded, not asked again', view() == 'v-form' and has('out') and not has('ccpv'), toast())
     setf({'out': 75, 'n': 1})
-    if has('whey'): setf({'whey': 0})
+    if has('ricyn'): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()
     if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
     for _ in range(10):
@@ -135,7 +140,7 @@ try:
     code('LOT:' + lot2)
     check('batch without CCP 3: the close form asks for it', view() == 'v-form' and has('ccpv'), toast())
     setf({'out': 60, 'ccpv': 66, 'n': 1})
-    if has('whey'): setf({'whey': 0})
+    if has('ricyn'): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()
     if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
     for _ in range(10):
@@ -148,5 +153,6 @@ try:
     check('no page errors', not logs, ' | '.join(logs)[:300])
     b.close()
 finally:
+    sql("update fabula.products set active = false where sku = 'E2E-SCAM'")
     srv.terminate()
 print('FAILURES:', fails or 'none')

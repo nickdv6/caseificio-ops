@@ -86,7 +86,7 @@ try:
     if view() != 'v-form' or not pg.evaluate("!!document.getElementById('out')"): code('LOT:' + blot); dose_through()
     check('offline: the same batch opens the close form (no "si chiude quando torna la rete")', view() == 'v-form' and pg.evaluate("!!document.getElementById('out')"), toast())
     setf({'out': 120, 'n': 1})
-    if pg.evaluate("!!document.getElementById('whey')"): setf({'whey': 0})
+    if pg.evaluate("!!document.getElementById('ricyn')"): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()
     if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
     dose_through()

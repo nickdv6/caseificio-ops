@@ -57,7 +57,9 @@
   };
   // v0.93 (audit C-01): number settings are shown with the decimal comma ("0,044"), so retyping what is on screen can never be read as thousands
   const itNum = v => v === '' || v == null || !Number.isFinite(Number(v)) ? String(v ?? '') : String(v).trim().replace('.', ',');
-  const shown = (r, v) => { const k = kindOf(r); if (v === '' || v == null) return 'vuoto'; if (k === 'flag') return Number(v) === 1 ? 'sì' : 'no'; if (k === 'date') return fmtD(v); if (k === 'number') return itNum(v); return SECRET.has(r.key) ? '••••' : v; };
+  const WDAYS = ['lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom'];
+  const shown = (r, v) => { const k = kindOf(r); if (v === '' || v == null) return 'vuoto'; if (k === 'flag') return Number(v) === 1 ? 'sì' : 'no'; if (k === 'date') return fmtD(v);
+    if (k === 'weekdays') return String(v).split(',').map(x => WDAYS[Number(x) - 1] || x).join(' '); if (k === 'number') return itNum(v); return SECRET.has(r.key) ? '••••' : v; };
   async function loadParams() {
     const { data, error } = await sb.from('settings').select('*').order('key');
     if (error) { $('p-secs').innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
@@ -118,9 +120,18 @@
     row.innerHTML = `<div class="lbl"${att ? ` data-att="${att}"` : ''}>${esc(r.description || r.key)}<span class="was" hidden></span></div>`; row.title = r.key;
     const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0'; row.append(right);
     if (READONLY.has(r.key)) { const t = document.createElement('div'); t.className = 'ro'; t.textContent = r.value || '—'; right.append(t); return row; }
+    if (k === 'weekdays') {          // v0.95 (audit C-04): seven boxes instead of a "1,2,3,4,5,6" text that could silently empty the delivery days
+      const box = document.createElement('span'); box.className = 'wdays'; box.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 12px';
+      const on = new Set(String(r.value || '').split(',').map(x => x.trim()));
+      WDAYS.forEach((t, i) => { const l = document.createElement('label'); l.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:.95rem;text-transform:none;margin:0';
+        const c = document.createElement('input'); c.type = 'checkbox'; c.value = String(i + 1); c.checked = on.has(String(i + 1)); c.disabled = !edit; l.append(c, t); box.append(l); });
+      box.onchange = () => { r.value = [...box.querySelectorAll('input:checked')].map(c => c.value).join(','); const dirty = isDirty(r);
+        row.classList.toggle('dirty', dirty); const w = row.querySelector('.was'); w.hidden = !dirty; w.textContent = 'prima: ' + shown(r, r.orig); saveState(); };
+      right.append(box); return row;
+    }
     let inp;
     if (k === 'flag') { inp = document.createElement('select'); inp.innerHTML = '<option value="1">Sì</option><option value="0">No</option>'; inp.value = Number(r.value) === 1 ? '1' : '0'; }
-    else { inp = document.createElement('input'); inp.type = k === 'date' ? 'date' : k === 'month' ? 'month' : SECRET.has(r.key) ? 'password' : 'text';
+    else { inp = document.createElement('input'); inp.type = k === 'date' ? 'date' : k === 'month' ? 'month' : k === 'time' ? 'time' : SECRET.has(r.key) ? 'password' : 'text';
       inp.value = k === 'month' ? String(r.value || '').slice(0, 7) : k === 'number' ? itNum(r.value) : (r.value ?? '');
       if (k === 'number') { inp.inputMode = 'decimal'; inp.style.textAlign = 'right'; }
       if (k === 'text') { inp.className = 'wide'; inp.placeholder = '—'; }
@@ -149,6 +160,8 @@
       const k = kindOf(r);
       if (k === 'number' && (r.value === '' || isNaN(Number(r.value)))) { focusRow(r.key); throw new Error(`"${r.description || r.key}": inserisci un numero`); }
       if ((k === 'date' || k === 'month') && r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": data non valida`); }
+      if (k === 'time' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(r.value)) { focusRow(r.key); throw new Error(`"${r.description || r.key}": scrivi l'ora, es. 18:00`); }
+      if (k === 'weekdays' && !r.value) { focusRow(r.key); throw new Error(`"${r.description || r.key}": scegli almeno un giorno`); }
     }
     // v0.93 (audit C-01/C-02): a number that changes 10× or more is almost always a comma/dot slip: say it before saving
     const jumps = dirty.filter(r => kindOf(r) === 'number' && UI.jump(r.orig, r.value));
@@ -533,10 +546,18 @@
       const tr = document.createElement('tr'); if (!r.product_sku) tr.style.background = 'var(--tile)';
       tr.innerHTML = `<td><b>${esc(r.label)}</b>${r.unmapped_lines ? `<br><small class="ko">${r.unmapped_lines} righe d'ordine in attesa</small>` : ''}${r.auto_mapped ? '<br><small class="status">collegata automaticamente</small>' : ''}</td><td class="status">${esc(r.product_type || '')}</td>`;
       const sel = document.createElement('select'); sel.innerHTML = '<option value="">— non scarica il magazzino —</option>' + (prods || []).map(p => `<option value="${p.id}" ${p.sku === r.product_sku ? 'selected' : ''}>${esc(p.name)} (${esc(p.unit)})</option>`).join('');
-      const kg = document.createElement('input'); kg.type = 'number'; kg.step = '0.05'; kg.min = '0'; kg.value = r.kg_per_unit ?? ''; kg.placeholder = 'kg';
-      const td3 = document.createElement('td'); td3.append(sel); const td4 = document.createElement('td'); td4.className = 'num'; td4.append(kg);
+      // v0.95 (audit C-28): kg per piece, with the grams shown next to it; a value typed in grams (250) is caught before it deducts 250 kg per sale
+      const kg = document.createElement('input'); kg.type = 'text'; kg.inputMode = 'decimal'; kg.autocomplete = 'off'; kg.style.width = '6em'; kg.style.textAlign = 'right'; kg.placeholder = 'kg';
+      const fromTitle = (() => { const t = String(r.label || ''); let m = t.match(/(\d+(?:[.,]\d+)?)\s*kg\b/i); if (m) return Number(m[1].replace(',', '.')); m = t.match(/(\d+)\s*g\b/i); return m ? Number(m[1]) / 1000 : null; })();
+      kg.value = r.kg_per_unit != null ? String(r.kg_per_unit).replace('.', ',') : (fromTitle > 0 && fromTitle <= 25 ? String(fromTitle).replace('.', ',') : '');
+      const gr = document.createElement('div'); gr.className = 'status'; gr.style.fontSize = '.8rem';
+      const showG = () => { const k = UI.parseIt(kg.value); gr.textContent = kg.value.trim() === '' ? '' : Number.isFinite(k) && k > 0 ? `= ${Math.round(k * 1000).toLocaleString('it-IT')} g` + (k > 5 ? ' ⚠' : '') : 'numero non valido'; };
+      kg.oninput = showG; showG();
+      const td3 = document.createElement('td'); td3.append(sel); const td4 = document.createElement('td'); td4.className = 'num'; td4.append(kg, gr);
       const td5 = document.createElement('td'); td5.append(saveBtn(async () => {
-        const pid = sel.value || null, k = pid ? Number(kg.value) : null; if (pid && !(k > 0)) throw new Error('Inserisci i kg per pezzo');
+        const pid = sel.value || null, k = pid ? UI.parseIt(kg.value) : null; if (pid && !(k > 0)) throw new Error('Inserisci i kg per pezzo (es. 0,25 per 250 g)');
+        if (pid && k > 25) throw new Error(`${String(k).replace('.', ',')} kg per pezzo non è possibile: se sono grammi scrivi ${String(k / 1000).replace('.', ',')}`);
+        if (pid && k > 5 && !confirm(`${String(k).replace('.', ',')} kg per pezzo? Ogni pezzo venduto scarica ${String(k).replace('.', ',')} kg dal magazzino.\n\nSe sono grammi scrivi ${String(k / 1000).replace('.', ',')}.\n\nSalvare ${String(k).replace('.', ',')} kg?`)) throw new Error('Non salvato: correggi i kg per pezzo');
         await upd('shopify_variant_map', { variant_id: r.variant_id }, { product_id: pid, kg_per_unit: k, auto_mapped: false, updated_at: new Date().toISOString() }); UI.after(loadVariantMap);
       }));
       tr.append(td3, td4, td5); tbl.append(tr);

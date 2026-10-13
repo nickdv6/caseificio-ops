@@ -4,8 +4,11 @@
 // (Configurazione → Parametri; change it to switch the old link off). The database functions do the token check:
 //   GET  ?t=<token>                                    → fabula.farm_milk_orders(token): latest shipment, last 30 days,
 //                                                        month totals, approved milk orders and orders awaiting approval
-//   POST { t, action: "ship", kg, temp?, ddt?, note? } → fabula.farm_milk_ship(...): the farm records the kg it shipped
-//                                                        (the farm's weight is the source of truth)
+//   POST { t, action: "ship", kg, confirm?, temp?, ddt?, note? }
+//                                                    → fabula.farm_milk_ship(...): the farm records the kg it shipped
+//                                                        (the farm's weight is the source of truth). v0.95 (audit FARM-01):
+//                                                        confirm false = check the weight against today's order and the usual
+//                                                        loads first (answers { needs_confirm, message }), true = confirmed
 //   POST { t, action: "amend", lot, kg?, cancel?, reason }
 //                                                    → fabula.farm_milk_amend(...) (v0.94): the farm corrects the kg of, or
 //                                                        cancels, a load still in transit (reason required)
@@ -44,15 +47,21 @@ Deno.serve(async (req: Request) => {
     if (!TOKEN.test(t)) return json({ error: "link non valido" }, 403);
 
     if (b.action === "ship") {
-      const kg = num(b.kg), temp = num(b.temp);
+      const kg = num(b.kg), temp = num(b.temp), confirm = b.confirm === true ? true : b.confirm === false ? false : null;
       if (kg === null || !Number.isFinite(kg) || kg <= 0 || kg > 5000) return json({ error: "peso non valido" }, 400);
       if (temp !== null && (!Number.isFinite(temp) || temp < -2 || temp > 40)) return json({ error: "temperatura non valida" }, 400);
-      const { data, error } = await fab.rpc("farm_milk_ship", {
+      const args: Record<string, unknown> = {
         p_token: t, p_kg: kg, p_temp: temp,
-        p_ddt: b.ddt ? String(b.ddt).slice(0, 40) : null, p_note: b.note ? String(b.note).slice(0, 300) : null,
-      });
+        p_ddt: b.ddt ? String(b.ddt).slice(0, 40) : null, p_note: b.note ? String(b.note).slice(0, 300) : null, p_confirm: confirm,
+      };
+      let { data, error } = await fab.rpc("farm_milk_ship", args);
+      if (error && error.code === "PGRST202") {   // database still without v0.95b (no p_confirm): record as before
+        delete args.p_confirm;
+        ({ data, error } = await fab.rpc("farm_milk_ship", args));
+      }
       if (error) return json({ error: error.code === "22023" ? error.message : "errore del server" }, error.code === "22023" ? 400 : 500);
       if (!data) return json({ error: "link non valido o scaduto" }, 403);
+      if (data.needs_confirm) return json({ ok: false, needs_confirm: true, kg: data.kg, message: data.message_it });
       return json({ ok: true, shipment: data });
     }
 

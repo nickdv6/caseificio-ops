@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # v0.78 outside watcher — runs on GitHub Actions (.github/workflows/watch.yml), independent of Supabase, the bots and Claude.
 # Checks: tablet site serves the app · database answers (public.fabula_health) · pg_cron ran in the last 20 min ·
-# nightly backup in the last 26 h · edge function farm-order refuses a request without token (403).
+# nightly backup in the last 26 h · scheduled bots ran (v0.95) · edge function farm-order refuses a request without token (403).
 # A failure is re-checked after 3 minutes; only a second failure fails the job (GitHub then e-mails the repo owner).
 set -u
 SITE="${SITE:-https://flourishing-swan-6729c4.netlify.app}"
@@ -16,6 +16,8 @@ check() {
     [ "$(echo "$h" | jq -r .db)" = "true" ] || bad+=("database non risponde")
     [ "$(echo "$h" | jq -r .cron_ok)" = "true" ] || bad+=("automazioni del database (pg_cron) ferme da oltre 20 minuti")
     [ "$(echo "$h" | jq -r .backup_ok)" = "true" ] || bad+=("nessun backup riuscito nelle ultime 26 ore")
+    # v0.95 (audit E-20): scheduled bots stopped (no run of their own after the slot + grace). a database without bots_ok (older) passes.
+    [ "$(echo "$h" | jq -r 'if has("bots_ok") then .bots_ok else true end')" = "true" ] || bad+=("bot programmati fermi: $(echo "$h" | jq -r '.bots_missed // "?"') esecuzioni mancanti nelle ultime 4 ore (Claude non parte? controlla i connettori e le attività programmate)")
   fi
   local code; code=$(curl -s -o /dev/null -w "%{http_code}" -m 20 "$SB/functions/v1/farm-order?t=monitor")
   [ "$code" = "403" ] || bad+=("funzione farm-order: risposta $code invece di 403")

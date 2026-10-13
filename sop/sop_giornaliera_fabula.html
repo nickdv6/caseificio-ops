@@ -36,7 +36,9 @@ h1{font-family:var(--display);font-size:2.6rem;font-weight:700;margin:0;line-hei
 .enter{color:var(--muted)}
 .enter b{color:var(--fg);font-weight:600}
 
-footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--rule);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;font-size:.88rem}
+footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--rule);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;font-size:.88rem}
+footer .call{border:2px solid var(--warn);padding:8px 10px}
+footer .call h4{color:var(--warn)}
 @media (max-width:640px){footer{grid-template-columns:1fr}}
 footer h4{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;font-size:.9rem;margin:0 0 4px;color:var(--accent)}
 footer ul{margin:0;padding-left:16px}
@@ -49,7 +51,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--ti
     <h1>Routine giornaliera · punti di scansione</h1>
     <div class="sub">Caseificio Bubalina · Agropoli · ogni passaggio si chiude con una scansione dal tablet o dal telefono</div>
   </div>
-  <div class="meta">SOP-01 · rev. 3 · 04/10/2026<b>10 scansioni al giorno</b></div>
+  <div class="meta">SOP-01 · rev. 4 · 12/10/2026<b>10 scansioni al giorno</b></div>
 </header>
 
 <div class="grid">
@@ -124,9 +126,11 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--ti
 
 <footer>
   <div><h4>Se qualcosa è fuori limite</h4>
-    <ul><li>Il tablet mostra <b>rosso</b>: scrivi cosa hai fatto (es. spostato prodotto in cella 2)</li><li>Non cancellare il valore: si registra la non conformità e la correzione</li><li>Avvisa il casaro di turno</li></ul></div>
+    <ul><li>Il tablet mostra <b>rosso</b>: fai l'azione che indica e scrivi cosa hai fatto (es. spostato prodotto in cella 2)</li><li>Non cancellare il valore: si registra la non conformità e la correzione</li><li>Avvisa il casaro di turno <b>e il responsabile HACCP</b> (vedi «Chi chiamare»)</li><li><b>Banner rosso</b> in alto sul tablet = cosa manca prima di chiudere: toccalo e fallo</li><li>Latte arrivato da oltre <b>60 ore</b>: non è più DOP (il tablet lo segnala)</li></ul></div>
   <div><h4>Se il tablet non funziona</h4>
-    <ul><li>Scrivi su carta: ora, cosa, valore, firma</li><li>Inserisci tutto a fine turno dal telefono</li><li>Le foto dei DDT si caricano anche dopo</li></ul></div>
+    <ul><li>Usa il <b>foglio stampato</b> del controllo (MOD-xx: Autocontrollo → Registri → Modulo vuoto): data, ora, valore, firma</li><li>Appena il tablet torna: <b>🛡 → 📝 Ricopia da foglio di carta</b>, con <b>data e ora del foglio</b>. Non usare il QR normale: segnerebbe l'ora di adesso</li><li>Arrivo latte, inizio e fine lotto: scrivi l'ora vera sul foglio e dallo al responsabile HACCP</li><li>Le foto dei DDT si caricano anche dopo</li></ul></div>
+  <div class="call"><h4>Chi chiamare</h4>
+    <ul><li>Responsabile HACCP: <b>Nicola Celso</b> · tel. ______________</li><li>Titolare: <b>Nick Del Verme</b> · WhatsApp ______________</li><li>Tecnico caseificio / manutenzione: ______________ · tel. ______________</li><li>Prima il responsabile HACCP; se non risponde entro 15 minuti, il titolare</li></ul></div>
   <div><h4>Settimanali e mensili</h4>
     <ul><li>Ogni giorno 07:00: pH-metro · lunedì 10:00: conta magazzino</li><li>Settimanali: giro infestanti, cloro acqua · mensile: verifica termometri</li><li>Il tablet le mostra in "Da fare oggi"; dettagli nelle SOP visive SOP-00…12</li></ul></div>
 </footer>

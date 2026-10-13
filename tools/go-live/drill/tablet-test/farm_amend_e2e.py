@@ -45,7 +45,10 @@ def farm_fn(route):                                   # emulates supabase/functi
         return route.fulfill(status=200 if d else 403, headers=H, body=json.dumps(d or {'error': 'link non valido o scaduto'}))
     b = json.loads(r.post_data or '{}')
     if b.get('action') == 'ship':
-        code, d = rpc('farm_milk_ship', {'p_token': b['t'], 'p_kg': float(b['kg']), 'p_temp': None, 'p_ddt': b.get('ddt'), 'p_note': b.get('note')})
+        code, d = rpc('farm_milk_ship', {'p_token': b['t'], 'p_kg': float(b['kg']), 'p_temp': None, 'p_ddt': b.get('ddt'), 'p_note': b.get('note'),
+                                         'p_confirm': b.get('confirm') if isinstance(b.get('confirm'), bool) else None})
+        if code == 200 and isinstance(d, dict) and d.get('needs_confirm'):   # v0.95: same answer as the edge function
+            return route.fulfill(status=200, headers=H, body=json.dumps({'ok': False, 'needs_confirm': True, 'kg': d.get('kg'), 'message': d.get('message_it')}))
     elif b.get('action') == 'amend':
         cancel = b.get('cancel') is True
         code, d = rpc('farm_milk_amend', {'p_token': b['t'], 'p_lot': b.get('lot'), 'p_kg': None if cancel else float(b['kg']), 'p_cancel': cancel, 'p_reason': b.get('reason')})
@@ -79,7 +82,8 @@ try:
     farm = b.new_context(service_workers='block', viewport={'width': 390, 'height': 844}); farm.route('**/functions/v1/farm-order**', farm_fn)
     fp = farm.new_page(); fp.on('pageerror', lambda e: errs.append('farm: ' + str(e)))
     def ship(k):
-        fp.click('#ship-open'); fp.fill('#kg', k); fp.click('#ship-go'); fp.click('#ship-go'); fp.wait_for_timeout(1500)
+        fp.click('#ship-open'); fp.fill('#kg', k); fp.click('#ship-go'); fp.wait_for_timeout(200)
+        fp.click('#ship-warn-yes' if fp.is_visible('#ship-warn') else '#ship-go'); fp.wait_for_timeout(1500)   # v0.95: a weight far from the usual loads is confirmed in the red box
         return sql("select milk_lot from fabula.milk_shipments where status = 'shipped' order by created_at desc limit 1")
     fp.goto(f'http://localhost:{PORT}/latte.html?t={TOKEN}'); fp.wait_for_timeout(1500)
     l1 = ship(str(K1))

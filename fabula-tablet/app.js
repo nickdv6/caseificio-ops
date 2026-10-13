@@ -13,7 +13,8 @@
   // ---------- UI helpers ----------
   const show = v => { document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-' + v)); };
   let lastToastAt = 0;
-  const toast = (msg, cls = 'ok') => { lastToastAt = Date.now(); const t = $('toast'); t.textContent = msg; t.className = 'toast ' + cls; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2600); };
+  let toastT = null;   // v0.95: a newer toast is not hidden by the timer of an older one; long messages can stay longer
+  const toast = (msg, cls = 'ok', ms = 2600) => { lastToastAt = Date.now(); const t = $('toast'); t.textContent = msg; t.className = 'toast ' + cls; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', ms); };
   // v0.59: dates are Agropoli dates (Europe/Rome), not UTC: between 00:00 and 02:00 the UTC date was still yesterday
   const ROME_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' });
   const today = () => ROME_DAY.format(new Date());
@@ -190,10 +191,13 @@
     if (error) return toast('Accesso negato: ' + error.message, 'err'); init();
   };
   PERM.forgot(sb, toast);
+  // v0.95 (audit A-12): records still waiting would be sent later under the next person's login (wrong name, maybe refused):
+  // try to send them now, and if they cannot go out, do not log out
   $('btn-logout').onclick = async () => {
+    if (queue().length && navigator.onLine) await flush();
     const n = queue().length;
+    if (n) { toast(`${n === 1 ? 'C\'è 1 registrazione non ancora inviata' : `Ci sono ${n} registrazioni non ancora inviate`}: collegati a internet prima di uscire. Partono da sole appena torna la rete.`, 'err', 7000); return; }
     staff = null; await sb.auth.signOut(); show('login');
-    if (n) toast(`${n} registrazioni restano in coda su questo tablet: partono al prossimo accesso`, 'err');
   };
 
   // ---------- Tasks ----------
@@ -244,6 +248,19 @@
       d.innerHTML = `<div><div>Avvia lotto: ${fmtKg(x.milk_kg)} kg di latte ${esc(x.milk_lot)}</div><div class="code">${esc(x.product)} · ≈ ${fmtKg(x.expected_kg)} kg (resa ${String(x.yield_pct).replace('.', ',')}%${String(x.yield_source).startsWith('default') ? ' stimata' : ''})${x.small ? ' · lotto piccolo' : ''} · ${due}</div></div><time>▶</time>`;
       d.onclick = () => startFromPlan(x); box.append(d);
     });
+    // v0.95 (audit A-16): today's closed mozzarella lots whose whey has not gone into ricotta (online only)
+    const [rb, rp] = await Promise.all([live(sb.from('production_batches').select('batch_lot, product_id, output_kg, whey_kg, input_kind, finished_at').eq('batch_date', today())),
+                                        live(sb.from('products').select('id, byproduct_product_id').not('byproduct_product_id', 'is', null))]);
+    if (!rb.error && rb.data && !rp.error && rp.data) {
+      const byp = new Map(rp.data.map(p => [p.id, p.byproduct_product_id])), lots = new Set(rb.data.map(b => b.batch_lot));
+      const cand = rb.data.filter(b => b.output_kg != null && b.input_kind !== 'whey' && byp.has(b.product_id) && !lots.has('R' + String(b.batch_lot).slice(1)))
+                          .map(b => ({ ...b, byp: byp.get(b.product_id) })).sort((a, b) => String(a.batch_lot).localeCompare(String(b.batch_lot)));
+      if (cand.length) {
+        const d = document.createElement('div'); d.className = 'task';
+        d.innerHTML = `<div><div>🧀 Avvia ricotta dal siero di oggi</div><div class="code">lotti chiusi senza ricotta: ${esc(cand.map(b => b.batch_lot).join(', '))}</div></div><time>▶</time>`;
+        d.onclick = () => startRicottaLater(cand); box.append(d);
+      }
+    }
   }
   async function startFromPlan(x) {
     $('form').innerHTML = ''; current = { code: 'LOT:' + x.milk_lot, plan: x };
@@ -726,8 +743,16 @@
     let { data: prods, error: pe } = await live(sb.from('products').select('id, name, byproduct_product_id').eq('kind', 'finished_good').eq('active', true));
     if (pe || !prods) prods = lotView().products.filter(p => p.kind === 'finished_good' && p.active);   // offline
     if (!prods.length) throw new Error('Nessun prodotto disponibile (senza rete e prodotti non ancora salvati sul tablet)');
-    const fromWhey = new Set(prods.map(p => p.byproduct_product_id).filter(Boolean));   // v0.80: whey products (ricotta) last: milk goes to mozzarella by default
-    prods = [...prods].sort((a, b) => (fromWhey.has(a.id) - fromWhey.has(b.id)) || String(a.name).localeCompare(String(b.name)));
+    const fromWhey = new Set(prods.map(p => p.byproduct_product_id).filter(Boolean));   // v0.95 (audit A-16): whey products (ricotta) start from a closed lot's whey, never from milk
+    prods = prods.filter(p => !fromWhey.has(p.id)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!prods.length) throw new Error('Nessun prodotto da latte disponibile');
+    // v0.95 (audit D-09/A-14): what is still left of this milk (the delivery minus the vats already started), not the delivery total
+    let usedKg = 0;
+    if (!pre) {
+      const r = await live(sb.from('batch_milk_inputs').select('qty_kg').eq('milk_intake_id', milk.id));
+      usedKg = (!r.error && r.data ? r.data : lotView().inputs.filter(i => i.milk_intake_id === milk.id)).reduce((a, x) => a + Number(x.qty_kg || 0), 0);
+    }
+    const leftKg = pre ? Number(pre.left_kg) : Math.max(0, Math.round((Number(milk.qty_kg) - usedKg) * 10) / 10);
     // v0.59: next free letter among today's L-lots (ricotta R-lots and old simulation rows no longer shift it); re-read at save time
     const nextLot = async () => { const pre = 'L' + today().replace(/-/g, '') + '-';
       let { data: ls, error: le } = await live(sb.from('production_batches').select('batch_lot').like('batch_lot', pre + '%'));
@@ -769,10 +794,11 @@
         h.textContent = `Proposta: ${fmtKg(pre.milk_kg)} kg → ≈ ${fmtKg(Math.round(v * pre.yield_pct) / 100)} kg di ${pre.product} (resa ${String(pre.yield_pct).replace('.', ',')}%). Le dosi sono nel passo successivo.`; };
       kgIn.addEventListener('input', upd); $('mu').addEventListener('change', upd); upd();
     }
-    openForm('Inizio lotto ' + batchLot, `latte ${lot} · disponibili ${milk.qty_kg} kg`, async () => {
+    openForm('Inizio lotto ' + batchLot, `latte ${lot} · restano ${fmtKg(leftKg)} kg${usedKg ? ` (ricevuti ${fmtKg(milk.qty_kg)}, già in caldaia ${fmtKg(usedKg)})` : ''}`, async () => {
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
       const product = val('product'), preset = val('preset') || null;
-      if (pre && kg > pre.left_kg * 1.02 && !current.overOk) { current.overOk = true; toast(`${fmtKg(kg)} kg sono più del latte rimasto su ${lot} (${fmtKg(pre.left_kg)} kg): controlla e premi Salva di nuovo`, 'err'); throw new Error('confirm'); }
+      // v0.95 (audit D-09): the database refuses more than the milk left (+2 % for the scale): say it here, before the dosing starts
+      if (kg > leftKg * 1.02) throw new Error(`Sul latte ${lot} restano ${fmtKg(leftKg)} kg: hai scritto ${fmtKg(kg)} kg. Controlla il lotto sull'etichetta e i kg`);
       batchLot = await nextLot();                            // another tablet may have opened a lot meanwhile (offline: the device copy)
       const extra = [];
       if (!valveDone) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'PRP-PAST-VALVE', p_value: 0, p_staff_id: staff.id, p_source: 'tablet' } });
@@ -786,6 +812,31 @@
       if (!steps.length) { toast('Lotto ' + batchLot + ' avviato ✓'); return; }
       runDosing(`Avvio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => toast('Lotto ' + batchLot + ' avviato ✓ · scansiona di nuovo il lotto per la lavorazione'));
       return 'stay';
+    });
+  }
+  // v0.95 (audit A-16): ricotta from a closed mozzarella lot's whey — at its close, or later from Home (Produzione di oggi)
+  async function runRicotta(parentLot, byp, whey, doneTitle, doneLines, links) {
+    const ricLot = 'R' + parentLot.slice(1);
+    await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: parentLot, p_whey_kg: whey, p_staff_id: staff.id } }]);
+    const done = () => { toast(`Ricotta ${ricLot} avviata ✓ · stampa l'etichetta per il tino`);
+      return showDone(doneTitle, [...doneLines, `Ricotta ${ricLot} avviata con ${fmtKg(whey)} kg di siero. Attacca l'etichetta al tino: a fine ricotta scansionala per chiudere il lotto (le etichette delle fuscelle si stampano alla chiusura).`],
+        [...links, ['🖨 Stampa etichetta tino ricotta', labelUrl(ricLot, 'Ricotta in lavorazione', 'tino · ' + ddmm(today()), 1)]]); };   // v0.54: the tino gets its own label to scan at close
+    const steps = await doseSteps(byp, 'start', { milk: whey });
+    if (!steps.length) return done();
+    runDosing(`Ricotta ${ricLot} · ${fmtKg(whey)} kg siero`, ricLot, steps, async () => done());
+    return 'stay';
+  }
+  function startRicottaLater(cand) {
+    $('form').innerHTML = ''; current = { code: 'RICOTTA' };
+    if (!allowed('LOT')) return;
+    const sel = field('parent', 'Siero di quale lotto?', 'select', { options: [['', '— scegli il lotto —'], ...cand.map(b => [b.batch_lot,
+      `${b.batch_lot} · ${fmtKg(b.output_kg)} kg${b.finished_at ? ' · chiuso alle ' + hhmm(b.finished_at) : ''}${Number(b.whey_kg) === 0 ? ' · avevi scelto «niente ricotta»' : ''}`])] });
+    if (cand.length === 1) sel.value = cand[0].batch_lot;
+    field('whey', 'Siero per ricotta, kg', 'number', { step: '1' });
+    openForm('Avvia ricotta', 'dal siero di un lotto di mozzarella chiuso oggi', async () => {
+      const b = cand.find(x => x.batch_lot === val('parent')); if (!b) throw new Error('Scegli il lotto');
+      if (!(val('whey') > 0)) throw new Error('Scrivi i kg di siero');
+      return runRicotta(b.batch_lot, b.byp, val('whey'), `✓ Ricotta dal lotto ${b.batch_lot}`, [], []);
     });
   }
   async function stepBatchEnd(b) {
@@ -806,9 +857,16 @@
     const ccpDone = await ccpRecorded(ccpCode, b.batch_lot, b.id);
     if (!ccpDone) field('ccpv', b.input_kind === 'whey' ? 'Temperatura di affioramento (CCP 4), °C · non ancora registrata' : 'Temperatura della pasta filata (CCP 3), °C · non ancora registrata', 'number', { step: '0.1', limit: 'Valore letto sul termometro; se era scritto sul foglio, ricopialo qui' });
     field('ph', 'pH cagliata (se misurato)', 'number', { step: '0.01', required: false }); field('n', 'Etichette da stampare', 'number', { step: '1', required: false });
-    if (byp) field('whey', 'Siero per ricotta, kg (0 = niente ricotta)', 'number', { step: '1', required: false });
+    if (byp) {                                       // v0.95 (audit A-16): an explicit choice, not an optional field that is easy to leave empty
+      const ric = field('ricyn', 'Ricotta con il siero di questo lotto?', 'select', { options: [['', '— scegli —'], ['si', 'Sì, faccio la ricotta'], ['no', 'No, niente ricotta oggi']] });
+      const wIn = field('whey', 'Siero per ricotta, kg', 'number', { step: '1', required: false }), wLbl = wIn.previousElementSibling;
+      const tog = () => { const on = ric.value === 'si'; wIn.style.display = wLbl.style.display = on ? '' : 'none'; wIn.required = on; };
+      ric.addEventListener('change', tog); tog();
+    }
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
-      const out = val('out'), ph = val('ph'), n = val('n'), whey = byp ? (val('whey') || 0) : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
+      const ricNo = !!byp && val('ricyn') === 'no';
+      if (byp && val('ricyn') === 'si' && !(val('whey') > 0)) throw new Error('Scrivi i kg di siero per la ricotta');
+      const out = val('out'), ph = val('ph'), n = val('n'), whey = byp && val('ricyn') === 'si' ? val('whey') : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
       if (ey && Math.abs(y - ey.pct) > (ey.tolerance_pts ?? 4) && !current.yieldOk) {   // likely a typo in the kg: ask once
         current.yieldOk = true;
         toast(`Resa ${String(y).replace('.', ',')}% contro ${String(ey.pct).replace('.', ',')}% attesa: controlla i kg (prodotto e ${b.input_kind === 'whey' ? 'siero' : 'latte'}). Se è giusto premi Salva di nuovo.`, 'err');
@@ -816,20 +874,10 @@
       }
       const expS = addDays(today(), prod?.shelf_life_days || 5), code = current.code;
       const lotLink = [`🖨 Stampa ${n || 1} etichett${(n || 1) === 1 ? 'a' : 'e'} lotto ${b.batch_lot}`, labelUrl(b.batch_lot, prod?.name, 'scad. ' + ddmm(expS), n || 1)];
-      const startRicotta = async () => {
-        const ricLot = 'R' + b.batch_lot.slice(1);
-        await save([{ rpc: 'start_byproduct_batch', args: { p_parent_lot: b.batch_lot, p_whey_kg: whey, p_staff_id: staff.id } }]);
-        const done = () => { toast(`Ricotta ${ricLot} avviata ✓ · stampa l'etichetta per il tino`);
-          return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`, `Ricotta ${ricLot} avviata con ${whey} kg di siero. Attacca l'etichetta al tino: a fine ricotta scansionala per chiudere il lotto (le etichette delle fuscelle si stampano alla chiusura).`],
-            [lotLink, ['🖨 Stampa etichetta tino ricotta', labelUrl(ricLot, 'Ricotta in lavorazione', 'tino · ' + ddmm(today()), 1)]]); };   // v0.54: the tino gets its own label to scan at close
-        const steps = await doseSteps(byp, 'start', { milk: whey });
-        if (!steps.length) return done();
-        runDosing(`Ricotta ${ricLot} · ${whey} kg siero`, ricLot, steps, async () => done());
-        return 'stay';
-      };
+      const startRicotta = () => runRicotta(b.batch_lot, byp, whey, `✓ Lotto ${b.batch_lot} chiuso`, [`${out} kg · resa ${y}% · scade ${ddmm(expS)}`], [lotLink]);
       const close = async () => {
         const ops = [scanEvent(code, 'batch_end', { payload: { output_kg: out, yield_pct: y, whey_to_byproduct_kg: whey } }),
-          { table: 'production_batches', update: bKey, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString() } },
+          { table: 'production_batches', update: bKey, row: { output_kg: out, curd_ph: ph, finished_at: new Date().toISOString(), ...(ricNo ? { whey_kg: 0 } : {}) } },   // whey_kg 0 = "no ricotta" was chosen
           { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: bId, source: 'tablet' } }];
         if (!ccpDone && val('ccpv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: ccpCode, p_value: val('ccpv'), p_staff_id: staff.id, p_batch_lot: b.batch_lot, p_source: 'tablet', p_equipment_code: 'TERM-02' } });   // v0.80 (after the update: ids above stay $1)
         if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)

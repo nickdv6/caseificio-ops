@@ -33,7 +33,10 @@ def farm_fn(route):                                   # emulates supabase/functi
         return route.fulfill(status=200 if d else 403, headers=H, body=json.dumps(d or {'error': 'link non valido o scaduto'}))
     b = json.loads(r.post_data or '{}')
     if b.get('action') == 'ship':
-        code, d = rpc('farm_milk_ship', {'p_token': b['t'], 'p_kg': float(b['kg']), 'p_temp': float(b['temp']) if b.get('temp') else None, 'p_ddt': b.get('ddt'), 'p_note': b.get('note')})
+        code, d = rpc('farm_milk_ship', {'p_token': b['t'], 'p_kg': float(b['kg']), 'p_temp': float(b['temp']) if b.get('temp') else None, 'p_ddt': b.get('ddt'), 'p_note': b.get('note'),
+                                         'p_confirm': b.get('confirm') if isinstance(b.get('confirm'), bool) else None})
+        if code == 200 and isinstance(d, dict) and d.get('needs_confirm'):   # v0.95: same answer as the edge function
+            return route.fulfill(status=200, headers=H, body=json.dumps({'ok': False, 'needs_confirm': True, 'kg': d.get('kg'), 'message': d.get('message_it')}))
         return route.fulfill(status=200 if code == 200 and d else 400, headers=H, body=json.dumps({'ok': True, 'shipment': d} if code == 200 and d else {'error': str(d)}))
     code, d = rpc('farm_milk_seen', {'p_token': b['t'], 'p_plan_date': b.get('plan_date')})
     return route.fulfill(status=200 if d else 404, headers=H, body=json.dumps({'ok': True} if d else {'error': 'ordine non trovato'}))
