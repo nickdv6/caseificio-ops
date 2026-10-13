@@ -68,5 +68,15 @@ r = run('load', bk, '--db', 'postgresql:///other_db', '--wipe-all', '--target', 
 check('`load --wipe-all` refuses a --target that is not the --db', r.returncode != 0 and 'is not the database of --db' in r.stderr, r.stderr.strip()[:160])
 r = run('load', bk, '--db', 'postgresql://postgres:x@db.ojkquhzaeypsphncjqwy.supabase.co:5432/postgres', '--wipe-all', '--target', 'postgres', '--confirm', exp)
 check('…and «postgres» is not accepted as the target of a Supabase project', r.returncode != 0 and 'is not the database of --db (ojkquhzaeypsphncjqwy)' in r.stderr, r.stderr.strip()[:160])
+# v1.00: a backup taken before a migration added a NOT NULL column with a default still loads (the column gets its default)
+old = [{'id': '0000aaaa-0000-4000-a000-000000000001', 'key': 'rg-old', 'title_it': 'backup older than the schema',
+        'expires_at': (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)).isoformat()}]   # no severity, items, created_at
+bk2 = tempfile.NamedTemporaryFile(suffix='.json.gz', delete=False).name
+open(bk2, 'wb').write(gzip.compress(json.dumps({'format': 'la-perla-backup/1', 'mode': 'nightly', 'exported_at': exp, 'rome_day': exp[:10], 'tables': {'notices': old}}).encode()))
+os.chmod(bk2, 0o644)
+res = psql(run('sql', bk2, '--tables', 'notices', '--confirm', exp).stdout)
+check('a backup older than the schema loads: missing columns get their defaults, not NULL', res.returncode == 0
+      and q("select severity || ' ' || items::text || ' ' || (created_at is not null) from fabula.notices where key = 'rg-old'") == 'warn [] true', res.stderr.strip()[:200])
+os.unlink(bk2)
 os.unlink(bk); sh(['su', 'postgres', '-c', f'dropdb --if-exists {DB}'])
 print('FAILURES:', ', '.join(fails) if fails else 'none')

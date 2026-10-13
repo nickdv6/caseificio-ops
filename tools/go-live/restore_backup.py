@@ -64,9 +64,13 @@ HELPER = r"""
 create or replace function pg_temp.restore_table(p_table text, p_rows jsonb, p_merge boolean default false) returns int language plpgsql as $f$
 declare v_cols text; v_n int;
 begin
+  -- v1.00: only the columns the backup has. A column added after the backup was taken (e.g. «history jsonb not null
+  -- default '[]'») gets its default instead of NULL, so an older backup still loads into the latest schema.
   select string_agg(format('%I', a.attname), ', ' order by a.attnum) into v_cols
     from pg_attribute a
-   where a.attrelid = format('fabula.%I', p_table)::regclass and a.attnum > 0 and not a.attisdropped and a.attgenerated = '';
+   where a.attrelid = format('fabula.%I', p_table)::regclass and a.attnum > 0 and not a.attisdropped and a.attgenerated = ''
+     and (jsonb_array_length(p_rows) = 0 or exists (select 1 from jsonb_array_elements(p_rows) r where r ? a.attname));
+  if v_cols is null then return 0; end if;
   execute format('insert into fabula.%I (%s) overriding system value select %s from jsonb_populate_recordset(null::fabula.%I, $1)%s',
                  p_table, v_cols, v_cols, p_table, case when p_merge then ' on conflict do nothing' else '' end) using p_rows;
   get diagnostics v_n = row_count;

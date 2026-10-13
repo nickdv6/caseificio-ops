@@ -8,7 +8,8 @@
 #                                  gzip, JSON and age, encrypt it (AES-256, passphrase BACKUP_PASSPHRASE), prove it decrypts
 #                                  back to the same bytes, write $OUT/caseificio-backup-<day>.json.gz.enc + manifest.json.
 #                                  The plain copy stays in $OUT/backup.json.gz for the drill; the workflow deletes it.
-#                                  drill=1 when asked (DRILL=true) or when GitHub keeps no drill of this month yet.
+#                                  drill=1 when asked (DRILL=true: then the copy is made even if one is already kept)
+#                                  or when GitHub keeps no drill of this month yet.
 #   offsite_backup.sh report-ok    tell the database the copy is kept (board check «Off-site backup copy»)
 #   offsite_backup.sh report-fail  tell the database that the copy failed; the partners' Telegram group too on the night's
 #                                  last try (LAST_TRY=true) — earlier tries are retried by the next slot
@@ -62,7 +63,8 @@ prepare)
   elif [ "$(TZ=Europe/Rome date +%H%M)" -ge 2130 ]; then day=$(TZ=Europe/Rome date +%F)
   else day=$(TZ=Europe/Rome date -d '-1 day' +%F); fi
   prev=$(date -d "$day -1 day" +%F)
-  if kept "caseificio-backup-$day"; then echo "La copia del backup del $day è già su GitHub: niente da fare."; out "skip=1"; exit 0; fi
+  # a drill asked by hand always runs: it makes one more copy of the same night (harmless) to restore it
+  if [ "${DRILL:-false}" != "true" ] && kept "caseificio-backup-$day"; then echo "La copia del backup del $day è già su GitHub: niente da fare."; out "skip=1"; exit 0; fi
   got=
   for d in "$day" "$prev"; do
     code=$(curl -s -o "$OUT/fetch.json" -w '%{http_code}' -m 120 -X POST "$SB/functions/v1/backup-export" \
@@ -73,7 +75,7 @@ prepare)
     rm -f "$OUT/fetch.json"
     # tonight's file is missing and last night's is already kept: nothing new to copy. The outside watcher alerts on
     # the missing nightly backup; here the board just shows it.
-    if [ "$d" = "$day" ] && kept "caseificio-backup-$prev"; then
+    if [ "$d" = "$day" ] && [ "${DRILL:-false}" != "true" ] && kept "caseificio-backup-$prev"; then
       echo "::warning::il backup di stanotte ($day) non c'è; la copia del $prev è già su GitHub"
       report offsite_backup "$(jq -nc --arg s "backup di stanotte ($(date -d "$day" +%d/%m)) non trovato: ultima copia quella del $(date -d "$prev" +%d/%m)" --arg u "${RUN_URL:-}" '{ok: false, summary: $s, run_url: $u}')" || true
       out "skip=1"; exit 0
