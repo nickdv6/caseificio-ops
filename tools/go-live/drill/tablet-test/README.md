@@ -98,6 +98,8 @@ paper_e2e 9/9, device_e2e 9/9, farm_amend_e2e 16/16, farm_test 12/12, farm_weigh
 guard_e2e 18/18 (last). Rerunning on the same day: delete today's T-CF1 tasks first (offline_e2e adds them at fixed times).
 Last run 13/10/2026 (v0.98), fresh replay of all 175 migrations + setup.sql + one milk supplier, same order with numbers_e2e 39/39
 before guard_e2e: all 16 suites `FAILURES: none`.
+Last run 13/10/2026 (v0.99), same setup with the 177 migrations, same order with office_e2e 42/42 after numbers_e2e and before
+guard_e2e: all 17 suites `FAILURES: none`.
 
 19. `python3 floor_e2e.py` (v0.97, audit floor flows) — red «È giusto?» before an out-of-limit value (cold room, milk), the NC card,
     the re-check as a red box with the minutes left, «Annulla» asks, cleaning item not done, «Non fatta…» on an earlier task, stock
