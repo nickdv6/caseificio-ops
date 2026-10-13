@@ -196,7 +196,11 @@
     root.querySelectorAll('[data-win-save]').forEach(function (b) { b.onclick = function () { var date = b.dataset.winSave, sel = root.querySelector('[data-win-sel="' + date + '"]'); act(b, async function () { var r = await api('add_exception', { kind: 'window', date_from: date, window: sel.value }); editing = {}; return r; }); }; });
     if (q('#cl-save')) q('#cl-save').onclick = function () { var f = q('#cl-from').value, t = q('#cl-to').value || f; if (!f) { banner = { ok: false, text: 'Indica la data di inizio.' }; render(); return; } act(q('#cl-save'), function () { return api('add_exception', { kind: 'skip', date_from: f, date_to: t, note: 'chiusura' }); }); };
     if (q('#ps-pause')) q('#ps-pause').onclick = function () { var u = q('#ps-until').value; if (!u) { banner = { ok: false, text: 'Indica fino a quando, oppure usa "Pausa senza data".' }; render(); return; } act(q('#ps-pause'), function () { return api('set_status', { status: 'paused', until: u }); }); };
-    if (q('#ps-pause-open')) q('#ps-pause-open').onclick = function () { act(q('#ps-pause-open'), function () { return api('set_status', { status: 'paused' }); }); };
+    // v0.99 (audit TRADE-06): a pause with no end date stops every delivery: say from when, and ask
+    if (q('#ps-pause-open')) q('#ps-pause-open').onclick = function () {
+      var first = (S.upcoming || []).filter(function (d) { return d.can_change; })[0];
+      if (!confirm('Nessuna consegna ' + (first ? 'dal ' + dIt(first.date, true) : 'dalla prossima modificabile') + ' finché non premi «Riprendi».' + ((S.upcoming || []).some(function (d) { return !d.can_change && !d.booked; }) || (S.upcoming || []).some(function (d) { return d.booked; }) ? ' Le consegne già confermate arrivano comunque.' : '') + ' Confermi?')) return;
+      act(q('#ps-pause-open'), function () { return api('set_status', { status: 'paused' }); }); };
     if (q('#ps-resume')) q('#ps-resume').onclick = function () { act(q('#ps-resume'), function () { return api('set_status', { status: 'active' }); }); };
     if (q('#ps-cancel')) q('#ps-cancel').onclick = function () { if (!confirm('Annullare il piano consegne? Le consegne già confermate arrivano comunque.')) return; act(q('#ps-cancel'), async function () { var r = await api('set_status', { status: 'cancelled' }); P = null; return r; }); };
     root.querySelectorAll('[data-cancel-ex]').forEach(function (b) { b.onclick = function () { act(b, function () { return api('cancel_exception', { id: b.dataset.cancelEx }); }); }; });

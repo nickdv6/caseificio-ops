@@ -112,3 +112,12 @@ before guard_e2e: all 16 suites `FAILURES: none`.
     bell notice, list for the manual status; farm page temperature warnings; Ingrosso «1150» refused, «11,90» saved.
     Expect `FAILURES: none` (39 checks). Run it before guard_e2e. Number fields are text with `inputmode=decimal` now: tests type
     «12,5» or «12.5» (both read the same).
+
+21. `python3 office_e2e.py` (v0.99, audit office decisions and undo + A-02; port 8779, browser in it-IT, the trade-portal function
+    mocked) — Console → Oggi by urgency, an expired card grey without «Approva», the milk card's farm warning, «Approva con 400 kg»
+    asked and reaching the farm, «Annulla» in «Decise di recente», «Rifiuta» then «Ordina 450 kg», DOP checks then «Segna inviata»,
+    the post card's link and picture, a catalogue order over the limit as one card, «Annulla ordine» (also once sent, with the
+    WhatsApp text), the old «Ordini fissi» grid gone, an unpriced line stopped until «prezzo da confermare» and then waiting for
+    approval, Ricette «Togli»/«Rimetti», a preset target «94,5», lot release with the analysis, NC «Riapri», Ingrosso exceptions,
+    stop buttons asked, «da inviare» marks, the Shopify preview before sending, Marketing `#post=`, and the tablet's lot label at
+    batch start. Expect `FAILURES: none` (42 checks). Run it before guard_e2e.

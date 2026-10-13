@@ -69,7 +69,7 @@
     return b;
   };
   // run an async action from a button with the same disable/toast/error handling
-  const act = async (btn, fn, ok) => { if (btn) btn.disabled = true; try { const r = await fn(); if (ok && r !== false) toast(typeof ok === 'function' ? ok(r) : ok); return r; } catch (err) { toast(err.message || String(err), 'err'); } finally { if (btn) btn.disabled = false; } };
+  const act = async (btn, fn, ok) => { if (btn) btn.disabled = true; try { const r = await fn(); if (ok && r !== false) toast(typeof ok === 'function' ? ok(r) : ok); return r; } catch (err) { if (!(err && err.silent)) toast(err.message || String(err), 'err'); } finally { if (btn) btn.disabled = false; } };   // v0.99: silent = the person said no
 
   // ---------- hints on/off (per device) ----------
   const HINTS = 'fabula_hints';

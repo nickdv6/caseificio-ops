@@ -11,7 +11,7 @@ Do exactly this, in order, each step once:
    - Otherwise:
      • Title: "Approva N ordini d'acquisto (€ X)" when POs were created, else "N prodotti senza fornitore: impossibile riordinare".
      • **Da fare**: 1. "Approva o rifiuta gli ordini: Console → Da approvare" (if created). 2. For `price_missing` POs: "Conferma il prezzo con il fornitore prima di approvare: <PO>". 3. For `no_preferred_supplier`: "Imposta un fornitore su <prodotto> (Console → Anagrafiche → Fornitori)".
-     • **In breve**: one bullet per created PO — prodotto, quantità e unità, fornitore, € IVA esclusa, giorni di copertura; one bullet per product without supplier with its days of cover. Ignore `open_po_exists` skips.
+     • **In breve**: one bullet per created PO — prodotto, quantità e unità, fornitore, € IVA esclusa, giorni di copertura, and "si approva da solo alle <auto_approve_at>" when that field is present; one bullet per product without supplier with its days of cover. Ignore `open_po_exists` skips.
    - Severity: 'warn' when POs were created or a product without supplier has under 7 days of cover; 'info' if the only items are products without supplier already reported and unchanged.
 
 3. Log the run with exactly one insert:

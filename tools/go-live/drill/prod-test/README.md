@@ -131,3 +131,14 @@ counted), dosing (negative, ×3/⅓ confirm, pack lot, closed lot), goods receip
 limits, wholesale (step, the maximum for customers only and on increases only, «Confermi?» only with `can_confirm`, exceptions),
 reserved prices and tiers, `trade_price` capped by the list. 13/10/2026: 89/89 PASS on a fresh replay and on the database built by
 the SQL Editor script.
+
+`test_audit_office.sql` (v0.99, audit office decisions and undo) — the milk-plan sync fix (whoever updates the approval), a decided
+request can't be re-decided, re-signed or have its history wiped, a browser can't update approvals directly, `decide_approval`
+(profile, «Approva con … kg», capacity, farm supply, recall and DOP notes), `revoke_approval` and what blocks it (farm saw it, order
+sent or cancelled by hand, a newer order for the same items, promo posts out), deadlines (`expire_approvals`, the 10-minute cron,
+messages and pushes), automatic approvals said and logged, promo posts in review, post edits refresh the card, DOP «Segna inviata»,
+`milk_order_again`, catalogue orders (limit, «registra» profile, price to confirm always waits, a browser price ignored, creator),
+`cancel_po`, the 7-day forecast and Vendite from the Ingrosso plans, recipes «Togli»/«Rimetti» (at once when put in today, no save on a
+removed row), lot release (open or decided recall, conforming analysis), NC closing, B2B tiers (one kind, never € 0), the TRADE-06
+dashboard line, and nothing new in the evening security check. 13/10/2026: 70/70 PASS on a fresh copy and on the database built by
+the SQL Editor script (live-identical functions).

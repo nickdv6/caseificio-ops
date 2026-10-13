@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caseificio Bubalina · Dichiarazione Consorzio</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* v0.99 (audit B-11): the monthly production declaration for the Consorzio di Tutela, printable (or PDF) and as CSV, from the
+   approval the database prepares on the 1st (Console → Oggi). Read-only: approving and «Segna inviata» stay in the Console. */
+:root{ --bg:#f6f4ef; --paper:#fff; --fg:#161514; --muted:#5d6168; --rule:#e4e0d6; --accent:#1e3a5f; --warn:#b4472c; --tile:#eef2f7;
+  --display:"Fraunces",Georgia,"Times New Roman",serif; --body:"Source Sans 3","Segoe UI",system-ui,sans-serif; }
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.35;padding:16px}
+.ctl{max-width:820px;margin:0 auto 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,a.b{font:600 1rem var(--body);padding:7px 12px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);cursor:pointer;text-decoration:none}
+button.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sheet{max-width:820px;margin:0 auto;background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:28px 32px}
+.top{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;border-bottom:3px solid var(--accent);padding-bottom:14px}
+h1{font-family:var(--display);font-size:1.8rem;margin:0;line-height:1.05}
+h2{font-family:var(--display);font-size:1.15rem;margin:20px 0 6px}
+.sub{color:var(--muted);font-size:.9rem;margin-top:4px}
+.doc{text-align:right}.doc .l{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.doc .n{font-family:var(--display);font-size:1.6rem;font-weight:700;line-height:1.1}
+.badge{display:inline-block;font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--warn);color:#fff}
+.badge.ok{background:var(--accent)}
+.parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}
+.box{border:1px solid var(--rule);border-radius:6px;padding:10px 12px}
+.box .l{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
+.box b{font-family:var(--display);font-size:1.1rem}
+table{width:100%;border-collapse:collapse;margin-top:4px}
+th,td{text-align:left;padding:6px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.big td{font-weight:600}
+.ko{color:var(--warn);font-weight:600}
+.lots{font-family:ui-monospace,Menlo,monospace;font-size:.82rem;line-height:1.6;word-break:break-word}
+.note{font-size:.88rem;color:var(--muted);margin-top:10px}
+.sig{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:.85rem;color:var(--muted)}
+.sig div{border-top:1px solid var(--rule);padding-top:4px}
+.empty{color:var(--muted);font-style:italic}
+@media (max-width:600px){ .parties,.top{grid-template-columns:1fr} .doc{text-align:left} .sheet{padding:18px} }
+@media print{ body{background:#fff;padding:0} .ctl{display:none} .sheet{border:0;border-radius:0;max-width:none;padding:0} }
+</style>
+</head>
+<body>
+<div class="ctl"><button class="p" id="print">Stampa / PDF</button><button id="csv">Scarica CSV</button><a class="b" href="console.html#oggi" style="margin-left:auto">← console</a></div>
+<div class="sheet" id="sheet"><div class="empty">Carico…</div></div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="brand.js"></script>
+<script>
+(() => {
+  const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const num = (n, d = 0) => n == null || n === '' ? '—' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const eur = n => n == null ? '—' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
+  const fmtD = s => s ? String(s).slice(8, 10) + '/' + String(s).slice(5, 7) + '/' + String(s).slice(0, 4) : '—';
+  const monthIt = m => m ? new Date(m + '-15T12:00:00').toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : '';
+  let ROWS = [], FILE = 'dichiarazione-consorzio.csv';
+  async function show() {
+    const sheet = $('sheet'), id = new URLSearchParams(location.search).get('id');
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
+    if (!id) { sheet.innerHTML = '<div class="empty">Apri la dichiarazione da Console → Oggi.</div>'; return; }
+    const [{ data: a, error }, { data: cs }] = await Promise.all([
+      sb.from('approvals').select('id, status, summary, payload, decided_by, decided_at, decision_note').eq('id', id).eq('kind', 'dop_declaration').maybeSingle(),
+      sb.from('settings').select('key, value').like('key', 'company.%')]);
+    if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!a) { sheet.innerHTML = '<div class="empty">Dichiarazione non trovata (o il tuo profilo non può vederla).</div>'; return; }
+    const C = Object.fromEntries((cs || []).map(r => [r.key, (r.value || '').trim()])); BRAND.set(C, true);
+    const p = a.payload || {}, k = p.consorzio || {}, iss = Array.isArray(p.issues) ? p.issues : [];
+    const sent = p.sent_at ? `<span class="badge ok">inviata il ${fmtD(p.sent_on)}${p.protocol ? ' · prot. ' + esc(p.protocol) : ''}</span>`
+      : a.status === 'approved' ? '<span class="badge ok">dati approvati · da inviare</span>' : `<span class="badge">${a.status === 'pending' ? 'da approvare in Console' : esc(a.status)}</span>`;
+    const one = x => typeof x !== 'object' || !x ? esc(x) : x.hours != null ? `${esc(x.lot)} (latte ${esc(x.milk_lot)}, ${num(x.hours)} h)`
+      : x.fat_pct !== undefined ? `${esc(x.milk_lot)} del ${fmtD(x.date)}: grasso ${num(x.fat_pct, 2)} %, proteine ${num(x.protein_pct, 2)} %` : Object.values(x).map(esc).join(' · ');
+    sheet.innerHTML = `
+      <div class="top">
+        <div><h1>${esc(C['company.legal_name'] || C['company.name'] || BRAND.name)}</h1><div class="sub">${esc([C['company.address'], C['company.piva'] ? 'P.IVA ' + C['company.piva'] : '', C['company.email']].filter(Boolean).join(' · '))}</div></div>
+        <div class="doc"><div class="l">Dichiarazione di produzione</div><div class="n">${esc(monthIt(p.month))}</div><div>${sent}</div></div>
+      </div>
+      <div class="parties">
+        <div class="box"><div class="l">Destinatario</div><b>${esc(k.name || 'Consorzio di Tutela')}</b><div>${esc(k.address || '')}</div>${k.cf ? `<div>C.F. ${esc(k.cf)} · P.IVA ${esc(k.piva || '')}</div>` : ''}</div>
+        <div class="box"><div class="l">Periodo</div><b>dal ${fmtD(p.from)} al ${fmtD(p.to)}</b><div>${esc(p.batches ?? 0)} lotti DOP · ${num(p.labels_printed)} etichette stampate</div></div>
+      </div>
+      <h2>Latte e produzione</h2>
+      <table>
+        <tr><td>Latte di bufala ricevuto e accettato</td><td class="num">${num(p.milk_in_kg, 1)} kg</td></tr>
+        <tr><td>Latte respinto all'arrivo</td><td class="num">${num(p.milk_rejected_kg, 1)} kg</td></tr>
+        <tr><td>Latte lavorato in prodotti DOP</td><td class="num">${num(p.milk_processed_kg, 1)} kg</td></tr>
+        <tr class="big"><td>Mozzarella di Bufala Campana DOP prodotta</td><td class="num">${num(p.mozzarella_dop_kg, 1)} kg</td></tr>
+        <tr><td>Venduta nel mese</td><td class="num">${num(p.sold_kg, 1)} kg</td></tr>
+      </table>
+      ${(p.by_product || []).length ? `<h2>Per prodotto</h2><table><tr><th>Prodotto</th><th class="num">kg</th><th class="num">Lotti</th></tr>${p.by_product.map(x => `<tr><td>${esc(x.product)}</td><td class="num">${num(x.kg, 1)}</td><td class="num">${esc(x.batches)}</td></tr>`).join('')}</table>` : ''}
+      ${(p.milk_suppliers || []).length ? `<h2>Latte per fornitore</h2><table><tr><th>Fornitore</th><th class="num">kg</th><th>Iscritto DOP</th></tr>${p.milk_suppliers.map(x => `<tr><td>${esc(x.supplier)}</td><td class="num">${num(x.kg, 1)}</td><td>${x.dop_certified ? 'sì' : '<span class="ko">no</span>'}</td></tr>`).join('')}</table>` : ''}
+      <h2>Lotti</h2><div class="lots">${(p.lots || []).map(esc).join(' · ') || '<span class="empty">nessun lotto DOP nel mese</span>'}</div>
+      <h2>Controlli del disciplinare</h2>
+      ${iss.length ? iss.map(i => `<div class="ko">• ${esc(i.it)}: ${esc(i.n)}</div>${Array.isArray(i.detail) && i.detail.length ? `<div class="note" style="margin:0 0 6px 14px">${i.detail.slice(0, 20).map(one).join('; ')}</div>` : ''}`).join('')
+        : '<div>Nessun rilievo su 60 ore, grasso e proteine, fornitori DOP e tracciabilità.</div>'}
+      ${p.fees_estimate_eur ? `<div class="note">Contributo stimato: Consorzio ${eur(p.fees_estimate_eur.consorzio)} · RINA quota variabile ${eur(p.fees_estimate_eur.rina_variable)} (${esc(p.fees_estimate_eur.note || '')})</div>` : ''}
+      <div class="note">${a.status === 'approved' ? `Dati approvati da ${esc(a.decided_by || '')} il ${fmtD((a.decided_at || '').slice(0, 10))}${a.decision_note ? ' · ' + esc(a.decision_note) : ''}.` : ''}
+        ${p.sent_at ? ` Inviata il ${fmtD(p.sent_on)} da ${esc(p.sent_by || '')}${p.protocol ? ', protocollo ' + esc(p.protocol) : ''}${p.sent_note ? ' · ' + esc(p.sent_note) : ''}.` : ''}
+        Preparata in automatico dai dati di produzione del gestionale.</div>
+      <div class="sig"><div>Luogo e data</div><div>Firma del legale rappresentante</div></div>`;
+    FILE = 'dichiarazione-consorzio-' + (p.month || 'mese') + '.csv';
+    ROWS = [['Voce', 'Valore', 'Unità'], ['Azienda', C['company.legal_name'] || C['company.name'] || BRAND.name, ''], ['P.IVA', C['company.piva'] || '', ''], ['Mese', p.month, ''],
+      ['Dal', p.from, ''], ['Al', p.to, ''], ['Latte ricevuto e accettato', p.milk_in_kg, 'kg'], ['Latte respinto', p.milk_rejected_kg, 'kg'],
+      ['Latte lavorato in prodotti DOP', p.milk_processed_kg, 'kg'], ['Mozzarella di Bufala Campana DOP prodotta', p.mozzarella_dop_kg, 'kg'],
+      ['Lotti DOP', p.batches, 'n'], ['Etichette stampate', p.labels_printed, 'n'], ['Venduto nel mese', p.sold_kg, 'kg']]
+      .concat((p.by_product || []).map(x => ['Prodotto: ' + x.product, x.kg, 'kg']))
+      .concat((p.milk_suppliers || []).map(x => ['Latte da ' + x.supplier + (x.dop_certified ? '' : ' (non iscritto DOP)'), x.kg, 'kg']))
+      .concat([['Lotti', (p.lots || []).join(' '), ''], ['Controlli con rilievi', iss.map(i => i.it + ': ' + i.n).join(' | ') || 'nessuno', '']]);
+    BRAND.title('Dichiarazione Consorzio ' + (p.month || ''));
+  }
+  const cell = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  $('csv').onclick = () => { if (!ROWS.length) return; const n = v => typeof v === 'number' ? String(v).replace('.', ',') : v;
+    const b = new Blob(['﻿' + ROWS.map(r => r.map(v => cell(n(v))).join(';')).join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = FILE; a.click(); };
+  $('print').onclick = () => print();
+  show();
+})();
+</script>
+</body>
+</html>

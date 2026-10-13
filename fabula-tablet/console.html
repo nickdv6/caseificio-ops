@@ -33,7 +33,9 @@
   <div class="pane active" id="p-oggi">
     <div class="tiles" id="tiles"></div>
     <h2 id="h-appr">Da approvare</h2>
+    <div id="dop-send"></div>
     <div id="approvals"></div>
+    <details class="card" id="c-recent" style="margin-top:4px"><summary><h3 style="display:inline">Decise di recente <span class="n" id="n-recent"></span> <span class="status" style="text-transform:none;letter-spacing:0;font-weight:400">ultimi 7 giorni, anche quelle automatiche e scadute · «Annulla» finché non è successo niente</span></h3></summary><div id="appr-recent" style="margin-top:8px"></div></details>
     <div class="grid2" style="margin-top:16px">
       <div class="card" id="c-haccp"><h3>Conformità ieri <a class="lnk" href="haccp.html" data-page="haccp">Autocontrollo →</a></h3><div id="haccp"></div></div>
       <div class="card"><h3>Scorte in scadenza</h3><div id="stock"></div></div>
@@ -42,12 +44,12 @@
 
   <!-- OPERAZIONI: orders in and out, milk -->
   <div class="pane" id="p-ops">
-    <div class="card" data-scope style="margin-bottom:16px"><h3>Latte · prossimi 7 giorni</h3><div class="hint">Domanda (banco ultime 4 settimane, ingrosso confermato o fisso, preordini, margine) → mozzarella e latte da lavorare. La colonna <b>Masseria</b> è il latte disponibile: correggila qui, il piano latte non la supera mai.</div><div id="demand7"></div></div>
+    <div class="card" data-scope style="margin-bottom:16px"><h3>Latte · prossimi 7 giorni</h3><div class="hint">Domanda (banco ultime 4 settimane, ingrosso confermato o dai piani di Ingrosso, preordini, margine) → mozzarella e latte da lavorare. La colonna <b>Masseria</b> è il latte disponibile: correggila qui, il piano latte non la supera mai.</div><div id="demand7"></div></div>
     <div class="grid2 two">
       <div class="col">
-        <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati in Oggi: invia per email, WhatsApp o stampa (con QR per la ricezione), poi "Segna inviato".</div><div id="po-send" style="overflow-x:auto"></div></div>
+        <div class="card"><h3>Ordini da inviare ai fornitori</h3><div class="hint">PO approvati in Oggi: invia per email, WhatsApp o stampa (con QR per la ricezione), poi "Segna inviato". Un ordine sbagliato si toglie con «Annulla ordine» (anche dopo l'invio, finché la merce non è arrivata).</div><div id="po-send" style="overflow-x:auto"></div><div id="po-sent" style="overflow-x:auto;margin-top:10px"></div></div>
         <div class="card"><h3>Segnali acquisti</h3><div class="hint">Scorte vicine al punto di riordino: il bot Acquisti propone l'ordine, tu lo approvi in Oggi.</div><div id="procurement" style="overflow-x:auto"></div></div>
-        <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera dal bot Ordini ingrosso dagli ordini fissi (Anagrafiche → Clienti).</div><div id="wholesale" style="overflow-x:auto"></div></div>
+        <div class="card"><h3>Ingrosso · consegne confermate</h3><div class="hint">Prenotate ogni sera alle 18:20 dai piani consegne dei clienti (<a class="lnk" href="ingrosso.html#clienti" data-page="ingrosso">Ingrosso → Clienti e piani</a>).</div><div id="wholesale" style="overflow-x:auto"></div></div>
         <div class="card"><h3>Ordini online (Shopify) · 14 giorni</h3><div class="hint">Copiati ogni mattina dal bot Ordini Shopify; alla spedizione il magazzino si scarica dai lotti più vecchi.</div><div id="shopify-orders" style="overflow-x:auto"></div></div>
       </div>
       <div class="col">
@@ -70,11 +72,11 @@
     <div class="subtabs" id="party-tabs"><button class="sub" data-type="supplier" aria-selected="true">Fornitori <span class="n" id="n-sup"></span></button><button class="sub" data-type="customer" aria-selected="false">Clienti <span class="n" id="n-cus"></span></button></div>
     <div class="card"><div class="hint" id="party-hint"></div><div id="set-parties" style="overflow-x:auto"></div></div>
     <div data-show="supplier">
-      <div class="card" id="c-supplies" style="margin-top:16px"><h3>Articoli che compriamo</h3><div class="hint"><b>🛒 Ordina</b>: scrivi le quantità in «Da ordinare» (o usa «Proponi i sotto soglia») e premi «Crea ordini»: nasce un ordine per fornitore, già approvato, da inviare in Operazioni. Tocca il prezzo di un fornitore per cambiarlo. <b>✎ Modifica elenco</b>: nomi, unità, categorie, soglie di riordino, nuovi articoli. <b>Assegna articoli a un fornitore</b>: spunta tutto quello che compri da lui e scrivi i prezzi in una volta. ★ = fornitore preferito (lo usa il bot Acquisti).</div><div id="supplies"></div></div>
+      <div class="card" id="c-supplies" style="margin-top:16px"><h3>Articoli che compriamo</h3><div class="hint"><b>🛒 Ordina</b>: scrivi le quantità in «Da ordinare» (o usa «Proponi i sotto soglia») e premi «Crea ordini»: nasce un ordine per fornitore, da inviare in Operazioni (sopra il limite delle approvazioni automatiche aspetta prima l'approvazione in Oggi). Tocca il prezzo di un fornitore per cambiarlo. <b>✎ Modifica elenco</b>: nomi, unità, categorie, soglie di riordino, nuovi articoli. <b>Assegna articoli a un fornitore</b>: spunta tutto quello che compri da lui e scrivi i prezzi in una volta. ★ = fornitore preferito (lo usa il bot Acquisti).</div><div id="supplies"></div></div>
       <details class="card" id="c-terms" style="margin-top:16px"><summary><h3>Condizioni e storico prezzi per fornitore <span class="status" style="text-transform:none;letter-spacing:0;font-weight:400">consegna, minimo, multipli, pagamento</span></h3></summary><div class="body"><div class="hint">Per ogni fornitore × articolo: giorni di consegna, minimo d'ordine, multipli e pagamento. Il bot Acquisti li usa per data prevista e quantità, e «Da ordinare» avvisa se sei sotto il minimo o arrotonda ai multipli. "Pagato" viene dai DDT ricevuti sul tablet; tocca ↗ per lo storico prezzi.</div><div id="set-terms" style="overflow-x:auto"></div></div></details>
     </div>
     <div data-show="customer" hidden>
-      <div class="card" style="margin-top:16px"><h3>Ordini fissi ingrosso · kg al giorno</h3><div class="hint">Il bot Ordini ingrosso prenota queste quantità per il giorno dopo e prepara il messaggio di conferma. Prezzo ingrosso: <a class="lnk" href="admin.html#vendite">Configurazione → Parametri → Vendite</a>.</div><div id="set-standing" style="overflow-x:auto"></div></div>
+      <div class="card" style="margin-top:16px"><h3>Piani consegne ingrosso</h3><div class="hint">I piani dei clienti professionali (giorni, quantità, pause) si gestiscono in <a class="lnk" href="ingrosso.html#clienti" data-page="ingrosso">Ingrosso → Clienti e piani →</a>: da lì si prenotano le consegne ogni sera e il latte dei prossimi 7 giorni li conta. La vecchia griglia «Ordini fissi» qui non prenotava niente ed è stata tolta.</div></div>
     </div>
   </div>
 

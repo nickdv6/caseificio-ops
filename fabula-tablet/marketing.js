@@ -35,7 +35,11 @@
     const { data } = await sb.from('staff').select('*').eq('id', P.staff_id).maybeSingle();
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     $('who').textContent = staff.full_name; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
-    show('main'); await loadAll(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
+    show('main'); await loadAll();
+    // v0.99 (audit B-13): Console → Oggi links straight to a post waiting for approval (#post=<id>)
+    const pm = /^#post=([0-9a-f-]{36})$/i.exec(location.hash || '');
+    if (pm) { showTab('calendario', false); openPost(pm[1]).catch(e => toast(e.message || String(e), 'err')); return; }
+    showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });

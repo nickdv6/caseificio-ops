@@ -121,7 +121,7 @@ select pg_temp.err($q$update fabula.production_batches set food_safety_hold = tr
 reset role;
 select set_config('request.jwt.claims', '', false);
 select pg_temp.err($q$update fabula.production_batches set hold_released_at = now(), food_safety_hold = false where batch_lot = 'L95-A'$q$) e_rel_sql \gset
-select pg_temp.err($q$do $d$ begin perform fabula.release_lot_hold('L95-B', null, 'test'); update fabula.production_batches set food_safety_hold = false where batch_lot = 'L95-A'; end $d$$q$) e_twice \gset
+select pg_temp.err($q$do $d$ begin perform fabula.release_lot_hold('L95-B', null, 'controllo ok'); update fabula.production_batches set food_safety_hold = false where batch_lot = 'L95-A'; end $d$$q$) e_twice \gset
 select pg_temp.ck('D-03 a plain UPDATE that lifts a hold is refused (Produzione login)', :'e_rel' like 'Lotto L95-A bloccato per sicurezza alimentare%', :'e_rel');
 select pg_temp.ck('D-03 …and from SQL too', :'e_rel_sql' like 'Lotto L95-A bloccato%', :'e_rel_sql');
 select pg_temp.ck('D-03 putting a lot on hold directly is still allowed', :'e_set' = '' and (select food_safety_hold from fabula.production_batches where batch_lot = 'L95-B'), :'e_set');
@@ -131,9 +131,16 @@ select pg_temp.err($q$do $d$ begin perform fabula.hold_lot('L95-B', 'controllo v
 select pg_temp.ck('D-03 a hold call that changes nothing does not leave the permission open', :'e_leak' like 'Lotto L95-A bloccato%', :'e_leak');
 select pg_temp.as_user('00000000-0000-4000-a000-0000000095a1');
 set role authenticated;
+select pg_temp.err($q$select fabula.release_lot_hold('L95-A', null, 'esito rianalisi conforme')$q$) e_recall \gset
+-- v0.99 (audit B-06): the recall assessment opened by the positive analysis is decided first
+reset role;
+update fabula.approvals set status = 'rejected', decided_by = 'test', decision_note = 'rianalisi conforme: ritiro non necessario'
+ where status = 'pending' and payload->>'type' = 'recall_assessment' and payload->>'lot' = 'L95-A';
+set role authenticated;
 select pg_temp.err($q$select fabula.release_lot_hold('L95-A', null, 'esito rianalisi conforme')$q$) e_ok \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
+select pg_temp.ck('B-06 (v0.99) not released while its recall assessment is undecided', :'e_recall' like 'Prima decidi la valutazione di ritiro/richiamo del lotto L95-A%', :'e_recall');
 select pg_temp.ck('D-03 release_lot_hold (HACCP manager) still works', :'e_ok' = '' and not (select food_safety_hold from fabula.production_batches where batch_lot = 'L95-A'), :'e_ok');
 select pg_temp.ck('D-03 hold changes are in the audit log',
   (select count(*) >= 2 from fabula.audit_log where table_name = 'production_batches' and 'food_safety_hold' = any (changed)));

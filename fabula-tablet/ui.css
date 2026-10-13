@@ -46,6 +46,12 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .facts .v.ko{color:var(--warn)}
 .appr details{font-size:.9rem;color:var(--muted);margin-top:6px}.appr details summary{cursor:pointer;color:var(--accent);font-weight:600;list-style:none}.appr details summary::-webkit-details-marker{display:none}
 .appr .row input{flex:1}
+/* v0.99 (audit B-12/E-12): a request past its deadline is greyed; «Decise di recente» rows; the kg box of a milk plan */
+.appr.gone{opacity:.62;border-left-color:var(--muted)}.appr.dop{border-left-color:var(--accent)}
+.appr .row .kgw input,.dec .kgw input{flex:0 0 auto}.kgw{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-size:.9rem}
+.dec{border-bottom:1px solid var(--rule);padding:8px 0}.dec:last-child{border-bottom:0}.dec .small{font-size:.82rem;color:var(--muted)}
+.dec .pill{display:inline-block;font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:10px;border:1.5px solid var(--rule);color:var(--muted);white-space:nowrap}.dec .pill.ok{border-color:var(--accent);color:var(--accent)}.dec .pill.ko{border-color:var(--warn);color:var(--warn)}
+#c-recent>summary{cursor:pointer;list-style:none}#c-recent>summary::-webkit-details-marker{display:none}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .btn{border:0;border-radius:6px;padding:8px 14px;font:600 .95rem var(--body);cursor:pointer;background:var(--accent);color:var(--accent-fg)}
 .btn.sec{background:var(--paper);color:var(--fg);border:1px solid var(--rule)}

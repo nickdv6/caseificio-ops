@@ -81,10 +81,17 @@
     S.products.forEach(p => { h += `<tr><td>${esc(p.title)} <span class="small">${esc(p.variant_title || '')}</span></td>${days.map(x => `<td><input type="number" min="0" step="${p.step_qty}" data-d="${x}" data-v="${esc(p.variant_id)}" value="${(lines[x] && lines[x].lines[p.variant_id]) || ''}"></td>`).join('')}</tr>`; });
     h += `<tr><td>Fascia</td>${days.map(x => `<td><select data-w="${x}">${S.settings.windows.map(w => `<option${(lines[x] && lines[x].window) === w ? ' selected' : ''}>${esc(w)}</option>`).join('')}</select></td>`).join('')}</tr></tbody></table></div>`;
     h += `<div class="row" data-scope><label>Dal <input type="date" data-start value="${plan && plan.start_date >= romeISO() ? plan.start_date : romeISO()}"></label><input type="text" data-addr placeholder="indirizzo di consegna" value="${esc(plan ? plan.delivery_address || '' : S.customer.address || '')}" style="flex:2;min-width:160px"><input type="text" data-instr placeholder="istruzioni autista" value="${esc(plan ? plan.delivery_instructions || '' : '')}" style="flex:2;min-width:160px"><span data-save></span></div>`;
-    h += `<div class="row">${plan && plan.status === 'active' ? '<button class="btn sm sec" data-pause>Pausa (senza data)</button>' : ''}${plan && plan.status === 'paused' ? '<button class="btn sm" data-resume>Riprendi</button>' : ''}${plan && plan.status !== 'cancelled' ? '<button class="btn sm warn" data-cancel>Annulla piano</button>' : ''}
-      ${c.trade_status === 'approved' ? '<button class="btn sm sec" data-suspend>Sospendi accesso</button>' : '<button class="btn sm" data-unsuspend>Riattiva accesso</button>'}${canManage && !c.shopify_company_id ? '<button class="btn sm" data-link>Collega a Shopify</button>' : ''}${canManage ? '<button class="btn sm sec" data-newlink>Nuovo link portale</button>' : ''}</div>`;
+    // v0.99 (audit B-24): everyday actions on one line; what stops the customer on another, each asking first
+    h += `<div class="row">${plan && plan.status === 'paused' ? '<button class="btn sm" data-resume>Riprendi</button>' : ''}${c.trade_status !== 'approved' ? '<button class="btn sm" data-unsuspend>Riattiva accesso</button>' : ''}${canManage && !c.shopify_company_id ? '<button class="btn sm" data-link>Collega a Shopify</button>' : ''}</div>
+      <div class="row stop"><span class="small">Fermano il cliente:</span>${plan && plan.status === 'active' ? '<button class="btn sm sec" data-pause>Pausa senza data</button>' : ''}${c.trade_status === 'approved' ? '<button class="btn sm sec" data-suspend>Sospendi accesso</button>' : ''}${canManage ? '<button class="btn sm sec" data-newlink>Nuovo link portale</button>' : ''}${plan && plan.status !== 'cancelled' ? '<button class="btn sm warn" data-cancel>Annulla piano</button>' : ''}</div><div data-newlinkbox></div>`;
     h += `<h3 style="margin-top:12px">Modifiche in programma</h3>` + (S.exceptions.length ? S.exceptions.map(e => `<div class="ex"><span>${e.kind === 'skip' ? (e.note === 'pausa' ? 'Pausa' : 'Salta') : e.kind === 'override' ? esc(e.product) + ' → ' + e.qty : 'Fascia ' + esc(e.window)} · ${fmtD(e.date_from)}${e.date_to !== e.date_from ? ' → ' + fmtD(e.date_to) : ''} <span class="small">(${esc(e.created_by)})</span></span><button class="btn sm sec" data-cx="${e.id}">Annulla</button></div>`).join('') : '<div class="empty">Nessuna.</div>');
-    h += `<div class="row" data-scope><select data-exk><option value="skip">Salta</option><option value="override">Quantità temporanea</option><option value="window">Fascia temporanea</option></select><input type="date" data-exf><input type="date" data-ext title="fino al (facoltativo)"><select data-exv>${S.products.map(p => `<option value="${esc(p.variant_id)}">${esc(p.title)} ${esc(p.variant_title || '')}</option>`).join('')}</select><input type="number" data-exq placeholder="kg" min="0" step="1" style="width:80px"><select data-exw>${S.settings.windows.map(w => `<option>${esc(w)}</option>`).join('')}</select><span data-exadd></span></div>`;
+    // v0.99 (audit B-21): only the fields the chosen change needs, labelled; a quantity is required (or «Togli il prodotto», explicitly)
+    h += `<div class="row exrow" data-scope><label>Cosa <select data-exk><option value="skip">Salta la consegna</option><option value="override">Quantità temporanea</option><option value="window">Fascia temporanea</option></select></label>
+      <label>Dal <input type="date" data-exf min="${romeISO()}"></label><label>Al <small>(facoltativo)</small> <input type="date" data-ext min="${romeISO()}"></label>
+      <label data-for="override">Prodotto <select data-exv>${S.products.map(p => `<option value="${esc(p.variant_id)}" data-u="${esc(p.unit || 'kg')}">${esc(p.title)} ${esc(p.variant_title || '')}</option>`).join('')}</select></label>
+      <label data-for="override">Quantità <input type="text" inputmode="decimal" data-exq style="width:80px"> <span data-exu>${esc((S.products[0] || {}).unit || 'kg')}</span></label>
+      <label data-for="override" class="chk"><input type="checkbox" data-exrm> Togli il prodotto</label>
+      <label data-for="window">Fascia <select data-exw>${S.settings.windows.map(w => `<option>${esc(w)}</option>`).join('')}</select></label><span data-exadd></span></div>`;
     h += `<h3 style="margin-top:12px">Ultime conferme</h3><div class="small">${S.log.slice(0, 6).map(l => `${new Date(l.at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })} · ${esc(l.message)}`).join('<br>')}</div>`;
     body.innerHTML = h;
     const sa = (action, payload, force) => sb.rpc('trade_staff_action', { p_customer: c.id, p_action: action, p_payload: payload, p_force: !!force }).then(must);
@@ -95,17 +102,40 @@
       reload();
     }, 'Salva il piano'));
     const bind = (sel, fn, ok) => { const b = body.querySelector(sel); if (b) b.onclick = () => act(b, async () => { await fn(); reload(); }, ok); };
-    bind('[data-pause]', () => sa('set_status', { status: 'paused' }), 'Piano in pausa');
+    const no = () => { const e = new Error('annullato'); e.silent = true; return e; };
+    bind('[data-pause]', () => { if (!confirm(`Mettere in pausa il piano di ${c.name} senza data di fine?\nNessuna consegna finché non premi «Riprendi». Il cliente lo vede nel portale.`)) throw no(); return sa('set_status', { status: 'paused' }); }, 'Piano in pausa');
     bind('[data-resume]', () => sa('set_status', { status: 'active' }), 'Piano riattivato');
-    bind('[data-cancel]', () => { if (!confirm('Annullare il piano consegne di ' + c.name + '?')) throw new Error('Annullato'); return sa('set_status', { status: 'cancelled' }); }, 'Piano annullato');
-    bind('[data-suspend]', () => sa('set_trade_status', { trade_status: 'suspended' }), 'Accesso sospeso: niente consegne finché non lo riattivi');
+    bind('[data-cancel]', () => { if (!confirm(`Annullare il piano consegne di ${c.name}?\nLe consegne future non si prenotano più; quelle già prenotate restano.`)) throw no(); return sa('set_status', { status: 'cancelled' }); }, 'Piano annullato');
+    bind('[data-suspend]', () => { if (!confirm(`Sospendere l'accesso di ${c.name}?\nNiente consegne e il portale non funziona finché non lo riattivi.`)) throw no(); return sa('set_trade_status', { trade_status: 'suspended' }); }, 'Accesso sospeso: niente consegne finché non lo riattivi');
     bind('[data-unsuspend]', () => sa('set_trade_status', { trade_status: 'approved' }), 'Accesso riattivato');
-    bind('[data-newlink]', () => sa('new_link', {}), 'Nuovo link creato (il vecchio non funziona più; su Shopify serve "Collega a Shopify" per aggiornare la chiave)');
+    { const nb = body.querySelector('[data-newlink]'); if (nb) nb.onclick = () => act(nb, async () => {
+        if (!confirm(`Creare un nuovo link del portale per ${c.name}?\nIl link attuale smette di funzionare subito: va mandato al cliente quello nuovo.`)) throw no();
+        await sa('new_link', {});
+        const c2 = (must(await sb.rpc('trade_customers')) || []).find(x => x.id === c.id) || {};
+        const box = body.querySelector('[data-newlinkbox]');
+        box.innerHTML = c2.link ? `<div class="status" style="margin:6px 0">Nuovo link: <span class="mono">${esc(c2.link)}</span> · <a class="lnk" href="#" data-cp>Copia</a>${c.phone ? ` · <a class="lnk" target="_blank" href="https://wa.me/${esc(UI.waNumber(c.phone))}?text=${encodeURIComponent('Buongiorno, ecco il nuovo link per i vostri ordini: ' + c2.link)}">💬 WhatsApp</a>` : ''}<br>Se il cliente entra dal sito con la sua email: premi «Collega a Shopify» per aggiornare la chiave.</div>` : '<div class="status">Nuovo link creato.</div>';
+        const cp = box.querySelector('[data-cp]'); if (cp) cp.onclick = e => { e.preventDefault(); navigator.clipboard.writeText(c2.link).then(() => toast('Link copiato')); };
+      }, 'Nuovo link creato: il vecchio non funziona più'); }
     bind('[data-link]', async () => { const r = await edge('link', { party_id: c.id }); if (r.shopify !== 'linked') throw new Error(r.error || (r.shopify === 'not_configured' ? 'Shopify non collegato (token custom app mancante)' : r.shopify)); }, 'Azienda Shopify collegata');
     body.querySelectorAll('[data-cx]').forEach(b => b.onclick = () => act(b, async () => { await sa('cancel_exception', { id: b.dataset.cx }, true); reload(); }, 'Modifica annullata'));
+    const exr = body.querySelector('.exrow'), exk = exr.querySelector('[data-exk]');
+    const exShow = () => { exr.querySelectorAll('[data-for]').forEach(l => { l.hidden = l.dataset.for !== exk.value; });
+      const sel = exr.querySelector('[data-exv]'); exr.querySelector('[data-exu]').textContent = (sel.selectedOptions[0] || {}).dataset ? sel.selectedOptions[0].dataset.u : 'kg';
+      exr.querySelector('[data-exq]').disabled = exr.querySelector('[data-exrm]').checked; };
+    exk.onchange = exShow; exr.querySelector('[data-exv]').onchange = exShow; exr.querySelector('[data-exrm]').onchange = exShow; exShow();
     body.querySelector('[data-exadd]').appendChild(saveBtn(async () => {
-      const k = body.querySelector('[data-exk]').value, p = { kind: k, date_from: body.querySelector('[data-exf]').value, date_to: body.querySelector('[data-ext]').value || null, variant_id: body.querySelector('[data-exv]').value, qty: Number(body.querySelector('[data-exq]').value), window: body.querySelector('[data-exw]').value };
-      if (!p.date_from) throw new Error('Indica la data');
+      const k = exk.value, sel = exr.querySelector('[data-exv]'), rm = exr.querySelector('[data-exrm]').checked, qRaw = exr.querySelector('[data-exq]').value.trim();
+      const p = { kind: k, date_from: exr.querySelector('[data-exf]').value, date_to: exr.querySelector('[data-ext]').value || null, variant_id: sel.value, qty: null, window: exr.querySelector('[data-exw]').value };
+      if (!p.date_from) throw new Error('Indica la data «Dal»');
+      if (p.date_to && p.date_to < p.date_from) throw new Error('«Al» viene prima di «Dal»: controlla le date');
+      const unit = (sel.selectedOptions[0] || {}).dataset ? sel.selectedOptions[0].dataset.u : 'kg', prod = (sel.selectedOptions[0] || {}).textContent || '';
+      if (k === 'override') {
+        if (rm) p.qty = 0;
+        else { const q = pIt(qRaw); if (qRaw === '' || !(q > 0)) throw new Error('Scrivi la quantità, oppure spunta «Togli il prodotto»'); p.qty = q; }
+      }
+      const when = fmtD(p.date_from) + (p.date_to && p.date_to !== p.date_from ? ' → ' + fmtD(p.date_to) : '');
+      const what = k === 'skip' ? 'nessuna consegna' : k === 'window' ? `consegna nella fascia ${p.window}` : p.qty === 0 ? `${prod.trim()} tolto dalla consegna` : `${prod.trim()} → ${UI.num(p.qty, p.qty % 1 ? 2 : 0)} ${unit}`;
+      if (!confirm(`${c.name} · ${when}: ${what}.\nIl cliente lo vede nel suo portale. Confermi?`)) throw no();
       const r = await withConfirm(conf => sa('add_exception', { ...p, can_confirm: true, ...(conf ? { confirm: true } : {}) }, true));
       // v0.93 (audit B-20): «Salta» on a day already booked cancels that order; if it already went to Shopify, say so before anything else
       if (r && r.cancel_on_shopify) alert(r.message_it);
@@ -142,7 +172,7 @@
   async function loadListino() {
     await loadProds();
     $('prods').innerHTML = '<table><thead><tr><th>Prodotto</th><th>Variante</th><th class="num">kg/pezzo</th><th class="num">Base €</th><th class="num">Riservato €</th><th class="num">Min</th><th class="num">Passo</th><th>Attivo</th><th>Shopify</th><th></th></tr></thead><tbody>' +
-      PRODS.map(p => `<tr data-scope data-v="${esc(p.variant_id)}"><td>${esc(p.title)}</td><td>${esc(p.variant_title || '')}</td><td class="num">${num(p.kg_per_unit, 2)}</td><td class="num">${eur2(p.base_price_eur)}</td><td class="num"><input type="text" inputmode="decimal" data-f="trade_price_eur" value="${p.trade_price_eur == null ? '' : String(p.trade_price_eur).replace('.', ',')}" style="width:90px"></td><td class="num"><input type="number" step="1" min="1" data-f="min_qty" value="${p.min_qty}" style="width:70px" title="pezzi interi (Shopify)"></td><td class="num"><input type="number" step="1" min="1" data-f="step_qty" value="${p.step_qty}" style="width:70px" title="pezzi interi (Shopify)"></td><td><input type="checkbox" data-f="active" ${p.active ? 'checked' : ''}></td><td class="small">${p.synced_at ? 'inviato ' + fmtD(p.synced_at) : 'mai inviato'}</td><td data-save></td></tr>`).join('') + '</tbody></table>';
+      PRODS.map(p => `<tr data-scope data-v="${esc(p.variant_id)}"><td>${esc(p.title)}</td><td>${esc(p.variant_title || '')}</td><td class="num">${num(p.kg_per_unit, 2)}</td><td class="num">${eur2(p.base_price_eur)}</td><td class="num"><input type="text" inputmode="decimal" data-f="trade_price_eur" value="${p.trade_price_eur == null ? '' : String(p.trade_price_eur).replace('.', ',')}" style="width:90px"></td><td class="num"><input type="number" step="1" min="1" data-f="min_qty" value="${p.min_qty}" style="width:70px" title="pezzi interi (Shopify)"></td><td class="num"><input type="number" step="1" min="1" data-f="step_qty" value="${p.step_qty}" style="width:70px" title="pezzi interi (Shopify)"></td><td><input type="checkbox" data-f="active" ${p.active ? 'checked' : ''}></td><td class="small">${pending(p) ? '<span class="pill ko">da inviare</span> ' : ''}${p.synced_at ? 'inviato ' + fmtD(p.synced_at) : 'mai inviato'}</td><td data-save></td></tr>`).join('') + '</tbody></table>';
     $('prods').querySelectorAll('tr[data-v]').forEach(tr => tr.querySelector('[data-save]').appendChild(saveBtn(async () => {
       const row = {}; tr.querySelectorAll('[data-f]').forEach(i => { row[i.dataset.f] = i.type === 'checkbox' ? i.checked : (i.value.trim() === '' ? null : pIt(i.value)); });
       if (Object.entries(row).some(([k, v]) => k !== 'active' && Number.isNaN(v))) throw new Error('Scrivi i numeri con la virgola per i decimali (11,50)');
@@ -152,10 +182,18 @@
       await upd('trade_products', { variant_id: tr.dataset.v }, row);
     })));
     $('tr-var').innerHTML = '<option value="">Tutti i prodotti</option>' + PRODS.map(p => `<option value="${esc(p.variant_id)}">${esc(p.title)} ${esc(p.variant_title || '')}</option>`).join('');
-    $('tiers').innerHTML = TIERS.length ? '<table><thead><tr><th>Prodotto</th><th class="num">da kg</th><th class="num">Prezzo</th><th class="num">Sconto</th><th>Attivo</th><th></th></tr></thead><tbody>' + TIERS.map(t => `<tr data-scope><td>${t.variant_id ? esc(prodName(t.variant_id)) : '<i>tutti i prodotti</i>'}</td><td class="num">${num(t.min_qty, 1)}</td><td class="num">${t.price_eur != null ? eur2(t.price_eur) : '—'}</td><td class="num">${t.discount_pct != null ? num(t.discount_pct, 1) + ' %' : '—'}</td><td><input type="checkbox" data-t="${t.id}" ${t.active ? 'checked' : ''}></td><td><span class="small">${esc(t.note || '')}</span></td></tr>`).join('') + '</tbody></table>' : '<div class="empty">Nessuno scaglione: vale solo il prezzo riservato.</div>';
-    $('tiers').querySelectorAll('[data-t]').forEach(cb => cb.onchange = () => act(null, () => upd('trade_price_tiers', { id: cb.dataset.t }, { active: cb.checked }), cb.checked ? 'Scaglione attivo' : 'Scaglione disattivato'));
+    // v0.99 (audit B-23): switching a tier on or off is a change to save (Salva), and it shows «da inviare» until Shopify has it
+    const tierPending = t => SET.tier_basis === 'delivery' && (!t.synced_at || t.changed_at > t.synced_at);
+    $('tiers').innerHTML = TIERS.length ? '<table><thead><tr><th>Prodotto</th><th class="num">da kg</th><th class="num">Prezzo</th><th class="num">Sconto</th><th>Attivo</th><th></th><th></th></tr></thead><tbody>' + TIERS.map(t => `<tr data-scope data-tid="${t.id}"><td>${t.variant_id ? esc(prodName(t.variant_id)) : '<i>tutti i prodotti</i>'}</td><td class="num">${num(t.min_qty, 1)}</td><td class="num">${t.price_eur != null ? eur2(t.price_eur) : '—'}</td><td class="num">${t.discount_pct != null ? num(t.discount_pct, 1) + ' %' : '—'}</td><td><input type="checkbox" data-t="${t.id}" ${t.active ? 'checked' : ''}></td><td><span class="small">${tierPending(t) ? '<span class="pill ko">da inviare</span> ' : ''}${esc(t.note || '')}</span></td><td data-tsave></td></tr>`).join('') + '</tbody></table>' : '<div class="empty">Nessuno scaglione: vale solo il prezzo riservato.</div>';
+    $('tiers').querySelectorAll('tr[data-tid]').forEach(tr => tr.querySelector('[data-tsave]').appendChild(saveBtn(async () => {
+      await upd('trade_price_tiers', { id: tr.dataset.tid }, { active: tr.querySelector('[data-t]').checked }); UI.after(loadListino); })));
     $('rules').innerHTML = rulesHtml(['tier_basis', 'discounts_combine', 'recurring_discount_pct', 'payment_terms_days']);
   }
+  // v0.99 (audit B-22): a row differs from what Shopify was last sent → «da inviare»
+  const same = (a, b) => (a == null && b == null) || (a != null && b != null && Number(a) === Number(b));
+  const pending = p => p.active && p.trade_price_eur != null
+    ? !(p.synced_active === true && same(p.trade_price_eur, p.synced_price_eur) && same(p.min_qty, p.synced_min_qty) && same(p.step_qty, p.synced_step_qty))
+    : p.synced_price_eur != null;
   const RULE_T = { tier_basis: ['Base degli scaglioni', v => v === 'week' ? 'kg settimanali del piano' : 'kg della singola consegna (nativo Shopify)'], discounts_combine: ['Sconto ricorrente + scaglione', v => v ? 'si sommano' : 'solo il migliore'], recurring_discount_pct: ['Sconto piano consegne', v => v + ' %'], payment_terms_days: ['Pagamento', v => v + ' giorni (Net ' + v + ')'],
     min_order_kg: ['Ordine minimo per consegna', v => v + ' kg'], cutoff_time: ['Ora limite (giorno prima)', v => v], delivery_days: ['Giorni di consegna', v => v.map(x => WD[x]).join(', ')], windows: ['Fasce orarie', v => v.join(' · ')], default_window: ['Fascia proposta', v => v], horizon_days: ['Giorni mostrati nel portale', v => v], enabled: ['Sezione attiva', v => v ? 'sì' : 'no'] };
   const rulesHtml = keys => '<table>' + keys.map(k => `<tr><td>${RULE_T[k][0]}</td><td><b>${esc(RULE_T[k][1](SET[k]))}</b></td></tr>`).join('') + '</table>';
@@ -181,13 +219,28 @@
       $('dl-csv-tot').onclick = () => csv('consegne-totali-' + $('dl-from').value + '.csv', [['Data', 'Prodotto', 'Variante', 'Quantità', 'kg', 'Clienti']].concat((TOT || []).map(t => [t.delivery_date, t.title, t.variant_title, t.qty, t.kg, t.customers])));
       $('dl-csv-det').onclick = () => csv('consegne-clienti-' + $('dl-from').value + '.csv', [['Data', 'Cliente', 'Fascia', 'Prodotto', 'Quantità', 'Unità', '€/unità', 'kg', 'Stato', 'Ordine', 'Indirizzo', 'Istruzioni', 'Rif.']].concat((DELIV || []).flatMap(d => d.lines.map(l => [d.date, d.customer, d.window, l.title + ' ' + (l.variant_title || ''), l.qty, l.unit, l.price.final_price, l.kg, d.booked ? 'prenotata' : 'prevista', d.shopify_order || d.order_number || '', d.address || '', d.instructions || '', d.po_number || '']))));
       $('q-run').onclick = () => act($('q-run'), async () => { const r = await edge('run-queue', {}); if (r.configured === false) throw new Error('Shopify non collegato: mancano SHOPIFY_CLIENT_ID e SHOPIFY_CLIENT_SECRET nei segreti Supabase (' + r.pending + ' in attesa)'); loadQueue(); return r; }, r => `Inviati ${r.processed} ordini: ${r.results.filter(x => x.ok).length} creati, ${r.results.filter(x => !x.ok).length} con errore`);
-      $('pr-sync').onclick = () => act($('pr-sync'), async () => { const r = await edge('sync-prices', {}); $('pr-sync-st').textContent = `Inviati ${r.prices} prezzi, ${r.rules} regole, ${r.price_breaks} scaglioni (base ${r.basis})`; loadListino(); }, 'Listino inviato a Shopify');
-      $('tr-add').replaceWith(saveBtn(async () => {
-        const v = $('tr-var').value || null, m = pIt($('tr-min').value), pr = $('tr-price').value.trim(), pc = $('tr-pct').value.trim();
-        if (!(m > 0)) throw new Error('Indica da quanti kg'); if (pr === '' && pc === '') throw new Error('Indica un prezzo o uno sconto %');
-        if ((pr !== '' && !(pIt(pr) > 0)) || (pc !== '' && !(pIt(pc) > 0))) throw new Error('Prezzo o sconto: un numero maggiore di zero, con la virgola per i decimali');
-        must(await sb.from('trade_price_tiers').insert({ variant_id: v, min_qty: m, price_eur: pr === '' ? null : pIt(pr), discount_pct: pc === '' ? null : pIt(pc), active: true }).select());
-        $('tr-min').value = ''; $('tr-price').value = ''; $('tr-pct').value = ''; loadListino();
+      // v0.99 (audit B-22): first what would change (read from the Shopify price list now), then «Invia N modifiche»
+      $('pr-sync').onclick = () => act($('pr-sync'), async () => {
+        const box = $('pr-preview'); box.innerHTML = '<div class="status">Leggo il listino su Shopify…</div>';
+        if (document.querySelector('#prods .dirty, #tiers .dirty')) { box.innerHTML = ''; throw new Error('Prima salva (o annulla) le righe modificate del listino'); }
+        let r; try { r = await edge('prices-preview', {}); } catch (e) { box.innerHTML = '';
+          if (!/azione non valida/.test(e.message || '')) throw e;            // the trade-portal function on Supabase is still the old one
+          if (!confirm('Anteprima non disponibile: la funzione trade-portal su Supabase va aggiornata (v0.99).\nInviare comunque il listino come prima (senza togliere da Shopify gli scaglioni spenti)?')) return false;
+          const s1 = await edge('sync-prices', {}); $('pr-sync-st').textContent = `Inviati ${s1.prices} prezzi, ${s1.rules} regole, ${s1.price_breaks} scaglioni`; loadListino(); return; }
+        const ch = r.changes || [], euro = v => v == null ? '—' : /^[\d.]+$/.test(String(v)) ? eur2(Number(v)) : esc(v);
+        if (!ch.length) { await edge('sync-prices', {}); loadListino();   // nothing to send: the «da inviare» marks go
+          box.innerHTML = '<div class="status ok">Shopify ha già questi prezzi, minimi e scaglioni: niente da inviare.</div>'; return; }
+        box.innerHTML = `<table><thead><tr><th>Prodotto</th><th>Cosa</th><th class="num">Su Shopify ora</th><th class="num">Dopo l'invio</th></tr></thead><tbody>${ch.map(c => `<tr><td>${esc(c.name)}</td><td>${esc(c.what)}</td><td class="num">${c.what === 'prezzo €' || c.what === 'tolto dal listino' ? euro(c.now) : esc(c.now ?? '—')}</td><td class="num">${c.what === 'prezzo €' ? euro(c.new) : c.new == null ? '<span class="ko">tolto</span>' : esc(c.new)}</td></tr>`).join('')}</tbody></table>
+          <div class="row nodirty"><button class="btn sm" id="pr-go">Invia ${ch.length} ${ch.length === 1 ? 'modifica' : 'modifiche'} a Shopify</button><button class="btn sm sec" id="pr-no">Non inviare</button></div>`;
+        $('pr-no').onclick = () => { box.innerHTML = ''; };
+        $('pr-go').onclick = () => act($('pr-go'), async () => { const s2 = await edge('sync-prices', {}); box.innerHTML = '';
+          $('pr-sync-st').textContent = `Inviati a Shopify: ${s2.prices} prezzi cambiati, ${s2.rules} minimi/passi, ${s2.price_breaks} scaglioni${s2.removed ? `, tolti ${s2.removed} prodotti` : ''}${s2.breaks_removed ? `, ${s2.breaks_removed} scaglioni vecchi rimossi` : ''} (base ${s2.basis === 'week' ? 'settimana' : 'consegna'})`; loadListino(); }, 'Listino inviato a Shopify');
+      });
+      $('tr-add').replaceWith(saveBtn(async () => {   // v0.99 (audit B-23): a price OR a discount, chosen explicitly
+        const v = $('tr-var').value || null, m = pIt($('tr-min').value), kind = $('tr-kind').value, val = pIt($('tr-val').value);
+        if (!(m > 0)) throw new Error('Indica da quanti kg'); if (!(val > 0)) throw new Error(kind === 'eur' ? 'Scrivi il prezzo €/kg (con la virgola per i decimali)' : 'Scrivi lo sconto %');
+        must(await sb.from('trade_price_tiers').insert({ variant_id: v, min_qty: m, price_eur: kind === 'eur' ? val : null, discount_pct: kind === 'pct' ? val : null, active: true }).select());
+        $('tr-min').value = ''; $('tr-val').value = ''; loadListino();
       }, 'Aggiungi'));
       $('cl-add').replaceWith(saveBtn(async () => {
         const f = $('cl-from').value, t = $('cl-to').value || f; if (!f) throw new Error('Indica la data');

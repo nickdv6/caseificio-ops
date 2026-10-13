@@ -1,10 +1,10 @@
 /* Owner console (v0.51) — operations only. Oggi: daily_brief() tiles + approvals gate + compliance; Operazioni: PO send, purchase signals,
    wholesale, Shopify orders, milk for the next 7 days (demand + Masseria availability in one table), effluent; Andamento: charts + monthly pack;
-   Anagrafiche: Fornitori (parties + supply catalogue in supplies.js + terms/prices) | Clienti (Shopify customers + standing orders); Ricette: doses + process presets;
+   Anagrafiche: Fornitori (parties + supply catalogue in supplies.js + terms/prices) | Clienti (Shopify customers; delivery plans in ingrosso.html); Ricette: doses + process presets;
    Personale: rota, hours/overtime, people (contract hours, safety roles, certificates). Shared shell (login, header, tabs, helpers) in ui.js;
    parameters, machines, bots and users in admin.html. */
 (() => {
-  const { sb, $, esc, eur, num, fmtD, dateIt, daysAgo, nOrNull, toast, badge, upd, saveBtn } = UI;
+  const { sb, $, esc, eur, num, fmtD, dateIt, daysAgo, nOrNull, toast, badge, upd, saveBtn, act } = UI;
   let staff = null, PRODUCTS = {}, NICK = {}, APPR = [], briefP = null, FARM_LINK = null;
 
   // ---------- daily brief: fetched once per refresh, shared by Oggi, Operazioni and Andamento ----------
@@ -28,7 +28,8 @@
     APPR = appr.data || [];
     const issues = complianceItems(b);
     renderFarm();
-    const td = UI.romeISO(); renderTiles(b, issues); renderApprovals(td); renderHaccp(b, issues); renderStock(b.stock_finished, td);   // v0.60: days left count from today, not from the brief date (yesterday)
+    const td = UI.romeISO(); renderTiles(b, issues); renderApprovals(td); renderHaccp(b, issues); renderStock(b.stock_finished, td);
+    renderRecent().catch(e => toast(e.message || String(e), 'err'));   // v0.60: days left count from today, not from the brief date (yesterday)
   }
 
   // one list of compliance issues: the tile counts exactly the red lines the card shows
@@ -77,39 +78,133 @@
   const proposer = a => { const k = String(a.requested_by || '').replace(/^agent:/, ''), n = NICK[k]; return n ? `${n.nickname} · ${n.title_it}` : k.replace(/_/g, ' ') || 'sistema'; };
 
   // ---------- approvals: one structured card per request; deciding one never reloads the others (notes typed elsewhere stay) ----------
+  // v0.99 (audit B-12): most urgent first (recall, milk plan due within 24 h, DOP, promo, orders, posts); a request past its deadline
+  // is greyed out and can't be approved (E-12); milk plans, DOP and recall ask once naming the consequence; decisions go through
+  // decide_approval (signer from the login) and land in «Decise di recente», where they can be undone while nothing happened yet.
+  const typeOf = a => { const p = a.payload || {}; return a.kind === 'other' ? (p.type || 'other') : (p.type === 'recipe_update' ? 'recipe_update' : a.kind); };
+  const isGone = a => a.expires_at && new Date(a.expires_at) <= Date.now();
+  const urgency = a => { const t = typeOf(a), due = a.expires_at ? new Date(a.expires_at) - Date.now() : Infinity;
+    return t === 'recall_assessment' ? 0 : t === 'milk_plan' && due < 864e5 ? 1 : t === 'dop_declaration' ? 2 : t === 'milk_plan' ? 3 : (t === 'price_change' || t === 'sell_down') ? 4 : t === 'purchase_order' ? 5 : t === 'content_post' ? 6 : 7; };
+  const sortAppr = list => list.sort((x, y) => urgency(x) - urgency(y) || String(x.expires_at || x.requested_at).localeCompare(String(y.expires_at || y.requested_at)));
+  const hhmm = t => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const whenIt = t => new Date(t).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const silent = () => { const e = new Error('annullato'); e.silent = true; return e; };
+  async function decideRpc(id, act, note, kg, confirmed) {
+    const { data, error } = await sb.rpc('decide_approval', { p_id: id, p_decision: act, p_note: note || null, p_milk_kg: kg ?? null, p_confirm: !!confirmed });
+    if (error && error.hint === 'confirm') { if (!confirm(error.message)) throw silent(); return decideRpc(id, act, note, kg, true); }
+    if (error) throw error;
+    return data;
+  }
   function renderApprovals(today) {
     const box = $('approvals'); apprCount();
     if (!APPR.length) { box.innerHTML = '<div class="empty">Niente in attesa. I bot propongono, tu decidi: tutto ciò che impegna denaro o documenti compare qui prima.</div>'; return; }
+    sortAppr(APPR);
     const age = a => Math.max(0, Math.round((Date.now() - new Date(a.requested_at)) / 864e5));
-    box.innerHTML = APPR.map(a => { const v = approvalView(a, today); return `
-      <div class="appr" data-id="${a.id}">
+    box.innerHTML = APPR.map(a => { const v = approvalView(a, today), gone = isGone(a), can = PERM.can(PERM.approvalArea(a), 3); return `
+      <div class="appr${gone ? ' gone' : ''}" data-id="${a.id}">
         <div class="hd"><div><span class="kind ${v.kcls}">${v.klabel}</span><div class="t">${v.title}</div><div class="by">proposto da ${esc(proposer(a))} · ${age(a) === 0 ? 'oggi' : age(a) === 1 ? 'ieri' : age(a) + ' giorni fa'}</div></div><div class="amt">${v.amount}</div></div>
         ${v.facts ? `<div class="facts">${v.facts}</div>` : `<div class="s" style="margin:8px 0">${esc(a.summary)}</div>`}${v.more}
-        ${a.auto_approve_at ? `<div class="status" style="margin-top:8px">⏱ Si approva da sola alle <b>${new Date(a.auto_approve_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })}</b> se nessuno decide prima · ${esc(a.auto_rule || '')}</div>` : ''}
-        ${PERM.can(PERM.approvalArea(a), 3) ? `<div class="row nodirty"><input type="text" placeholder="${v.type === 'recall_assessment' ? 'Nota (obbligatoria se rifiuti)' : 'Nota (facoltativa)'}" id="note-${a.id}"><button class="btn" data-act="approved">Approva</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>` : `<div class="status" style="margin-top:8px">Solo lettura: decide chi ha "gestisce" in quest'area.</div>`}
+        ${gone ? `<div class="status ko" style="margin-top:8px">⌛ Scaduta ${whenIt(a.expires_at)}: non si approva più.${v.type === 'milk_plan' ? ' Se serve latte, ordinalo da «Decise di recente» qui sotto.' : ''}</div>`
+          : a.auto_approve_at ? `<div class="status" style="margin-top:8px">⏱ Si approva da sola alle <b>${hhmm(a.auto_approve_at)}</b> se nessuno decide prima · ${esc(a.auto_rule || '')}</div>` : ''}
+        ${gone ? '' : can ? `<div class="row nodirty">${v.type === 'milk_plan' ? `<label class="kgw" title="Per approvare un'altra quantità scrivi i kg">kg <input type="text" inputmode="decimal" data-kg value="${esc(UI.num(a.payload.milk_kg, 0).replace(/\./g, ''))}" style="width:90px"></label>` : ''}<input type="text" placeholder="${v.type === 'recall_assessment' ? 'Nota (obbligatoria se rifiuti)' : v.type === 'dop_declaration' ? 'Nota (cosa hai verificato)' : 'Nota (facoltativa)'}" id="note-${a.id}"><button class="btn" data-act="approved">${v.type === 'dop_declaration' ? 'Approva i dati' : 'Approva'}</button><button class="btn warn" data-act="rejected">Rifiuta</button></div>`
+          : `<div class="status" style="margin-top:8px">Solo lettura: decide chi ha "gestisce" in quest'area.</div>`}
       </div>`; }).join('');
+    // «Approva con … kg»: the button says it as soon as the kg change
+    box.querySelectorAll('input[data-kg]').forEach(i => { const card = i.closest('.appr'), a = APPR.find(x => String(x.id) === card.dataset.id) || {}, btn = card.querySelector('[data-act=approved]');
+      i.oninput = () => { const k = UI.parseIt(i.value); btn.textContent = Number.isFinite(k) && k > 0 && k !== Number(a.payload.milk_kg) ? `Approva con ${UI.num(k, 0)} kg` : 'Approva'; }; });
     box.querySelectorAll('button[data-act]').forEach(btn => btn.onclick = async () => {
       const card = btn.closest('.appr'), id = card.dataset.id, act = btn.dataset.act, a = APPR.find(x => String(x.id) === id) || {};
-      const note = $('note-' + id).value.trim();
-      if (act === 'rejected' && approvalView(a, today).type === 'recall_assessment' && !note) { toast('Scrivi nella nota perché il ritiro non serve', 'err'); $('note-' + id).focus(); return; }
-      card.querySelectorAll('button').forEach(b => b.disabled = true);
-      const { data: row, error } = await sb.from('approvals').update({ status: act, decided_by: staff.full_name, decided_at: new Date().toISOString(), decision_note: note || null }).eq('id', id).eq('status', 'pending').select().single();
-      if (error) { toast(error.code === 'PGRST116' ? 'Non hai il permesso di decidere questa richiesta, o è già stata decisa' : error.message, 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
-      if (row.related_table === 'purchase_orders' && row.related_id) { const r2 = await sb.from('purchase_orders').update({ status: act === 'approved' ? 'approved' : 'cancelled' }).eq('id', row.related_id).select('id'); const e2 = r2.error || (!(r2.data || []).length && { message: PERM.NOT_SAVED }); if (e2) toast('Approvazione salvata, ma l\'ordine non si è aggiornato: ' + e2.message, 'err'); }
-      APPR = APPR.filter(x => String(x.id) !== id); card.remove(); apprCount();
-      if (act === 'approved' && row.related_table === 'purchase_orders') {   // v0.90: approved is not sent: show the next step
-        let done = $('appr-done'); if (!done) { done = document.createElement('div'); done.id = 'appr-done'; $('approvals').before(done); }
-        done.insertAdjacentHTML('beforeend', `<div class="status" style="margin:0 0 8px">✓ ${esc((a.payload || {}).po_number || 'Ordine')} approvato · <a href="#ops" class="lnk">invialo al fornitore in Operazioni →</a></div>`);
-      }
-      if (!APPR.length) renderApprovals(today);
-      toast(act === 'approved' ? 'Approvato' : 'Rifiutato');
-      if (row.related_table === 'purchase_orders' && T.isLoaded('ops')) renderPoSend();
-      refreshBadges();
+      const v = approvalView(a, today), p = a.payload || {};
+      let note = $('note-' + id).value.trim(), kg = null;
+      try {
+        if (v.type === 'recall_assessment') {
+          if (act === 'rejected' && !note) { toast('Scrivi nella nota perché il ritiro non serve', 'err'); $('note-' + id).focus(); return; }
+          if (!confirm(act === 'approved' ? `Confermi il ritiro/richiamo del lotto ${p.lot || ''}? Vanno avvisati l'ASL e i clienti della lista.` : `Confermi che il ritiro del lotto ${p.lot || ''} non serve?\nResta nel registro con la tua nota.`)) return;
+        }
+        if (v.type === 'milk_plan') {
+          const ki = card.querySelector('input[data-kg]'), k = ki ? UI.parseIt(ki.value) : Number(p.milk_kg);
+          if (act === 'approved') {
+            if (!Number.isFinite(k) || k <= 0) { toast('kg di latte: un numero maggiore di zero (per non ordinare latte usa «Rifiuta»)', 'err'); ki && ki.focus(); return; }
+            if (k !== Number(p.milk_kg)) kg = k;
+            if (!confirm(`Approvare ${UI.num(k, 0)} kg di latte per ${dShort(p.plan_date)}${kg != null ? ` (il piano ne proponeva ${UI.num(p.milk_kg, 0)})` : ''}?\nLa Masseria vede subito l'ordine sulla sua pagina.`)) return;
+          } else if (!confirm(`Rifiutare il piano latte per ${dShort(p.plan_date)}?\nNessun latte ordinato per quel giorno: se serve lo ordini da «Decise di recente».`)) return;
+        }
+        if (v.type === 'dop_declaration' && act === 'approved') {
+          const boxes = [...card.querySelectorAll('input[data-iss]')], seen = boxes.filter(b => b.checked).map(b => b.dataset.iss);
+          if (boxes.length && seen.length < boxes.length && !note) { toast('Spunta i controlli che hai visto, o scrivi nella nota cosa hai verificato', 'err'); $('note-' + id).focus(); return; }
+          if (seen.length) note = ['Visti: ' + seen.join('; '), note].filter(Boolean).join(' · ');
+          if (!confirm(`Approvare i dati della dichiarazione ${p.month || ''}?\nPoi la stampi, la invii al Consorzio e la segni inviata (Decise di recente).`)) return;
+        }
+        card.querySelectorAll('button').forEach(b => b.disabled = true);
+        const r = await decideRpc(id, act, note, kg);
+        APPR = APPR.filter(x => String(x.id) !== id); card.remove(); apprCount();
+        if (act === 'approved' && v.type === 'purchase_order') {   // v0.90: approved is not sent: show the next step
+          let done = $('appr-done'); if (!done) { done = document.createElement('div'); done.id = 'appr-done'; $('approvals').before(done); }
+          done.insertAdjacentHTML('beforeend', `<div class="status" style="margin:0 0 8px">✓ ${esc(p.po_number || 'Ordine')} approvato · <a href="#ops" class="lnk">invialo al fornitore in Operazioni →</a></div>`);
+        }
+        if (!APPR.length) renderApprovals(today);
+        toast((r && r.next_it) || (act === 'approved' ? 'Approvato' : 'Rifiutato'));
+        if (a.related_table === 'purchase_orders' && T.isLoaded('ops')) renderPoSend();
+        if (v.type === 'milk_plan') renderFarm();
+        renderRecent(); refreshBadges();
+      } catch (e) { if (!e.silent) toast(e.message || String(e), 'err'); card.querySelectorAll('button').forEach(b => b.disabled = false); }
+    });
+  }
+
+  // ---------- v0.99 (audit B-12/E-10/B-09/B-11): decided in the last 7 days, with «Annulla»; DOP declarations still to send ----------
+  const ST_DEC = { approved: ['✓ approvata', 'ok'], rejected: ['✗ rifiutata', 'ko'], expired: ['⌛ scaduta', 'ko'], pending: ['da decidere', ''] };
+  const milkCanReorder = m => { if (!m) return false; const t = UI.romeISO(), nowRome = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Rome' });
+    return !m.other_active && (m.plan_date > t || (m.plan_date === t && nowRome < '06:00')) && new Date(m.plan_date + 'T12:00:00').getDay() !== 0; };
+  const csvDl = (name, rows) => { const b = new Blob(['﻿' + rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(';')).join('\n')], { type: 'text/csv;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); };
+  async function renderRecent() {
+    const box = $('appr-recent'), dop = $('dop-send'); if (!box) return;
+    const [{ data, error }, { data: dops }] = await Promise.all([
+      sb.from('v_approvals_recent').select('*').order('decided_at', { ascending: false, nullsFirst: false }).limit(80),
+      sb.from('v_approvals_recent').select('*').eq('type', 'dop_declaration').eq('status', 'approved')]);   // never pushed out by a busy week
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    const rows = data || [], toSend = (dops || []).filter(r => !(r.payload || {}).sent_at);
+    // a declaration approved but not sent stays in sight until it is marked sent
+    dop.innerHTML = toSend.map(r => { const p = r.payload || {}; return `<div class="appr dop" data-id="${r.id}"><div class="hd"><div><span class="kind">Consorzio DOP</span><div class="t">Dichiarazione ${esc(p.month || '')}: dati approvati, da inviare</div><div class="by">approvata da ${esc(r.decided_by || '')} · ${whenIt(r.decided_at)}</div></div><div class="amt">${UI.num(p.mozzarella_dop_kg, 0)} kg</div></div>
+      <div class="row nodirty"><a class="btn sm sec" style="text-decoration:none" target="_blank" rel="noopener" href="consorzio.html?id=${esc(r.id)}">🖨 Stampa / PDF</a><button class="btn sm sec" data-csv>Scarica CSV</button></div>
+      ${PERM.can('haccp', 3) ? `<div class="row nodirty"><label>Inviata il <input type="date" data-on max="${UI.romeISO()}" value="${UI.romeISO()}"></label><input type="text" data-prot placeholder="n. di protocollo, oppure come (PEC del …)"><button class="btn sm" data-sent>Segna inviata</button></div>` : '<div class="status">La segna inviata chi ha «gestisce» in Autocontrollo.</div>'}</div>`; }).join('');
+    dop.querySelectorAll('.appr.dop').forEach(c => { const r = toSend.find(x => x.id === c.dataset.id), p = r.payload || {};
+      c.querySelector('[data-csv]').onclick = () => csvDl('dichiarazione-consorzio-' + (p.month || '') + '.csv', [['Voce', 'Valore'], ['Mese', p.month], ['Latte ricevuto (kg)', p.milk_in_kg], ['Latte respinto (kg)', p.milk_rejected_kg], ['Latte lavorato DOP (kg)', p.milk_processed_kg], ['Mozzarella DOP (kg)', p.mozzarella_dop_kg], ['Lotti', p.batches], ['Etichette', p.labels_printed], ['Venduto (kg)', p.sold_kg]]
+        .concat((p.by_product || []).map(x => ['Prodotto: ' + x.product + ' (kg)', x.kg])).concat([['Lotti DOP', (p.lots || []).join(' ')]]).map(rw => rw.map(v => typeof v === 'number' ? String(v).replace('.', ',') : v)));
+      const sb2 = c.querySelector('[data-sent]'); if (sb2) sb2.onclick = () => act(sb2, async () => {
+        const prot = c.querySelector('[data-prot]').value.trim(), on = c.querySelector('[data-on]').value;
+        const isProt = /\d/.test(prot) && !/\s/.test(prot) && prot.length <= 40;          // «2026/1234» is a protocol; «PEC del 05/11» says how
+        const { error } = await sb.rpc('dop_declaration_sent', { p_id: r.id, p_sent_on: on, p_protocol: isProt ? prot : null, p_note: isProt ? null : prot });
+        if (error) throw error; renderRecent();
+      }, 'Dichiarazione segnata come inviata: il compito del mese è chiuso'); });
+    const list = rows.filter(r => r.status !== 'pending');
+    badge('n-recent', list.length);
+    if (!list.length) { box.innerHTML = '<div class="empty">Nessuna decisione negli ultimi 7 giorni.</div>'; return; }
+    box.innerHTML = list.map(r => { const [lab, cls] = ST_DEC[r.status] || [r.status, ''], can = PERM.can(PERM.approvalArea(r), 3), m = r.milk;
+      const redo = r.type === 'milk_plan' && (r.status === 'rejected' || r.status === 'expired') && milkCanReorder(m) && PERM.can('produzione', 3);
+      return `<div class="dec" data-id="${r.id}"><div><span class="pill ${cls}">${lab}</span> <b>${esc(r.summary)}</b></div>
+        <div class="small">${r.status === 'expired' ? 'nessuno ha deciso entro ' + whenIt(r.expires_at) : `${esc(r.decided_by || '')} · ${whenIt(r.decided_at)}`}${r.decision_note ? ' · ' + esc(r.decision_note) : ''}${r.type === 'dop_declaration' && (r.payload || {}).sent_at ? ` · inviata il ${fmtD((r.payload || {}).sent_on)}` : ''}</div>
+        <div class="row nodirty" style="margin:4px 0 0">${!r.undo_block && can ? '<button class="btn sm sec" data-undo>↶ Annulla la decisione</button>' : `<span class="small">${r.undo_block && r.status !== 'expired' ? 'non si annulla: ' + esc(r.undo_block) : ''}</span>`}
+          ${redo ? `<button class="btn sm sec" data-again>Proponi di nuovo</button><label class="kgw">Ordina <input type="text" inputmode="decimal" data-okg value="${esc(String(Math.round(Number(m.milk_kg) || 0)))}" style="width:80px"> kg</label><button class="btn sm" data-order>Ordina</button>` : ''}</div></div>`; }).join('');
+    box.querySelectorAll('.dec').forEach(d => { const r = list.find(x => x.id === d.dataset.id);
+      const u = d.querySelector('[data-undo]'); if (u) u.onclick = () => act(u, async () => {
+        if (!confirm(`Annullare la decisione su «${r.summary}»?\nTorna tra le richieste da decidere${r.type === 'milk_plan' && r.status === 'approved' ? ' e sparisce dalla pagina della Masseria' : r.type === 'purchase_order' && r.status === 'approved' ? ' e l\'ordine non è più da inviare' : ''}.`)) return false;
+        const { error } = await sb.rpc('revoke_approval', { p_id: r.id, p_note: null }); if (error) throw error;
+        await loadOggi(); }, 'Decisione annullata: la richiesta è di nuovo da decidere');
+      const ag = d.querySelector('[data-again]'); if (ag) ag.onclick = () => act(ag, async () => {
+        const { error } = await sb.rpc('milk_order_again', { p_date: r.milk.plan_date }); if (error) throw error; await loadOggi(); }, 'Nuovo piano latte proposto: lo trovi in Da approvare');
+      const od = d.querySelector('[data-order]'); if (od) od.onclick = () => act(od, async () => {
+        const k = UI.parseIt(d.querySelector('[data-okg]').value);
+        if (!Number.isFinite(k) || k <= 0) throw new Error('kg di latte: un numero maggiore di zero');
+        if (!confirm(`Ordinare ${UI.num(k, 0)} kg di latte per ${dShort(r.milk.plan_date)}?\nLa Masseria vede subito l'ordine sulla sua pagina.`)) return false;
+        const go = async conf => { const { data, error } = await sb.rpc('milk_order_again', { p_date: r.milk.plan_date, p_kg: k, p_note: 'ordinato a mano', p_confirm: conf });
+          if (error && error.hint === 'confirm') { if (!confirm(error.message)) throw silent(); return go(true); } if (error) throw error; return data; };
+        await go(false); await loadOggi(); renderFarm(); }, 'Latte ordinato: la Masseria lo vede sulla sua pagina');
     });
   }
   const KIND = { purchase_order: ['Ordine d’acquisto', 'po'], milk_plan: ['Piano latte', 'milk'], price_change: ['Promo scorte', ''], sell_down: ['Vendere prima', ''], recipe_update: ['Ricetta', ''], dop_declaration: ['Consorzio DOP', ''], content_post: ['Post social', 'milk'], recall_assessment: ['Sicurezza alimentare', ''], other: ['Richiesta', ''] };
   const WDAY = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
   const dShort = s => s ? WDAY[new Date(s + 'T12:00:00').getDay()] + ' ' + fmtD(s) : '—';
+  const eur2 = n => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
   const fact = (l, v, cls = '') => `<div><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
   const kgf = n => num(n, Number(n) % 1 ? 1 : 0);
   function approvalView(a, today) {
@@ -119,6 +214,14 @@
     switch (type) {
       case 'purchase_order':
         title = `${esc(p.po_number || 'Ordine')} · ${esc(p.supplier || '')}`;
+        if (Array.isArray(p.lines)) {          // v0.99 (audit B-18): an order from the catalogue, one card with every line
+          facts = fact('Righe', String(p.lines.length)) + fact('Totale', eur2(p.total_eur)) + fact('Creato da', esc(p.created_by || '—')) + fact('Consegna', fmtD(p.expected_date));
+          more = `<details open><summary>Righe dell'ordine</summary>${p.lines.map(l => `<div>• ${esc(UI.num(l.qty, Number(l.qty) % 1 ? 2 : 0))} ${esc(l.unit || '')} ${esc(l.name || l.sku)} × ${l.unit_price_eur != null ? '€ ' + UI.num(l.unit_price_eur, 3) : '<span class="ko">prezzo da confermare</span>'} = ${eur2(l.total_eur)}</div>`).join('')}</details>`
+            + (p.over_limit ? `<div class="status">Sopra il limite delle approvazioni automatiche (${eur2(p.limit_eur)}): serve una persona.</div>` : '')
+            + (p.price_missing ? '<div class="status ko">Righe con prezzo da confermare: il totale non è quello vero. Chiedi il prezzo al fornitore prima di approvare.</div>' : '')
+            + (p.price_missing ? '<div class="status ko">Ci sono prezzi da confermare con il fornitore.</div>' : '');
+          break;
+        }
         facts = fact('Articolo', esc(prod.name || p.sku || '—')) + fact('Quantità', `${num(p.qty, 0)} <small>${esc(p.unit || '')}</small>`) +
           fact('Prezzo', p.unit_price_eur != null ? `€ ${num(p.unit_price_eur, 3)} <small>/${esc(p.unit || '')}</small>` : '<span class="ko">da confermare</span>') +
           fact('Giacenza', `${num(p.on_hand, 0)} <small>${esc(p.unit || '')}</small>`) + fact('Consumo', p.daily_use != null ? `${num(p.daily_use, 0)} <small>${esc(p.unit || '')}/giorno</small>` : '—') +
@@ -127,8 +230,19 @@
         break;
       case 'milk_plan':
         title = `Latte per ${dShort(p.plan_date)}`;
-        facts = fact('Latte', `${num(p.milk_kg, 0)} <small>kg</small>`) + fact('Mozzarella prevista', `≈ ${kgf(p.planned_output_kg)} <small>kg</small>`) +
+        // what this milk makes (at the minimum run the plan's «need» can be far less: say both)
+        const makes = p.yield_pct ? Number(p.milk_kg) * Number(p.yield_pct) / 100 : Number(p.planned_output_kg);
+        facts = fact('Latte', `${num(p.milk_kg, 0)} <small>kg</small>`) + fact('Mozzarella prevista', `≈ ${kgf(makes)} <small>kg${p.yield_pct && Math.abs(makes - Number(p.planned_output_kg)) >= 1 ? ` (ne servono ≈ ${kgf(p.planned_output_kg)})` : ''}</small>`) +
           fact('Costo stimato', eur(p.est_cost_eur)) + fact('Decidere entro', a.expires_at ? new Date(a.expires_at).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) + ' <small>ora italiana</small>' : '—');
+        {   // v0.99 (audit B-09): the warnings that used to sit in «Come è stato calcolato»
+          const w = [];
+          if (p.exceeds_farm_supply) w.push(fact('Masseria', `${num(p.farm_kg_available, 0)} <small>kg disponibili</small>`, 'ko'), fact('Mancano', `${num(p.farm_shortfall_kg, 0)} <small>kg${p.capped_to_farm ? ' (piano ridotto)' : ' da altri fornitori'}</small>`, 'ko'));
+          if (p.capacity_hit) w.push(fact('Capacità', 'al massimo', 'ko'));
+          if (p.min_run_applied) w.push(fact('Lotto minimo', 'piano alzato', 'ko'));
+          if (p.history_source && p.history_source !== 'same_weekday_4w') w.push(fact('Storico', `${esc(p.history_days ?? 0)} <small>giorni: controlla</small>`, 'ko'));
+          if (!('capacity_hit' in p) && /⚠|capacità|lotto minimo/.test(a.summary || '')) w.push(fact('Attenzione', esc(String(a.summary).split('·').slice(1).join('·').trim() || 'vedi il calcolo'), 'ko'));   // proposals made before v0.99
+          facts += w.join('');
+        }
         more = (p.rationale ? `<details><summary>Come è stato calcolato</summary>${esc(p.rationale)}</details>` : '')
           + (FARM_LINK ? `<div class="status">Approvando, l'ordine compare subito sulla pagina della Masseria (<a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina ordini latte</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a>); lì segnano "Visto".</div>` : '');
         break;
@@ -150,8 +264,9 @@
       case 'content_post': {
         const cl = p.claims || [], blk = cl.filter(c => c.severity === 'block').length;
         title = `Post ${esc(p.platform || '')}`;
-        facts = fact('Canale', esc(p.platform || '—')) + fact('Problemi nel testo', blk ? `${blk} da correggere` : 'nessuno', blk ? 'ko' : '') + fact('Avvisi', String(cl.filter(c => c.severity === 'warn').length));
-        more = `<details open><summary>Testo</summary><div style="white-space:pre-wrap;color:var(--fg)">${esc(p.caption_it || '')}</div>${cl.filter(c => c.severity !== 'info').map(c => `<div class="${c.severity === 'block' ? 'ko' : 'status'}">• ${esc(c.message)}</div>`).join('')}<div><a href="marketing.html#calendario">Apri nel calendario ↗</a></div></details>`;
+        facts = fact('Canale', esc(p.platform || '—')) + fact('Uscita', p.scheduled_at ? whenIt(p.scheduled_at) : 'senza data') + fact('Problemi nel testo', blk ? `${blk} da correggere` : 'nessuno', blk ? 'ko' : '') + fact('Avvisi', String(cl.filter(c => c.severity === 'warn').length));
+        // v0.99 (audit B-13): what will be approved is the text as it is now (refreshed when the post is edited), with its picture
+        more = `<details open><summary>Testo${p.edited_at ? ' <small class="ko">· modificato ' + whenIt(p.edited_at) + '</small>' : ''}</summary>${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy" style="max-width:160px;max-height:160px;border-radius:6px;float:right;margin:0 0 6px 10px">` : ''}<div style="white-space:pre-wrap;color:var(--fg)">${esc(p.caption_it || '')}${p.hashtags ? '\n' + esc(p.hashtags) : ''}</div>${cl.filter(c => c.severity !== 'info').map(c => `<div class="${c.severity === 'block' ? 'ko' : 'status'}">• ${esc(c.message)}</div>`).join('')}<div style="clear:both"><a href="marketing.html#post=${esc(p.content_id || '')}">Apri il post in Marketing ↗</a></div></details>`;
         break;
       }
       case 'recall_assessment': {
@@ -174,9 +289,9 @@
             : Object.values(x).map(v => esc(v)).join(' · ');
           const det = d => Array.isArray(d) ? d.slice(0, 8).map(one).join('; ') : '';
           more = `<details${iss.length ? ' open' : ''}><summary>Controlli e invio</summary>`
-            + (iss.length ? iss.map(i => `<div class="ko">• ${esc(i.it)}: ${esc(i.n)}${det(i.detail) ? ` <small>(${det(i.detail)})</small>` : ''}</div>`).join('') : '<div class="status">Nessun problema su 60 h, grasso/proteine, fornitori DOP e tracciabilità.</div>')
+            + (iss.length ? '<div class="status">Spunta ogni controllo dopo averlo guardato (o scrivi nella nota cosa hai verificato):</div>' + iss.map(i => `<label class="ko" style="display:block"><input type="checkbox" data-iss="${esc(i.it)}"> ${esc(i.it)}: ${esc(i.n)}${det(i.detail) ? ` <small>(${det(i.detail)})</small>` : ''}</label>`).join('') : '<div class="status">Nessun problema su 60 h, grasso/proteine, fornitori DOP e tracciabilità.</div>')
             + ((p.by_product || []).length ? `<div>${p.by_product.map(x => `${esc(x.product)}: ${num(x.kg, 0)} kg in ${esc(x.batches)} lotti`).join(' · ')}</div>` : '')
-            + `<div class="status">${esc(p.note || '')} Approvando, il compito "Dichiarazione produzione Consorzio" del mese si chiude.</div></details>`;
+            + `<div class="status">Approvando approvi i dati: poi la stampi (o scarichi il CSV), la invii al Consorzio e la segni inviata. Il compito del mese si chiude solo allora.</div></details>`;
         }
         break;
     }
@@ -315,7 +430,7 @@
       oggi: loadOggi,
       ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders()]); },
       trend: loadTrend,
-      anag: () => Promise.all([loadParties(), loadTerms(), loadStanding(), window.SUPPLIES.load()]),
+      anag: () => Promise.all([loadParties(), loadTerms(), window.SUPPLIES.load()]),
       ricette: () => Promise.all([loadRecipes(), loadPresets()]),
       personale: () => Promise.all([loadRota(), loadStaffCard()]),
       incassi: () => window.INCASSI.load()
@@ -499,6 +614,7 @@
     const box = $('po-send');
     const { data, error } = await sb.from('v_pos_to_send').select('*');
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    renderPoSent();
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessun ordine approvato in attesa di invio.</div>'; return; }
     const pks = await Promise.all(data.map(po => sb.rpc('po_send_package', { p_po_number: po.po_number }).then(r => r.data)));
     box.innerHTML = '';
@@ -522,8 +638,33 @@
       // v0.90: after opening the e-mail / WhatsApp / print, the next step is "Segna inviato": make it obvious
       const nudge = () => { sent.textContent = '✓ Inviato? Segna inviato'; sent.classList.add('save'); sent.closest('.eq').classList.add('dirty'); };
       [mail, wa, pr].forEach(a => a.addEventListener('click', () => { if (a.hasAttribute('href')) nudge(); })); cp.addEventListener('click', nudge);
-      row.append(mail, wa, cp, pr, sent); c.append(row); box.append(c);
+      const cx = document.createElement('button'); cx.className = 'btn sm warn'; cx.textContent = 'Annulla ordine'; cx.style.marginLeft = 'auto'; cx.onclick = () => cancelPo(po.po_number, cx);   // v0.99 (audit B-18)
+      row.append(mail, wa, cp, pr, sent, cx); c.append(row); box.append(c);
     });
+  }
+  // v0.99 (audit B-18): a wrong order is cancelled with a reason, before or after sending, until goods arrive
+  async function cancelPo(poNumber, btn) {
+    const why = prompt(`Annullare l'ordine ${poNumber}?\nScrivi il motivo (es. quantità sbagliata, rifatto con un altro fornitore):`);
+    if (why == null) return; if (why.trim().length < 3) return toast('Scrivi il motivo dell\'annullamento', 'err');
+    btn.disabled = true;
+    const { data, error } = await sb.rpc('cancel_po', { p_po_number: poNumber, p_reason: why.trim() });
+    btn.disabled = false;
+    if (error) return toast(error.message, 'err');
+    if (data.was_sent) {          // the supplier already has it: the message to send, ready
+      const t = data.message_it || '', box = $('po-sent');
+      box.insertAdjacentHTML('afterbegin', `<div class="status ko" style="margin-bottom:8px">${esc(poNumber)} annullato. Era già stato inviato: avvisa ${esc(data.supplier || 'il fornitore')} · ${data.phone ? `<a class="lnk" target="_blank" href="${waLink(data.phone, t)}">💬 WhatsApp</a> · ` : ''}${data.email ? `<a class="lnk" target="_blank" href="mailto:${encodeURIComponent(data.email)}?subject=${encodeURIComponent('Annullamento ordine ' + poNumber)}&body=${encodeURIComponent(t)}">✉️ Email</a> · ` : ''}<a class="lnk" href="#" data-copy="${esc(t)}">copia il testo</a></div>`);
+    }
+    toast(`Ordine ${poNumber} annullato`); renderPoSend(); refreshBadges();
+  }
+  async function renderPoSent() {
+    const box = $('po-sent'); if (!box) return;
+    const { data, error } = await sb.from('purchase_orders').select('po_number, total_eur, expected_date, sent_at, supplier:parties(legal_name)').eq('status', 'sent').order('sent_at', { ascending: false }).limit(20);
+    box.querySelectorAll('table').forEach(t => t.remove());
+    if (error || !(data || []).length) return;
+    const t = document.createElement('table'); t.className = 'nw2';
+    t.innerHTML = '<tr><th colspan="5">Inviati, merce non ancora arrivata</th></tr>' + data.map(o => `<tr><td>${esc(o.po_number)}</td><td>${esc((o.supplier || {}).legal_name || '')}</td><td class="num">${eur(o.total_eur)}</td><td>attesa ${fmtD(o.expected_date)}</td><td><button class="btn sm sec" data-cxpo="${esc(o.po_number)}">Annulla ordine</button></td></tr>`).join('');
+    t.querySelectorAll('[data-cxpo]').forEach(b => b.onclick = () => cancelPo(b.dataset.cxpo, b));
+    box.append(t);
   }
   async function renderWholesale() {
     const box = $('wholesale');
@@ -553,7 +694,7 @@
     const tbl = document.createElement('table'); tbl.className = 'par';
     const isCus = partyType === 'customer';
     tbl.innerHTML = isCus
-      ? `<tr><th>Cliente</th><th>Email</th><th>Telefono</th><th>Tag</th><th class="num">Ordini</th><th class="num">Speso</th><th class="num">Pag. gg</th><th>Ordini fissi</th><th></th></tr>`
+      ? `<tr><th>Cliente</th><th>Email</th><th>Telefono</th><th>Tag</th><th class="num">Ordini</th><th class="num">Speso</th><th class="num">Pag. gg</th><th>Ingrosso</th><th></th></tr>`
       : `<tr><th>Nome / ragione sociale</th><th>Email</th><th>Telefono / WhatsApp</th><th class="num">Pag. gg</th><th>Articoli</th><th></th></tr>`;
     rows.forEach(p => {
       const tr = document.createElement('tr'); if (p.is_placeholder) tr.className = 'ph';
@@ -567,7 +708,7 @@
         const t4 = document.createElement('td'); t4.innerHTML = (p.is_wholesale ? '<span class="kind" style="border-color:var(--accent);color:var(--accent);font-size:.75rem;padding:0 5px;border-radius:3px;border:1.5px solid">ingrosso</span> ' : '') + (p.tags || []).filter(t => !['ingrosso', 'b2b', 'wholesale', 'horeca'].includes(t)).map(t => `<small class="status">${esc(t)}</small>`).join(' ');
         const t5 = document.createElement('td'); t5.className = 'num'; t5.textContent = p.orders_count ?? '—'; const t6 = document.createElement('td'); t6.className = 'num'; t6.textContent = p.total_spent_eur != null ? eur(p.total_spent_eur) : '—';
         const t7 = document.createElement('td'); t7.className = 'num'; t7.append(days);
-        const t8 = document.createElement('td'); t8.className = 'status'; t8.textContent = p.standing_orders ? p.standing_orders + ' giorni' : '—';
+        const t8 = document.createElement('td'); t8.className = 'status'; t8.innerHTML = p.is_wholesale && PERM.page('ingrosso') ? '<a class="lnk" href="ingrosso.html#clienti">piano →</a>' : '—';   // v0.99 (audit B-19): plans live in Ingrosso
         const t9 = document.createElement('td'); t9.style.whiteSpace = 'nowrap';
         t9.append(saveBtn(async () => { await upd('parties', { id: p.id }, { payment_terms_days: nOrNull(days.value) }); UI.after(loadParties); }));
         if (fromShopify && p.shopify_customer_id) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.cssText = 'text-decoration:none;margin-left:6px'; a.target = '_blank'; a.textContent = 'Shopify ↗'; a.href = 'https://admin.shopify.com/store/pxssjd-cq/customers/' + p.shopify_customer_id.split('/').pop(); t9.append(a); }
@@ -601,41 +742,8 @@
     const e5 = document.createElement('td'); const e6 = document.createElement('td'); e6.append(nb); add.append(e5, e6); tbl.append(add);
     box.append(tbl);
   }
-  const WD = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
-  async function loadStanding() {
-    const box = $('set-standing'); box.innerHTML = '';
-    const [{ data: so }, { data: cust }, { data: prod }] = await Promise.all([
-      sb.from('standing_orders').select('*'),
-      sb.from('parties').select('id, legal_name').eq('type', 'customer').eq('active', true).eq('is_wholesale', true).order('legal_name'),
-      sb.from('products').select('id, name, sku').eq('sku', 'MOZ-DOP-KG').maybeSingle()]);
-    const moz = prod; if (!moz) { box.innerHTML = '<div class="empty">Prodotto MOZ-DOP-KG non trovato.</div>'; return; }
-    if (!(cust || []).length) { box.innerHTML = '<div class="empty">Nessun cliente con tag <b>ingrosso</b> su Shopify: aggiungi il tag al cliente e domani mattina compare qui.</div>'; return; }
-    const tbl = document.createElement('table');
-    tbl.innerHTML = '<tr><th>Cliente</th>' + WD.map(d => `<th class="num">${d}</th>`).join('') + '<th></th></tr>';
-    (cust || []).forEach(cu => {
-      const tr = document.createElement('tr'); tr.innerHTML = `<td>${esc(cu.legal_name)}</td>`;
-      WD.forEach((_, i) => {
-        const wd = i + 1, cur = (so || []).find(s => s.customer_id === cu.id && s.product_id === moz.id && s.weekday === wd);
-        const td = document.createElement('td'); td.className = 'num';
-        const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.5'; inp.min = '0'; inp.style.width = '62px'; inp.value = cur && cur.active ? cur.qty_kg : ''; inp.placeholder = '–'; inp.dataset.wd = wd;
-        td.append(inp); tr.append(td);
-      });
-      const td = document.createElement('td');
-      td.append(saveBtn(async () => {
-        const vals = [...tr.querySelectorAll('input[data-wd]')].map(inp => ({ inp, q: nOrNull(inp.value) ?? 0 }));   // v0.60: an invalid number stops the save (it used to switch that day off)
-        if (vals.some(v => v.q < 0)) throw new Error('I kg non possono essere negativi');
-        for (const { inp, q } of vals) {
-          const wd = Number(inp.dataset.wd);
-          const cur = (so || []).find(s => s.customer_id === cu.id && s.product_id === moz.id && s.weekday === wd);
-          if (q > 0) { const { error } = await sb.from('standing_orders').upsert({ customer_id: cu.id, product_id: moz.id, weekday: wd, qty_kg: q, active: true, notes: null }, { onConflict: 'customer_id,product_id,weekday' }); if (error) throw error; }
-          else if (cur) { await upd('standing_orders', { id: cur.id }, { active: false }); }
-        }
-        UI.after(loadStanding);
-      }));
-      tr.append(td); tbl.append(tr);
-    });
-    box.append(tbl);
-  }  const EFFL_KIND = { scotta: 'Scotta', siero: 'Siero', acque_lavaggio: 'Acque di lavaggio', fanghi: 'Fanghi', altro: 'Altro' };
+  // v0.99 (audit B-19): the old «Ordini fissi» grid is gone — it booked nothing; the plans are in Ingrosso → Clienti e piani
+  const EFFL_KIND = { scotta: 'Scotta', siero: 'Siero', acque_lavaggio: 'Acque di lavaggio', fanghi: 'Fanghi', altro: 'Altro' };
   const EFFL_DEST = { ricotta: 'ricotta', allevamento: 'allevamento', fognatura: 'fognatura', trasportatore: 'trasportatore', depuratore_interno: 'depuratore interno', altro: 'altro' };
   async function loadEffluent() {
     const box = $('effluent');
@@ -686,7 +794,8 @@
       const mine = (steps || []).filter(s => s.preset_id === P.preset_id);
       const tbl = document.createElement('table'); tbl.className = 'rec';
       tbl.innerHTML = '<tr><th>Fase · ordine</th><th>Passo</th><th>Macchina</th><th>°C (min–max)</th><th>Minuti (min–max)</th><th>Velocità</th><th>pH (min–max)</th></tr>';
-      const num = (v, step = 'any', ph = '') => { const i = document.createElement('input'); i.type = 'number'; i.step = step; i.className = 'n'; i.value = v ?? ''; i.placeholder = ph; return i; };
+      // v0.99 (audit B-16): text fields read the Italian way (94,5), so a comma never empties a target silently
+      const num = (v, step = 'any', ph = '') => { const i = document.createElement('input'); i.type = 'text'; i.inputMode = 'decimal'; i.className = 'n'; i.value = v == null ? '' : String(v).replace('.', ','); i.placeholder = ph; i.dataset.was = v ?? ''; return i; };
       const eqSel = (v) => { const sel = document.createElement('select'); sel.className = 'eq'; sel.innerHTML = '<option value="">—</option>' + (eq || []).map(e => `<option value="${e.id}" ${e.id === v ? 'selected' : ''}>${esc(e.code)} ${esc(e.name)}</option>`).join(''); return sel; };
       const phSel = (v) => { const sel = document.createElement('select'); sel.className = 'phs'; sel.innerHTML = Object.entries(PPHASE).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join(''); return sel; };
       const mSel = (v) => { const sel = document.createElement('select'); sel.innerHTML = Object.entries(PMETRIC).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join(''); return sel; };
@@ -704,11 +813,17 @@
         const ex = document.createElement('input'); ex.type = 'text'; ex.className = 'w'; ex.value = extraTxt(st?.extra); ex.placeholder = 'es. salamoia: 15% · tamburo: 250 g';
         const ins = document.createElement('input'); ins.type = 'text'; ins.className = 'w'; ins.value = st?.instruction_it || ''; ins.placeholder = 'cosa deve fare il casaro';
         const met = mSel(st?.record_metric || 'none');
+        const LBL = new Map([[t1, '°C obiettivo'], [t2, '°C minimo'], [t3, '°C massimo'], [d1, 'minuti'], [d2, 'minuti minimo'], [d3, 'minuti massimo'], [sp, 'velocità'], [p1, 'pH obiettivo'], [p2, 'pH minimo'], [p3, 'pH massimo']]);
+        const nv = i => { const t = i.value.trim(); if (t === '') return null; const n = UI.parseIt(t);
+          if (!Number.isFinite(n)) throw new Error(`${LBL.get(i) || 'Valore'}: «${t}» non è un numero (scrivi 94,5 o 94.5)`); return n; };
         const payload = () => ({ preset_id: P.preset_id, phase: ph.value, step_order: Number(ord.value) || 10, name_it: name.value.trim(), equipment_id: eqs.value || null,
-          target_temp_c: t1.value === '' ? null : Number(t1.value), temp_min_c: t2.value === '' ? null : Number(t2.value), temp_max_c: t3.value === '' ? null : Number(t3.value),
-          duration_min: d1.value === '' ? null : Number(d1.value), duration_min_min: d2.value === '' ? null : Number(d2.value), duration_max_min: d3.value === '' ? null : Number(d3.value),
-          speed: sp.value === '' ? null : Number(sp.value), speed_unit: su.value.trim() || null, target_ph: p1.value === '' ? null : Number(p1.value), ph_min: p2.value === '' ? null : Number(p2.value), ph_max: p3.value === '' ? null : Number(p3.value),
+          target_temp_c: nv(t1), temp_min_c: nv(t2), temp_max_c: nv(t3), duration_min: nv(d1), duration_min_min: nv(d2), duration_max_min: nv(d3),
+          speed: nv(sp), speed_unit: su.value.trim() || null, target_ph: nv(p1), ph_min: nv(p2), ph_max: nv(p3),
           extra: parseExtra(ex.value), instruction_it: ins.value.trim() || null, record_metric: met.value, updated_at: new Date().toISOString() });
+        // a target that was there and is now empty is asked, never cleared silently; a preset already used by lots asks once
+        const checkSave = () => { const gone = [...LBL.keys()].filter(i => i.dataset.was !== '' && i.value.trim() === '');
+          if (gone.length && !confirm(`Passo «${name.value.trim()}»: togli ${gone.map(i => `${LBL.get(i)} (era ${String(i.dataset.was).replace('.', ',')})`).join(', ')}?\nIl tablet non mostrerà più quel valore al casaro.`)) throw silent();
+          if (P.n_batches && !confirm(`Il preset «${P.name}» ha già ${P.n_batches} lotti: cambiando i valori cambiano anche i confronti con quei lotti (scostamento medio).\nSalvare comunque? Per provare una variante usa «Copia come nuovo preset».`)) throw silent(); };
         const rng = () => Object.assign(document.createElement('span'), { className: 'rng', textContent: '–' });
         const cells = [[ph, ' ', ord], [name], [eqs], [t1, ' ', t2, rng(), t3], [d1, ' ', d2, rng(), d3], [sp, ' ', su], [p1, ' ', p2, rng(), p3]];
         cells.forEach(parts => { const td = document.createElement('td'); td.style.whiteSpace = 'nowrap'; parts.forEach(p => td.append(typeof p === 'string' ? document.createTextNode(p) : p)); tr.append(td); });
@@ -720,13 +835,14 @@
         grid.append(Object.assign(document.createElement('span'), { textContent: 'Altro' }), ex, Object.assign(document.createElement('span'), { textContent: 'Istruzione' }), ins, Object.assign(document.createElement('span'), { textContent: 'Il tablet registra' }), met, tdB);
         sTd.append(grid); sub.append(sTd);
         if (st) {
-          tdB.append(saveBtn(async () => { const p = payload(); if (!p.name_it) throw new Error('Dai un nome al passo'); await upd('process_steps', { id: st.step_id }, p); UI.after(loadPresets); }));
+          tdB.append(saveBtn(async () => { const p = payload(); if (!p.name_it) throw new Error('Dai un nome al passo'); checkSave(); await upd('process_steps', { id: st.step_id }, p); UI.after(loadPresets); }));
           const rm = document.createElement('button'); rm.className = 'btn sm sec'; rm.textContent = 'Togli'; rm.style.marginLeft = '6px'; rm.title = 'Il passo non compare più sul tablet';
-          rm.onclick = async () => { rm.disabled = true; try { await upd('process_steps', { id: st.step_id }, { active: false, updated_at: new Date().toISOString() }); toast('Passo tolto'); loadPresets(); } catch (e) { toast(e.message, 'err'); rm.disabled = false; } };
+          rm.onclick = async () => { if (!confirm(`Togliere il passo «${st.name_it}» dal preset «${P.name}»?\nIl tablet non lo mostrerà più dai prossimi lotti.`)) return;   // v0.99 (audit B-16)
+            rm.disabled = true; try { await upd('process_steps', { id: st.step_id }, { active: false, updated_at: new Date().toISOString() }); toast('Passo tolto'); loadPresets(); } catch (e) { toast(e.message, 'err'); rm.disabled = false; } };
           tdB.append(rm);
         } else {
           const add = document.createElement('button'); add.className = 'btn sm'; add.textContent = 'Aggiungi';
-          add.onclick = async () => { const p = payload(); if (!p.name_it) return toast('Dai un nome al passo', 'err'); add.disabled = true; const { error } = await sb.from('process_steps').insert(p); add.disabled = false; if (error) return toast(error.message, 'err'); toast('Passo aggiunto'); loadPresets(); };
+          add.onclick = async () => { let p; try { p = payload(); } catch (er) { return toast(er.message, 'err'); } if (!p.name_it) return toast('Dai un nome al passo', 'err'); add.disabled = true; const { error } = await sb.from('process_steps').insert(p); add.disabled = false; if (error) return toast(error.message, 'err'); toast('Passo aggiunto'); loadPresets(); };
           tdB.append(add);
         }
         const grp = document.createElement('tbody'); grp.dataset.scope = 'step'; grp.append(tr, sub); return grp;   // v0.60: both lines of a step are one unsaved-change scope (Salva sits in the second)
@@ -794,11 +910,26 @@
         const tdR = document.createElement('td'); const ru = document.createElement('input'); ru.type = 'checkbox'; ru.checked = !!r.round_up; ru.title = 'Arrotonda per eccesso (pezzi)'; tdR.append(ru);
         const tdI = document.createElement('td'); const ins = document.createElement('input'); ins.type = 'text'; ins.value = r.instruction_it || ''; ins.placeholder = 'es. Pesa il caglio e aggiungilo al latte'; tdI.append(ins);
         const tdB = document.createElement('td'); tdB.style.whiteSpace = 'nowrap';
+        // v0.99 (audit B-15): «Togli» asks and ends the component from tomorrow (today's lots still dose it); the same day «Rimetti» undoes it.
+        // A removed row has no «Salva» (saving a dose there would put the component back without saying so)
+        if (r.valid_to) {
+          tr.style.opacity = '.6'; tdQ.innerHTML = `${esc(doseTxt(Number(r.qty_per_unit)))} ${esc(r.unit)}<div class="small ko">tolto: da domani non si dosa più</div>`;
+          ru.disabled = true; ins.disabled = true;
+          const back = document.createElement('button'); back.className = 'btn sm'; back.textContent = 'Rimetti';
+          back.onclick = () => act(back, async () => { const { error } = await sb.rpc('restore_recipe_component', { p_recipe_id: r.recipe_id }); if (error) throw error; loadRecipes(); }, `${r.component_name} rimesso nella ricetta`);
+          tdB.append(back); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr); return;
+        }
         tdB.append(saveBtn(async () => { const v = UI.parseIt(q.value);
           if (!Number.isFinite(v) || v <= 0) throw new Error(`${r.component_name}: scrivi la dose, un numero maggiore di zero con la virgola per i decimali`);
           await saveDose(r, f, v, { p_round_up: ru.checked, p_instruction: ins.value.trim() }); UI.after(loadRecipes); }));
-        const end = document.createElement('button'); end.className = 'btn sm sec'; end.textContent = 'Togli'; end.style.marginLeft = '6px'; end.title = 'Il componente non viene più dosato da domani';
-        end.onclick = async () => { end.disabled = true; const { error } = await sb.rpc('end_recipe_component', { p_recipe_id: r.recipe_id }); if (error) { toast(error.message, 'err'); end.disabled = false; return; } toast('Componente tolto dalla ricetta'); loadRecipes(); };
+        const today = r.valid_from >= UI.romeISO();      // put in (or changed) today: it stops at once
+        const end = document.createElement('button'); end.className = 'btn sm sec'; end.textContent = 'Togli'; end.style.marginLeft = '6px';
+        end.title = today ? 'Inserito oggi: smette subito di essere dosato' : 'Il componente non viene più dosato da domani';
+        end.onclick = () => act(end, async () => {
+          if (!confirm(today ? `Togliere ${r.component_name} dalla ricetta di ${f.name}?\nÈ stato inserito o cambiato oggi: smette subito, anche per i lotti di oggi non ancora dosati. Per rimetterlo aggiungilo di nuovo dalla riga in fondo.`
+                             : `Togliere ${r.component_name} dalla ricetta di ${f.name}?\nDa domani non si dosa più; i lotti di oggi lo dosano ancora. Oggi puoi ancora rimetterlo.`)) return false;
+          const { error } = await sb.rpc('end_recipe_component', { p_recipe_id: r.recipe_id }); if (error) throw error; loadRecipes(); },
+          today ? `${r.component_name} tolto da subito` : `${r.component_name} tolto da domani · «Rimetti» per annullare`);
         tdB.append(end); tr.append(tdQ, tdR, tdI, tdB); tbl.append(tr);
       });
       // add row

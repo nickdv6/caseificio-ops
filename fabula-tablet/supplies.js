@@ -2,8 +2,9 @@
    One list of everything we buy, grouped by category (supply_categories), with the suppliers of each item and their price.
    v0.90 — two modes and a bulk panel:
      🛒 Ordina (default): compact rows, nothing editable except the quantity; "Proponi i sotto soglia" fills the reorder quantities;
-        minimum order and pack multiples are checked as you type; "Crea ordini" makes one approved PO per supplier and offers the
-        jump to Operazioni → Ordini da inviare.
+        minimum order and pack multiples are checked as you type; "Crea ordini" makes one PO per supplier and offers the
+        jump to Operazioni → Ordini da inviare. v0.99 (audit B-18): it shows every line and the totals first; a line without a price
+        needs «prezzo da confermare»; above approve.auto_po_max_eur (or from a «registra» profile) the PO waits for approval in Oggi.
      ✎ Modifica elenco: the full editable rows (name, unit, category, format, stock tracking, reorder point/qty) + "Nuovo articolo".
      Assegna articoli a un fornitore: tick what a supplier sells, type the prices, save once (instead of one item at a time).
    Tapping a supplier chip edits that supplier's price. Search also matches supplier names.
@@ -21,6 +22,7 @@
   let mode = (() => { try { return localStorage.getItem(MODE_KEY) || 'order'; } catch { return 'order'; } })();
   let assignSup = null;          // supplier id while the "Assegna articoli" panel is open
   let LAST_MADE = null;          // PO numbers created by the last "Crea ordini", shown with the jump to Operazioni
+  let PO_LIMIT = 150;            // v0.99 (audit B-18): above this (approve.auto_po_max_eur) a catalogue order waits for approval in Oggi
   const PENDING = [];            // prefill requests that arrived before the data (from Operazioni → Segnali acquisti)
   const ORDER = new Map();       // product_id → { qty, supplier_id } — kept across re-renders, cleared after "Crea ordini"
   let REC = new Map();           // v0.90b: product_id → names of the products whose current recipe uses it (Ricette)
@@ -29,12 +31,14 @@
     const box = $('supplies'); if (!box) return;
     W = PERM.can('acquisti', 3); O = PERM.can('acquisti', 2);
     if (!W) mode = 'order';
-    const [c, i, s, r, f] = await Promise.all([
+    const [c, i, s, r, f, lim] = await Promise.all([
       sb.from('supply_categories').select('*').eq('active', true).order('sort'),
       sb.from('v_supply_catalog').select('*').order('category_sort').order('name'),
       sb.from('parties').select('id, legal_name, email, phone').in('type', ['supplier', 'both']).eq('active', true).order('legal_name'),
       sb.from('recipes').select('component_product_id, finished_product_id, valid_to'),
-      sb.from('products').select('id, name').eq('kind', 'finished_good')]);
+      sb.from('products').select('id, name').eq('kind', 'finished_good'),
+      sb.from('settings').select('value').eq('key', 'approve.auto_po_max_eur').maybeSingle()]);
+    PO_LIMIT = lim && lim.data && Number(lim.data.value) >= 0 ? Number(lim.data.value) : 150;
     const err = c.error || i.error;
     if (err) { box.innerHTML = `<div class="empty">${/does not exist|schema cache/.test(err.message) ? 'Il catalogo forniture non è ancora attivo: esegui la migrazione <b>v0.89a</b> nel SQL editor di Supabase.' : esc(err.message)}</div>`; return; }
     CATS = c.data || []; ITEMS = i.data || []; SUPS = s.data || []; loaded = true;
@@ -309,8 +313,9 @@
     if (!lines.length) {
       if (LAST_MADE && LAST_MADE.length) {
         ob.hidden = false; ob.className = 'nodirty sup-order done';
-        ob.innerHTML = `<div><b>✓ ${LAST_MADE.length === 1 ? 'Creato' : 'Creati'} ${LAST_MADE.map(esc).join(', ')}</b> <small class="status">già approvati · manca solo l'invio al fornitore</small></div>`;
-        const go = document.createElement('a'); go.className = 'btn'; go.href = '#ops'; go.textContent = 'Invia ai fornitori →'; go.style.textDecoration = 'none';
+        const ok = LAST_MADE.filter(m => m.status !== 'pending_approval'), wait = LAST_MADE.filter(m => m.status === 'pending_approval');
+        ob.innerHTML = `<div><b>✓ ${LAST_MADE.length === 1 ? 'Creato' : 'Creati'} ${LAST_MADE.map(m => esc(m.po)).join(', ')}</b>${ok.length ? ` <small class="status">${ok.map(m => esc(m.po)).join(', ')}: approvat${ok.length === 1 ? 'o' : 'i'}, manca solo l'invio al fornitore</small>` : ''}${wait.length ? ` <small class="status ko">${wait.map(m => esc(m.po)).join(', ')}: sopra ${eur(PO_LIMIT)}, con prezzi da confermare o dal tuo profilo aspetta${wait.length === 1 ? '' : 'no'} l'approvazione in Console → Oggi</small>` : ''}</div>`;
+        const go = document.createElement('a'); go.className = 'btn'; go.href = ok.length ? '#ops' : '#oggi'; go.textContent = ok.length ? 'Invia ai fornitori →' : 'Vai a Da approvare →'; go.style.textDecoration = 'none';
         go.onclick = () => { LAST_MADE = null; };
         const r = document.createElement('div'); r.className = 'sup-l2'; r.append(go); ob.append(r);
       } else { ob.hidden = true; ob.innerHTML = ''; }
@@ -327,23 +332,33 @@
     });
     const nSup = Object.keys(by).length;
     ob.hidden = false;
-    ob.innerHTML = `<div><b>${lines.length} ${lines.length === 1 ? 'riga' : 'righe'} · ${nSup} ${nSup === 1 ? 'fornitore' : 'fornitori'} · ${eur(tot)}</b> <small class="status">IVA esclusa${noPrice ? ` · <span class="ko">${noPrice} senza prezzo</span>` : ''}${belowMin ? ` · <span class="ko">${belowMin} sotto il minimo d'ordine</span>` : ''}</small><ul>${parts.join('')}</ul></div>`;
+    ob.innerHTML = `<div><b>${lines.length} ${lines.length === 1 ? 'riga' : 'righe'} · ${nSup} ${nSup === 1 ? 'fornitore' : 'fornitori'} · ${eur(tot)}</b> <small class="status">IVA esclusa${noPrice ? ` · <span class="ko">${noPrice} senza prezzo</span>` : ''}${belowMin ? ` · <span class="ko">${belowMin} sotto il minimo d'ordine</span>` : ''}</small><ul>${parts.join('')}</ul></div>`
+      + (noPrice ? `<label class="status" style="display:block;margin:4px 0"><input type="checkbox" id="sup-tbc"> I prezzi mancanti li confermo con il fornitore (<b>prezzo da confermare</b>): l'ordine parte senza prezzo su quelle righe</label>` : '');
     const note = document.createElement('input'); note.type = 'text'; note.placeholder = 'Nota per il fornitore (facoltativa)'; note.className = 'sp'; note.setAttribute('aria-label', 'Nota per il fornitore');
     const go = document.createElement('button'); go.type = 'button'; go.className = 'btn'; go.textContent = nSup === 1 ? 'Crea ordine' : `Crea ${nSup} ordini`;
     const clr = document.createElement('button'); clr.type = 'button'; clr.className = 'btn sec'; clr.textContent = 'Svuota';
     clr.onclick = () => { ORDER.clear(); renderList(); renderOrderBar(); };
     go.onclick = () => act(go, async () => {
+      // v0.99 (audit B-18): a line without a price needs «prezzo da confermare»; before creating, every line and the total per supplier
+      const tbc = !!(ob.querySelector('#sup-tbc') || {}).checked;
+      if (noPrice && !tbc) { toast(`${noPrice} ${noPrice === 1 ? 'riga è' : 'righe sono'} senza prezzo: scrivi il prezzo toccando il fornitore, oppure spunta «prezzo da confermare»`, 'err'); return false; }
       if (belowMin && !confirm(`${belowMin} ${belowMin === 1 ? 'riga è' : 'righe sono'} sotto il minimo d'ordine del fornitore. Creare comunque?`)) return false;
+      const recap = Object.entries(by).map(([sid, ls]) => { let sub = 0;
+        const rows = ls.map(l => { const s2 = supsOf(l.it).find(x => x.supplier_id === sid), pr = s2 && s2.price_eur != null ? Number(s2.price_eur) : null; if (pr != null) sub += l.qty * pr;
+          return `  ${qtyTxt(l.qty, l.it.unit)} ${l.it.name} × ${pr != null ? price(pr) : 'prezzo da confermare'}${pr != null ? ' = ' + eur(l.qty * pr) : ''}`; });
+        const tbcHere = ls.some(l => { const s2 = supsOf(l.it).find(x => x.supplier_id === sid); return !s2 || s2.price_eur == null; });
+        return `${supName(sid)}: ${eur(sub)}${tbcHere ? ' + prezzi da confermare' : ''}${sub > PO_LIMIT || !W || tbcHere ? ' → aspetta l\'approvazione in Oggi' : ''}\n${rows.join('\n')}`; }).join('\n\n');
+      if (!confirm(`Creare ${nSup === 1 ? 'l\'ordine' : nSup + ' ordini'}? Controlla quantità e prezzi (la virgola!):\n\n${recap}\n\nTotale ${eur(tot)} IVA esclusa.`)) return false;
       const made = [];
       for (const [sid, ls] of Object.entries(by)) {
-        const { data, error } = await sb.rpc('create_manual_po', { p_supplier_id: sid, p_lines: ls.map(l => ({ product_id: l.it.id, qty: l.qty })), p_notes: note.value.trim() || null });
-        if (error) { if (made.length) { LAST_MADE = made; toast(`Creati ${made.join(', ')}; errore con ${supName(sid)}`, 'err'); } throw error; }
-        made.push(data.po_number); ls.forEach(l => ORDER.delete(l.it.id));
+        const { data, error } = await sb.rpc('create_manual_po', { p_supplier_id: sid, p_lines: ls.map(l => ({ product_id: l.it.id, qty: l.qty, ...(tbc ? { price_tbc: true } : {}) })), p_notes: note.value.trim() || null });
+        if (error) { if (made.length) { LAST_MADE = made; toast(`Creati ${made.map(m => m.po).join(', ')}; errore con ${supName(sid)}`, 'err'); } throw error; }
+        made.push({ po: data.po_number, status: data.status }); ls.forEach(l => ORDER.delete(l.it.id));
       }
       LAST_MADE = made;
       await load();
       return made;
-    }, made => `${made.length === 1 ? 'Creato' : 'Creati'} ${made.join(', ')}`);
+    }, made => `${made.length === 1 ? 'Creato' : 'Creati'} ${made.map(m => m.po).join(', ')}${made.some(m => m.status === 'pending_approval') ? ' · da approvare in Oggi' : ''}`);
     const r = document.createElement('div'); r.className = 'sup-l2'; r.append(note, go, clr); ob.append(r);
   }
 

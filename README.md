@@ -12,10 +12,52 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
-- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield).
+- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield, and for v0.99: the lot label at the start).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
+
+## Audit office decisions and undo (v0.99)
+The «office decisions and undo» items of the 12/10/2026 audit, plus A-02 (project doc `claude/audit-fixes-v099-2026-10-13.md`).
+Migrations `v099a` (approvals: decide, undo, deadlines, milk plan, DOP declaration, posts) and `v099b` (orders, wholesale forecast,
+recipes, holds and NCs, B2B prices); live apply: `tools/go-live/live-apply/2026-10-13_v099_sql-editor.sql` (built by
+`make_v099_script.py`; database first, then the `trade-portal` function, then the site); tablet sw `perla-v67`; wholesale theme
+`shopify-theme-trade/assets/trade.js`.
+- **FIX · milk plans:** a milk plan approved by a person in the Console never reached `milk_plans` (the sync trigger ran with the
+  person's rights and had no UPDATE policy): the farm page never showed it. The trigger runs as definer now, and the migration
+  repairs plans stuck at «proposed» after a decision.
+- **D-24 · a decision stays decided:** a trigger refuses changing a decided request (except through «Annulla»), approving after
+  the deadline, and rewriting who decided; every change is a line in `approvals.history`. The browser no longer updates
+  `approvals` itself: `decide_approval()` (profile, notes a recall or a DOP declaration need, signer from the login),
+  `revoke_approval()`, `dop_declaration_sent()`.
+- **B-12 · Console → Oggi:** cards by urgency, consequence-naming questions (milk, DOP, recall), «Decise di recente» (7 days)
+  with «Annulla» while it can still be undone (`approval_undo_block()` says why not: farm already saw it, order sent, posts out,
+  a newer order for the same items…).
+- **B-09 · milk plan:** the card shows capacity, farm supply, minimum run and history as facts; «Approva con … kg» (capacity
+  checked, above the farm's kg it asks); after «Rifiuta», «Ordina di nuovo» (`milk_order_again`).
+- **B-11 · DOP declaration:** «Approva i dati» needs the checks ticked (or a note); it stays «da inviare» with print/PDF
+  (`consorzio.html`) and CSV until «Segna inviata» with date and protocol, which closes the monthly task.
+- **E-10 / E-12 / E-11 · automatic approvals and deadlines:** the bots say when a request approves itself (`auto_approve_at`);
+  an automatic approval posts a line and a push with how to undo it; promo posts approved automatically stay «in revisione».
+  Deadlines run every 10 minutes (`expire_approvals()`); an expired card is grey without «Approva», and an expired milk plan
+  pushes «nessun latte ordinato».
+- **B-13 · posts:** a post edited while in review refreshes its approval card; the card shows date, picture and a link.
+- **B-18 · catalogue orders:** confirmation with every line and total; a line without a price needs «prezzo da confermare»
+  and then always waits for a person; above `approve.auto_po_max_eur` or from a «registra» profile the order waits in Oggi; the
+  creator is stored; «Annulla ordine» with a reason (`cancel_po`), with the message for the supplier when it was already sent.
+- **B-19 · wholesale:** the old «Ordini fissi» grid is gone; the 7-day milk forecast and the Vendite numbers read the Ingrosso plans.
+- **B-15 / B-16 · recipes and presets:** «Togli» asks and ends a component from tomorrow (at once if it was put in today),
+  «Rimetti» the same day; a removed row can't be saved back. Preset targets take «94,5»; «Togli» on a step asks.
+- **B-06 · holds and NCs:** a lot is not released while its recall assessment is open, nor after a recall was decided; the
+  release names the conforming analysis of that lot (checked by the database) or a written reason; an NC closes only with its
+  corrective action; closed NCs (30 days) can be reopened.
+- **B-21 / B-22 / B-23 / B-24 · Ingrosso:** exception form with labels and only the fields the type needs; «Invia a Shopify» shows
+  what changes first (`prices-preview`) and sends rules and breaks in one all-or-nothing Shopify update (`prices.ts`, unit
+  tests in `prices_test.ts`); «da inviare» marks per product and tier; a tier is a price or a discount, never € 0; stop buttons
+  apart and asked. **TRADE-06:** «Pausa senza data» in the portal asks, naming the first date, and the office gets a dashboard line.
+- **A-02 · lot label:** after «Inizio lotto» the tablet offers the label of the lot in progress, to put on the vat and scan.
+- Tests: `prod-test/test_audit_office.sql` 70/70, `tablet-test/office_e2e.py` 42/42, `supabase/functions/trade-portal/prices_test.ts`
+  9/9; every other suite passes on a fresh database.
 
 ## Audit numbers and limits (v0.98)
 The «numbers and limits» items of the 12/10/2026 audit (project doc `claude/audit-fixes-v098-2026-10-13.md`). Migrations

@@ -1436,7 +1436,7 @@
     }
     const left = [...mergeSteps(doses, start.filter(st => !doneIds.has(st.step_id))), ...make.filter(st => !doneIds.has(st.step_id))];
     if (!left.length) return stepBatchEnd(b);
-    runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona di nuovo l\'etichetta sul tank'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
+    runDosing(`Lavorazione ${b.batch_lot}`, b.batch_lot, left, async () => { toast('Lavorazione registrata ✓ · a fine lotto scansiona l\'etichetta del lotto'); }, { skippable: true, onSkipAll: () => stepBatchEnd(b) });
   }
   // v0.97 (audit A-29): was the pasteuriser check «NON ok» earlier today? (then an «Ok» needs a note: what was done)
   async function valveKoToday() {
@@ -1557,9 +1557,16 @@
       const pr = out && out[4 + (askValve ? 1 : 0)];
       if (pastIn.required && ccpOut('CCP-PAST', val('past')))               // CCP 2 out of limit: the lot is held — said now, the work goes on
         await ask({ danger: true, title: `⚠ NON CONFORMITÀ · CCP 2: lotto ${batchLot} BLOCCATO`, lines: ['Non si vende finché il responsabile HACCP non lo sblocca (riceve l\'avviso).', 'Cosa fare adesso: ' + ((pr && pr.corrective_it) || (refStore()['cp_CCP-PAST'] || {}).corrective_it || 'avvisa il responsabile HACCP.')], yes: 'Ho capito', no: null });
+      // v0.99 (audit A-02): the lot gets its own label at the start, for the vat or the curd tray: from now on the lot is scanned on
+      // its label (LOT:L…-A), not on the milk tank shared by every vat of that delivery
+      const pName = ((prodSel.selectedOptions && prodSel.selectedOptions[0]) || {}).textContent || 'Lotto';
+      const started = () => { toast('Lotto ' + batchLot + ' avviato ✓ · stampa l\'etichetta del lotto');
+        return showDone(`✓ Lotto ${batchLot} avviato`, [`${fmtKg(kg)} kg di latte · ${pName}`,
+          'Stampa l\'etichetta del lotto e attaccala alla caldaia (poi al vassoio della cagliata): per continuare la lavorazione e a fine lotto scansiona questa etichetta, non quella del tank del latte.'],
+          [['🖨 Stampa etichetta lotto in lavorazione', labelUrl(batchLot, pName + ' · in lavorazione', 'avviato ' + ddmm(paper ? pb.day() : today()) + ' alle ' + hhmm(paper ? pb.iso() : new Date().toISOString()), 1)]]); };
       const steps = mergeSteps(await doseSteps(product, 'start', { milk: kg }), processSteps(presets, preset, 'start'));
-      if (!steps.length) { toast('Lotto ' + batchLot + ' avviato ✓'); return; }
-      runDosing(`Avvio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => toast('Lotto ' + batchLot + ' avviato ✓ · scansiona di nuovo il lotto per la lavorazione'), { at: paper ? pb.iso() : null });
+      if (!steps.length) return started();
+      runDosing(`Avvio ${batchLot} · ${kg} kg latte`, batchLot, steps, async () => started(), { at: paper ? pb.iso() : null });
       return 'stay';
     });
   }
@@ -2098,7 +2105,7 @@
     $('d-ok').onclick = () => { if (!ready()) return; if (k >= steps.length) return finish(); const s = steps[k]; if (s.kind === 'process' && s.ccp) { $('d-alt').style.display = 'block'; $('d-alt-in').focus(); return; }
       next(s.kind === 'process' ? (s.metric === 'none' ? s.target : null) : s.qty); };
     $('d-diff').onclick = () => { if (!ready()) return; $('d-alt').style.display = 'block'; $('d-alt-in').focus(); };
-    $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona di nuovo l\'etichetta del tank o del lotto per continuare da qui', 'ok', 5000); show('home'); loadTasks(); };
+    $('d-pause').onclick = () => { toast('I passi confermati sono salvati: scansiona l\'etichetta del lotto (o tocca il lotto in Home) per continuare da qui', 'ok', 5000); show('home'); loadTasks(); };
     $('d-skip').onclick = () => { if (!ready()) return; if (steps[k] && steps[k].kind === 'process' && steps[k].ccp) return toast('Punto critico: non si salta, scrivi il valore misurato', 'err'); k++; if (k < steps.length) return render(); if (opts.onSkipAll && steps.every(st => st.kind === 'process')) { $('form').innerHTML = ''; return opts.onSkipAll(); } return finish(); };
     $('d-alt-ok').onclick = async () => {
       if (!ready()) return;

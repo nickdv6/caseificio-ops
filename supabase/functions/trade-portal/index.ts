@@ -11,6 +11,9 @@
 //   POST ?action=reject   { application_id, note }     → staff: fabula.trade_reject
 //   POST ?action=link     { party_id }                 → staff: (re)create the Shopify link for an already-approved customer
 //   POST ?action=sync-prices                           → staff: push trade_products prices + delivery-basis tiers to the Shopify B2B price list
+//                                                        (v0.99: a full replace against what the list holds: products out of the list and tiers
+//                                                        switched off are removed too)
+//   POST ?action=prices-preview                        → staff: the changes sync-prices would make (product, Shopify now → new), nothing written
 //   POST ?action=run-queue                             → header x-trade-secret = setting trade.job_secret (pg_cron) or staff JWT: every pending
 //                                                        booked delivery becomes a Shopify B2B draft order for the company location, completed on
 //                                                        net terms (paymentPending). Result written back with fabula.trade_queue_result.
@@ -23,6 +26,7 @@
 // database side still works and the answers say what is left to do by hand ("shopify": "not_configured").
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { money, planFrom } from "./prices.ts";
 
 const SHOP = Deno.env.get("SHOPIFY_SHOP") ?? "pxssjd-cq.myshopify.com";
 const STATIC_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
@@ -111,7 +115,7 @@ async function ensureCompany(app: Record<string, string | null>, termsDays: numb
         name: `${app.business_name} · ${app.city ?? "sede"}`, locale: "it", phone: e164(app.phone) ?? undefined, taxRegistrationId: app.piva ? `IT${app.piva.replace(/^IT/i, "")}` : undefined,
         billingSameAsShipping: true,
         shippingAddress: { address1: app.address ?? "-", city: app.city ?? "Agropoli", zip: app.postcode ?? undefined, zoneCode: app.province ?? "SA", countryCode: "IT", recipient: app.business_name, phone: e164(app.phone) ?? undefined },
-        buyerExperienceConfiguration: { paymentTermsTemplateId: tmpl?.id, checkoutToDraft: false, editableShippingAddress: false },
+        buyerExperienceConfiguration: { paymentTermsTemplateId: tmpl ? tmpl.id : undefined, checkoutToDraft: false, editableShippingAddress: false },
       },
     },
   });
@@ -184,41 +188,68 @@ async function runQueue() {
 }
 
 // ---------- prices → Shopify price list ----------
-async function syncPrices() {
-  const db = admin();
-  const [{ data: prods, error: e1 }, { data: tiers, error: e2 }, { data: sett }] = await Promise.all([
-    db.from("trade_products").select("*").eq("active", true), db.from("trade_price_tiers").select("*").eq("active", true), db.rpc("trade_settings"),
+// v0.99 (audit B-22/B-23): the push is computed against what the price list holds now (read from Shopify), shown first
+// («prices-preview»: product, Shopify now → new) and then sent: a product taken out of the list or without a reserved price
+// loses its fixed price and its quantity rule; price breaks are replaced, so a tier switched off (or the basis moved to «week»)
+// disappears from Shopify instead of staying there. What is sent respects Shopify's own rules (minimum a multiple of the
+// increment, a break at or above the minimum and a multiple of the increment, one break per quantity: the cheapest).
+async function readPriceList(priceListId: string) {
+  const prices = new Map<string, { price: string; breaks: { id: string; min: number; price: string }[] }>();
+  let after: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const d = await gql(`query($id: ID!, $after: String) { priceList(id: $id) { prices(first: 100, after: $after, originType: FIXED) { pageInfo { hasNextPage endCursor } nodes { variant { id } price { amount } quantityPriceBreaks(first: 20) { nodes { id minimumQuantity price { amount } } } } } } }`, { id: priceListId, after });
+    const c = d.priceList?.prices; if (!c) throw new Error("listino Shopify non trovato (trade.shopify_price_list_id)");
+    for (const n of c.nodes) prices.set(n.variant.id, { price: money(n.price.amount), breaks: (n.quantityPriceBreaks?.nodes ?? []).map((b: any) => ({ id: b.id, min: Number(b.minimumQuantity), price: money(b.price.amount) })) });
+    if (!c.pageInfo.hasNextPage) break; after = c.pageInfo.endCursor;
+  }
+  const rules = new Map<string, { min: number; inc: number }>();
+  const r = await gql(`query($id: ID!) { priceList(id: $id) { quantityRules(first: 100) { nodes { minimum increment productVariant { id } } } } }`, { id: priceListId });
+  for (const n of r.priceList?.quantityRules?.nodes ?? []) rules.set(n.productVariant.id, { min: Number(n.minimum), inc: Number(n.increment) });
+  return { prices, rules };
+}
+async function planPrices() {
+  const db = admin(), readAt = new Date().toISOString();
+  const [{ data: prods, error: e1 }, { data: tiers, error: e2 }, { data: sett }, { data: plRow }] = await Promise.all([
+    db.from("trade_products").select("*").order("sort"), db.from("trade_price_tiers").select("*"), db.rpc("trade_settings"),
+    db.from("settings").select("value").eq("key", "trade.shopify_price_list_id").maybeSingle(),
   ]);
   if (e1) throw e1; if (e2) throw e2;
   const s = (sett ?? {}) as Record<string, any>;
-  const { data: plRow } = await db.from("settings").select("value").eq("key", "trade.shopify_price_list_id").maybeSingle();
   const priceListId = plRow?.value; if (!priceListId) throw new Error("manca trade.shopify_price_list_id");
-  const prices = (prods as any[]).filter((p) => p.trade_price_eur != null).map((p) => ({ variantId: p.variant_id, price: { amount: Number(p.trade_price_eur).toFixed(2), currencyCode: "EUR" } }));
-  const d = await gql(`mutation($id: ID!, $prices: [PriceListPriceInput!]!) { priceListFixedPricesAdd(priceListId: $id, prices: $prices) { prices { variant { id } } userErrors { field message } } }`, { id: priceListId, prices });
-  const ue = userErr(d.priceListFixedPricesAdd); if (ue) throw new Error("priceListFixedPricesAdd: " + ue);
-  // quantity rules (min / step) + native price breaks only when tiers are per delivery (Shopify computes them per order line)
-  const rules = (prods as any[]).map((p) => ({ variantId: p.variant_id, minimum: Math.max(1, Math.round(Number(p.min_qty))), increment: Math.max(1, Math.round(Number(p.step_qty))) }));
-  const r = await gql(`mutation($id: ID!, $rules: [QuantityRuleInput!]!) { quantityRulesAdd(priceListId: $id, quantityRules: $rules) { userErrors { field message } } }`, { id: priceListId, rules });
-  const ue2 = userErr(r.quantityRulesAdd); if (ue2) throw new Error("quantityRulesAdd: " + ue2);
-  let breaks = 0;
-  if (s.tier_basis === "delivery") {
-    const toAdd: Record<string, unknown>[] = [];
-    for (const p of prods as any[]) {
-      if (p.trade_price_eur == null) continue;
-      for (const t of tiers as any[]) {
-        if (t.variant_id && t.variant_id !== p.variant_id) continue;
-        const price = t.price_eur != null ? Number(t.price_eur) : Number(p.trade_price_eur) * (1 - Number(t.discount_pct) / 100);
-        toAdd.push({ variantId: p.variant_id, minimumQuantity: Math.max(1, Math.round(Number(t.min_qty) / Number(p.kg_per_unit || 1))), price: { amount: price.toFixed(2), currencyCode: "EUR" } });
-      }
+  const cur = await readPriceList(priceListId);
+  const plan = planFrom(prods as any[], tiers as any[], s.tier_basis, cur);
+  return { priceListId, basis: s.tier_basis, readAt, ...plan, tierIds: (tiers as any[]).map((t) => t.id) };
+}
+async function syncPrices() {
+  const db = admin(), P = await planPrices(), at = new Date().toISOString();
+  // what was sent becomes «inviato» (a change made during the push stays «da inviare»): products, then the tiers read for this push
+  const markSent = async (all: boolean) => {
+    for (const [v, x] of Object.entries(P.sent)) {
+      await db.from("trade_products").update(all ? { synced_at: at, synced_price_eur: x.price, synced_min_qty: x.min, synced_step_qty: x.step, synced_active: x.active }
+                                               : { synced_price_eur: x.price }).eq("variant_id", v);
     }
-    if (toAdd.length) {
-      const b = await gql(`mutation($id: ID!, $add: [QuantityPriceBreakInput!]!) { quantityPricingByVariantUpdate(priceListId: $id, input: { quantityPriceBreaksToAdd: $add, quantityPriceBreaksToDelete: [], quantityRulesToAdd: [], quantityRulesToDeleteByVariantId: [], pricesToAdd: [], pricesToDeleteByVariantId: [] }) { userErrors { field message } } }`, { id: priceListId, add: toAdd });
-      const ue3 = userErr(b.quantityPricingByVariantUpdate); if (ue3) throw new Error("quantityPricingByVariantUpdate: " + ue3);
-      breaks = toAdd.length;
+    if (all && P.tierIds.length) await db.from("trade_price_tiers").update({ synced_at: at }).in("id", P.tierIds).lte("changed_at", P.readAt);
+  };
+  // 1. new or changed fixed prices (an upsert: on its own it never removes anything)
+  if (P.pricesToAdd.length) {
+    const d = await gql(`mutation($id: ID!, $prices: [PriceListPriceInput!]!) { priceListFixedPricesAdd(priceListId: $id, prices: $prices) { prices { variant { id } } userErrors { field message } } }`, { id: P.priceListId, prices: P.pricesToAdd });
+    const ue = userErr(d.priceListFixedPricesAdd); if (ue) throw new Error("Prezzi non inviati: " + ue);
+  }
+  // 2. everything else in ONE quantityPricingByVariantUpdate: Shopify runs the deletes before the adds and applies all or
+  //    nothing, so a refused break never leaves a product without its breaks or its rule
+  if (P.pricesToDelete.length || P.rulesToDelete.length || P.rulesToAdd.length || P.breaksToDelete.length || P.breaksToAdd.length) {
+    const b = await gql(`mutation($id: ID!, $input: QuantityPricingByVariantUpdateInput!) { quantityPricingByVariantUpdate(priceListId: $id, input: $input) { userErrors { field message } } }`,
+      { id: P.priceListId, input: { pricesToAdd: [], pricesToDeleteByVariantId: P.pricesToDelete, quantityRulesToDeleteByVariantId: P.rulesToDelete, quantityRulesToAdd: P.rulesToAdd,
+                                    quantityPriceBreaksToDelete: P.breaksToDelete, quantityPriceBreaksToAdd: P.breaksToAdd } });
+    const ue = userErr(b.quantityPricingByVariantUpdate);
+    if (ue) {
+      if (P.pricesToAdd.length) await markSent(false);
+      throw new Error(`${P.pricesToAdd.length ? "Prezzi inviati; " : ""}scaglioni e minimi NON inviati (Shopify non ha cambiato niente): ${ue}`);
     }
   }
-  await db.from("trade_products").update({ synced_at: new Date().toISOString() }).eq("active", true);
-  return { prices: prices.length, rules: rules.length, price_breaks: breaks, basis: s.tier_basis };
+  await markSent(true);
+  return { prices: P.pricesToAdd.length, rules: P.rulesToAdd.length, price_breaks: P.breaksToAdd.length, removed: P.pricesToDelete.length,
+           breaks_removed: P.breaksToDelete.length, changes: P.changes.length, basis: P.basis };
 }
 
 // ---------- staff gate ----------
@@ -259,7 +290,7 @@ Deno.serve(async (req: Request) => {
       return json(data);
     }
     // ----- staff -----
-    if (req.method === "POST" && ["approve", "reject", "link", "sync-prices"].includes(action)) {
+    if (req.method === "POST" && ["approve", "reject", "link", "sync-prices", "prices-preview"].includes(action)) {
       const lvl = await staffLevel(req);
       if (lvl < 3) return json({ error: "serve il livello Gestisce in Vendite" }, 403);
       const user = asUser(req), db = admin();
@@ -270,6 +301,10 @@ Deno.serve(async (req: Request) => {
       }
       if (action === "sync-prices") {
         try { return json(await syncPrices()); } catch (e) { const m = (e as Error).message; return m === "not_configured" ? json({ shopify: "not_configured" }, 503) : json({ error: m }, 502); }
+      }
+      if (action === "prices-preview") {        // v0.99 (audit B-22): what «Invia a Shopify» would change, read from the price list now
+        try { const P = await planPrices(); return json({ basis: P.basis, changes: P.changes, prices: P.pricesToAdd.length, removed: P.pricesToDelete.length }); }
+        catch (e) { const m = (e as Error).message; return m === "not_configured" ? json({ shopify: "not_configured" }, 503) : json({ error: m }, 502); }
       }
       let app: Record<string, any>, partyId: string, token: string, approved: Record<string, any> | null = null;
       if (action === "approve") {

@@ -9,7 +9,7 @@
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
   document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
-  let staff = null, isManager = false, FORMS = {};
+  let staff = null, isManager = false, FORMS = {}, SAMPLES = [];
   const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
   // MOD-xx chip → printable register of that form (Manuale di Autocontrollo §11). '§8.2' chips point to the manual itself.
   const modChip = code => { const f = FORMS[code]; if (!f) return ''; return `<a class="modref" href="registro.html?mod=${esc(code)}" target="_blank" rel="noopener" title="${esc(f.title_it)} · registro stampabile">${esc(code)} · ${esc(f.manual_section)}</a>`; };
@@ -86,10 +86,11 @@
   // ---------- load everything ----------
   async function load() {
     const since7 = new Date(Date.now() - 7 * 864e5).toISOString();
-    const [plan, holds, ncs, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual] = await Promise.all([
+    const [plan, holds, ncs, ncsClosed, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual] = await Promise.all([
       sb.from('v_haccp_plan').select('*'),
       sb.from('v_lots_on_hold').select('*'),
       sb.from('non_conformities').select('id, opened_at, severity, status, description, lot_number, corrective_action, root_cause, preventive_action').in('status', ['open', 'investigating']).order('opened_at', { ascending: false }),
+      sb.from('non_conformities').select('id, opened_at, closed_at, severity, description, lot_number, corrective_action, closed_by:staff!non_conformities_closed_by_id_fkey(full_name)').eq('status', 'closed').gte('closed_at', new Date(Date.now() - 30 * 864e5).toISOString()).order('closed_at', { ascending: false }),
       sb.from('haccp_log').select('id, logged_at, created_at, measured_value, result, operator, corrective_action, correction_note, source, haccp_control_points(code, ccp_no, name, unit, form_code), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
       sb.from('v_lab_plan_status').select('*'),
       sb.from('v_lab_samples_recent').select('*').limit(80),
@@ -103,12 +104,13 @@
       sb.rpc('haccp_forms_status'),
       sb.from('settings').select('key, value').like('key', 'food.manuale_%')
     ]);
-    [plan, holds, ncs, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual].forEach((r, i) => { if (r.error) toast('Lettura dati: ' + r.error.message, 'err'); });
+    [plan, holds, ncs, ncsClosed, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual].forEach((r, i) => { if (r.error) toast('Lettura dati: ' + r.error.message, 'err'); });
+    SAMPLES = samples.data || [];
     FORMS = Object.fromEntries((forms.data || []).map(f => [f.code, f]));
     renderManual(Object.fromEntries((manual.data || []).map(r => [r.key, r.value])));
     renderForms(forms.data || []);
     renderTiles(holds.data || [], ncs.data || [], samples.data || [], matrix.data || [], instr.data || [], lab.data || []);
-    renderHolds(holds.data || []); renderNcs(ncs.data || []); renderLogs(logs.data || []); loadProdRecords();
+    renderHolds(holds.data || []); renderNcs(ncs.data || []); renderNcsClosed(ncsClosed.data || []); renderLogs(logs.data || []); loadProdRecords();
     renderPlan(plan.data || []);
     renderLab(lab.data || []); renderSamples(samples.data || []);
     renderStations(stations.data || []); renderInspections(insp.data || []);
@@ -198,10 +200,35 @@
       <tr><td class="nw"><b>${esc(r.batch_lot)}</b><br><small>${fmtD(r.batch_date)}</small></td><td>${esc(r.product)}</td><td>${esc(r.hold_reason)}</td><td class="num">${num(r.kg_on_hand)} kg</td>
       <td class="num ${r.kg_sold > 0 ? 'ko' : ''}">${num(r.kg_sold)} kg</td><td>${isManager ? `<button class="btn sm sec" data-release="${esc(r.batch_lot)}">Sblocca…</button>` : ''}</td></tr>`).join('')}</table>
       ${rows.some(r => r.kg_sold > 0) ? '<div class="hint ko" style="margin-top:6px">Parte del lotto è già uscita: valuta ritiro/richiamo con il consulente (tracciabilità nella simulazione di richiamo).</div>' : ''}`;
+    // v0.99 (audit B-06): the release shows why the lot is held, what already went out, its NC and the recall decision; the reason
+    // is an analysis of that lot (picked, checked by the database) or the consultant's assessment, never a bare «ok»
     $('holds').querySelectorAll('[data-release]').forEach(b => b.onclick = async () => {
-      const note = prompt(`Motivo dello sblocco del lotto ${b.dataset.release} (es. analisi conforme n. …, valutazione del consulente):`);
-      if (!note) return;
-      fail(await sb.rpc('release_lot_hold', { p_lot: b.dataset.release, p_staff_id: staff.id, p_note: note }), 'Sblocco'); toast('Lotto sbloccato'); load();
+      const lot = b.dataset.release, r = rows.find(x => x.batch_lot === lot) || {};
+      const [nc, rc] = await Promise.all([
+        r.hold_nc_id ? sb.from('non_conformities').select('description, status, corrective_action').eq('id', r.hold_nc_id).maybeSingle() : Promise.resolve({ data: null }),
+        sb.from('approvals').select('status, decided_by, decided_at, decision_note').eq('kind', 'other').eq('payload->>type', 'recall_assessment').eq('payload->>lot', lot).order('requested_at', { ascending: false }).limit(1)]);
+      const n = nc.data, rec = (rc.data || [])[0], ok = SAMPLES.filter(x => String(x.lot_number || '').toUpperCase() === lot && x.outcome === 'conforme');
+      if (rec && rec.status === 'pending') return toast(`Prima decidi la valutazione di ritiro/richiamo del lotto ${lot} (Console → Oggi): finché è aperta il lotto resta bloccato`, 'err');
+      if (rec && rec.status === 'approved') return toast(`Per il lotto ${lot} è stato deciso il ritiro/richiamo (${rec.decided_by || '?'}${rec.decided_at ? ', ' + fmtDT(rec.decided_at) : ''}): non si sblocca. Il prodotto in giacenza va smaltito o reso come da procedura di ritiro`, 'err');
+      const v = await ask(`Sblocco del lotto ${lot}`,
+        `<div class="hint"><b>Bloccato per:</b> ${esc(r.hold_reason || '—')}<br>${num(r.kg_on_hand)} kg in giacenza · <span class="${r.kg_sold > 0 ? 'ko' : ''}">${num(r.kg_sold)} kg già venduti</span>
+          ${n ? `<br><b>NC:</b> ${esc(n.description)} (${esc(n.status)})${n.corrective_action ? ' · azione: ' + esc(n.corrective_action) : ''}` : ''}
+          ${rec ? `<br><b>Ritiro/richiamo:</b> non necessario, deciso da ${esc(rec.decided_by || '')}${rec.decision_note ? ' · ' + esc(rec.decision_note) : ''}` : ''}</div>
+         <label style="margin-top:8px">Perché si sblocca</label>
+         <label class="chk"><input type="radio" name="rl-k" value="lab" ${ok.length ? '' : 'disabled'}> Analisi conforme di questo lotto ${ok.length ? '' : '<small>(nessun esito conforme registrato)</small>'}</label>
+         ${ok.length ? `<select id="rl-s" style="margin-left:24px">${ok.map(x => `<option value="${esc(x.sample_code)}">${esc(x.sample_code)} · ${esc(x.analyte_it || x.test_code || '')} · referto ${esc(x.report_no || '')} ${fmtD(x.report_date)}</option>`).join('')}</select>` : ''}
+         <label class="chk"><input type="radio" name="rl-k" value="cons"> Valutazione del consulente / responsabile HACCP</label>
+         <label class="chk"><input type="radio" name="rl-k" value="other"> Altro motivo</label>
+         <label style="margin-top:8px">Spiegazione (resta nel registro MOD-13)</label><textarea id="rl-note" rows="3" style="width:100%" placeholder="es. riesame del consulente del 14/10: temperatura dovuta alla sonda, prodotto conforme"></textarea>`,
+        'Sblocca il lotto', () => {
+          const k = (document.querySelector('input[name=rl-k]:checked') || {}).value, note = $('rl-note').value.trim();
+          if (!k) throw new Error('Scegli perché si sblocca');
+          if (k !== 'lab' && note.length < 10) throw new Error('Scrivi la spiegazione (almeno una frase)');
+          const pre = k === 'cons' ? 'valutazione del consulente/responsabile' : k === 'other' ? 'altro motivo' : '';
+          return { sample: k === 'lab' ? $('rl-s').value : null, note: [pre, note].filter(Boolean).join(': ') || 'esito conforme' };
+        });
+      if (!v) return;
+      fail(await sb.rpc('release_lot_hold', { p_lot: lot, p_staff_id: staff.id, p_note: v.note, p_sample_code: v.sample }), 'Sblocco'); toast(`Lotto ${lot} sbloccato`); load();
     });
   }
   // v0.77: recall drill from the console (MOD-14) — writes a recall_drills row, shows the trace
@@ -218,6 +245,16 @@
       toast('Prova di richiamo registrata');
     } finally { $('rc-run').disabled = false; }
   };
+  // v0.99 (audit B-06): closed NCs stay visible for 30 days and can be reopened (a wrong closing is not a dead end)
+  function renderNcsClosed(rows) {
+    const box = $('ncs-closed'); if (!box) return;
+    box.innerHTML = rows.length ? `<table><tr><th>Chiusa</th><th>NC</th><th>Azione correttiva</th><th></th></tr>${rows.map(n => `<tr><td class="nw">${fmtDT(n.closed_at)}<br><small>${esc((n.closed_by || {}).full_name || '')}</small></td><td>${esc(n.description)}${n.lot_number ? ` <small>· lotto ${esc(n.lot_number)}</small>` : ''}</td><td>${esc(n.corrective_action || '')}</td><td>${isManager ? `<button class="btn sm sec" data-reopen="${n.id}">Riapri</button>` : ''}</td></tr>`).join('')}</table>` : '<div class="empty">Nessuna NC chiusa negli ultimi 30 giorni.</div>';
+    box.querySelectorAll('[data-reopen]').forEach(b => b.onclick = async () => {
+      if (!confirm('Riaprire questa non conformità? Torna tra le NC aperte, con le note che ha.')) return;
+      b.disabled = true;
+      try { failNone(await sb.from('non_conformities').update({ status: 'investigating' }).eq('id', b.dataset.reopen).select('id'), 'NC'); toast('NC riaperta'); load(); } finally { b.disabled = false; }
+    });
+  }
   function renderNcs(rows) {
     if (!rows.length) { $('ncs').innerHTML = '<div class="empty">Nessuna non conformità aperta.</div>'; return; }
     const sev = { critical: ['critica', 'ko'], major: ['maggiore', 'warn'], minor: ['minore', ''] };

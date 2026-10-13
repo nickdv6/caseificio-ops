@@ -65,7 +65,7 @@
       ['Latte usato (7 gg)', num(t.milk_l_day_last7) + ' L/g', `${num(t.pct_of_full_volume)}% dei ${num(t.milk_l_day_full)} L della Masseria`, false],
       ['Locali in trattativa', num(S.pipeline.active_n), `≈ ${num(S.pipeline.open_kg_day, 1)} kg/g se chiusi`, S.pipeline.active_n < (S.research?.min_active_leads || 25)],
       ['Da contattare', num(due), 'oggi e domani', due > 0],
-      ['Clienti ristorazione 30 gg', num(S.accounts.active_b2b_30d), `${num(S.accounts.standing_kg_week, 1)} kg/sett. in ordini fissi`, false]];
+      ['Clienti ristorazione 30 gg', num(S.accounts.active_b2b_30d), `${num(S.accounts.standing_kg_week, 1)} kg nei piani ingrosso, prossimi 7 giorni`, false]];
     $('tiles').innerHTML = tiles.map(([l, v, d, bad]) => `<div class="tile ${bad ? 'bad' : ''}"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
     const nd = $('n-due'); nd.textContent = due || ''; nd.classList.toggle('on', !!due);
     const rows = S.channels || [];
