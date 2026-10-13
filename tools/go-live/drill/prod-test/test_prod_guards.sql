@@ -39,15 +39,19 @@ update fabula.production_batches set output_kg = 151 where batch_lot = 'LG-1';
 select pg_temp.ck('(after an edit of output_kg)', (select count(*) from fabula.bot_messages where title like 'Lotto LG-1 %') = 1);
 
 -- evening watch: an open batch and milk 50 h old with kg left
+-- v1.00 (CI): the milk is 50 h old at the 19:45 check, not 50 h before now: run after 21:45 Rome the test used to fail
+select ((now() at time zone 'Europe/Rome')::date + time '19:45') at time zone 'Europe/Rome' as t_watch,
+       ((now() at time zone 'Europe/Rome')::date + time '19:50') at time zone 'Europe/Rome' as t_watch2,
+       ((now() at time zone 'Europe/Rome')::date + time '18:45') at time zone 'Europe/Rome' as t_watch_dst \gset
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LG-3', :'moz', 400, 'milk', now(), 'tablet');
 insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
-values (((now() - interval '50 hours') at time zone 'Europe/Rome')::date, ((now() - interval '50 hours') at time zone 'Europe/Rome')::time, '10000000-0000-4000-a000-0000000000b9', 'MG-OLD', 300, true, 4, 'tablet');
-select fabula.prod_watch((current_date + time '19:45') at time zone 'Europe/Rome') w1 \gset
+values (((:'t_watch'::timestamptz - interval '50 hours') at time zone 'Europe/Rome')::date, ((:'t_watch'::timestamptz - interval '50 hours') at time zone 'Europe/Rome')::time, '10000000-0000-4000-a000-0000000000b9', 'MG-OLD', 300, true, 4, 'tablet');
+select fabula.prod_watch(:'t_watch'::timestamptz) w1 \gset
 select pg_temp.ck('19:45 Rome: open batch and old milk reported once',
   (:'w1'::jsonb->>'open_batches')::int >= 1 and (:'w1'::jsonb->>'old_milk')::int = 1
   and exists (select 1 from fabula.bot_messages where agent = 'produzione' and severity = 'warn' and body like '%LG-3%' and body like '%MG-OLD: 300 kg%'), :'w1');
-select pg_temp.ck('same evening: not posted twice', fabula.prod_watch((current_date + time '19:50') at time zone 'Europe/Rome')->>'skipped' = 'already posted');
-select pg_temp.ck('other DST slot (18:45 Rome) skips', fabula.prod_watch((current_date + time '18:45') at time zone 'Europe/Rome')->>'skipped' = 'not 19:xx in Rome');
+select pg_temp.ck('same evening: not posted twice', fabula.prod_watch(:'t_watch2'::timestamptz)->>'skipped' = 'already posted');
+select pg_temp.ck('other DST slot (18:45 Rome) skips', fabula.prod_watch(:'t_watch_dst'::timestamptz)->>'skipped' = 'not 19:xx in Rome');
 select pg_temp.ck('job scheduled; app users cannot run it',
   exists (select 1 from cron.job where jobname = 'fabula_prod_watch' and schedule = '45 17,18 * * *')
   and not has_function_privilege('authenticated', 'fabula.prod_watch(timestamptz)', 'execute'));
