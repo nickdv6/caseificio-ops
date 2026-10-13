@@ -105,3 +105,14 @@ broke the sync and task times came out at 07:45/08:45 instead of 06:45.
     farm's counts; the office notice; the farm page and its month total; MOD-01 prints both.
 
   13/10/2026: 89/89 PASS on a fresh replay and on the database built by the SQL Editor script.
+
+# Audit floor flows (v0.97)
+```
+tools/go-live/drill/infra-test/replay.sh f_test
+su postgres -c "psql -d f_test -f tools/go-live/drill/prod-test/test_audit_floor.sql" | grep -E "PASS|FAIL"
+```
+Task list (live overdue, today vs earlier, the 3-hour window, «Non fatta», 7-day close), follow-ups (cold room re-check, warm milk,
+the 5-minute Telegram push, cleaning not done), offline times through `save_ops(p_client_at)` and the register line, a step without
+a measurement keeps the pH, the next free lot letter, Italian errors, stock count against what the system holds at saving, 60 h DOP,
+paper milk date, grants. 13/10/2026: 63/63 PASS.
+

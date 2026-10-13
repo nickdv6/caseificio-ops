@@ -5,7 +5,7 @@ Scenarios: A online milk intake (one transaction) · B lost reply → re-send wr
 (milk in, batch start, dosing, process steps, close) then reconnect · D Wi-Fi up but no internet."""
 import json, subprocess, time, sys, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -88,7 +88,7 @@ with sync_playwright() as p:
     def dose_through(max_steps=40):
         n = 0
         while view() == 'v-dose' and n < max_steps:
-            pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); const m = (document.getElementById('d-instr').textContent.match(/Obiettivo ([0-9.,]+)/) || [])[1]; i.value = (m || '70').replace(',', '.'); document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(500); n += 1
+            pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); const m = (document.getElementById('d-instr').textContent.match(/Obiettivo ([0-9.,]+)/) || [])[1]; i.value = (m || '70').replace(',', '.'); document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(800); n += 1
         return n
 
     # A — online milk intake: 5 steps in one transaction
@@ -125,8 +125,9 @@ with sync_playwright() as p:
     setf({'out': 100, 'n': 1});
     if pg.evaluate("!!document.getElementById('ricyn')"): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()                           # v0.70: 100 kg from 500 kg = 20 % against 30 % expected → the tablet asks once
-    check('C far-off yield asks to confirm (offline: yield from the kept plan)', view() == 'v-form' and 'Resa 20%' in toast() and 'premi Salva di nuovo' in toast(), toast())
-    save_form(); n3 = dose_through()
+    q = answer_ask(pg, wait=0)                 # v0.97 (A-17): a question with the numbers, not «premi Salva di nuovo»
+    check('C far-off yield asks to confirm (offline: yield from the kept plan)', 'resa 20 %' in q and 'Di solito' in q, q or toast())
+    n3 = dose_through()
     queued = qlen()
     check('C nothing reached the database while offline', sql("select count(*) from fabula.milk_intake where milk_lot='"+'TE3'+RUN+"'") == '0', f'queue {queued}, close steps {n3}')
     go_on(); pg.wait_for_timeout(4000)

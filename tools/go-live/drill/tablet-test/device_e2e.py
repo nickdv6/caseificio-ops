@@ -47,8 +47,11 @@ try:
     check('tablet checked in with its label and app version', row == f'tablet-1|{SW}|1', row)
     check('the refused save reached the database in full', sql(f"select what || '|' || code from fabula.tablet_rejects where qid = '{FAILED[0]['qid']}'") == 'haccp_log|23514')
     check('and the bell (alert from Zio Tonino)', sql("select count(*) from fabula.bot_messages where agent = 'tablet' and severity = 'alert'") != '0')
-    pg.evaluate("document.getElementById('pending').click()"); pg.wait_for_timeout(300)
-    check('the pending line says it was already reported', "Già segnalate all'ufficio" in pg.evaluate("document.getElementById('toast').textContent"), pg.evaluate("document.getElementById('toast').textContent"))
+    banner = pg.evaluate("document.getElementById('rej-banner').innerText")
+    check('v0.97 (A-11): a red banner on Home says a record was NOT saved', 'NON salvata' in banner, banner)
+    pg.evaluate("document.querySelector('#rej-banner .nitem').click()"); pg.wait_for_timeout(500)
+    check('the refused-saves screen says it was already reported to the office', "L'ufficio l'ha già ricevuta" in pg.evaluate("document.getElementById('form').innerText"), pg.evaluate("document.getElementById('form').innerText")[:200])
+    pg.evaluate("document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-home'))")
     check('no update banner on the current version', pg.evaluate("document.getElementById('update-banner').style.display") == 'none')
     # a newer version is live
     sql("update fabula.infra_status set data = jsonb_build_object('sw', 'perla-v999') where key = 'github_sw'")

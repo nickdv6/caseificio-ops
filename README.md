@@ -12,10 +12,41 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
-- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96).
+- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
+
+## Audit floor flows (v0.97)
+The High items of the 12/10/2026 audit on the floor tablet (project doc `claude/audit-fixes-v097-2026-10-13.md`). Migrations
+`v097a` (tasks, follow-ups, offline times, Italian errors, lot letters) and `v097b` (stock count, 60 h DOP, paper milk date); live
+apply: `tools/go-live/live-apply/2026-10-13_v097_sql-editor.sql` (database first, then the site); tablet sw `perla-v65`.
+- **A-07 · values that reject milk or hold a lot ask first:** a red «È giusto?» with the value, the limit and the consequence
+  (cold rooms, milk arrival, 🛡 menu, paper copy, CCP 2 at the start, CCP steps, the CCPs asked at the close, the pasteuriser check).
+  After a non-conformity a card stays on screen with what to do; it no longer flashes for 2,6 s.
+- **A-15 · follow-ups are timed tasks** (`T-FOLLOW`): «ricontrolla la cella entro 1 ora» (cold room in its alert band or over its limit)
+  and «in caldaia entro 2 ore» (milk over 6 °C). Red box on top of Home with the minutes left; the next reading / the first vat closes
+  them; not done in time → Telegram (food safety, `fabula_followup_tick` every 5 minutes).
+- **A-05 · task list:** overdue shows the same day (computed in `v_tasks_open`); «Da fare oggi» is today only, earlier days apart
+  with «Non fatta…» and a reason (`skip_task`); tasks open more than 7 days are closed as not done; a check closes the task whose
+  time has come (a 10:00 re-check no longer closes the 18:00 cold-room task).
+- **A-09 · nothing to confirm without measuring:** packing weights, goods received, expiry dates, stock count lines and pest
+  stations start empty, with what was expected as the hint («✓ Ci sono N» / «Tutte OK (14)» say it explicitly).
+- **D-05 · stock count:** the adjustment is against what the system holds when the count is saved; a sheet older than 3 hours is
+  replaced; an empty line is «non contata», not «same as the system»; negative counts refused.
+- **A-11 / A-08 / D-15 · refused saves:** red banner on Home, a screen listing each one in Italian (what it was, when, why) with
+  «↻ Rifai» (opens the form with the values); records depending on a refused one (same lot, or milk that was refused) are held back
+  with it; `save_ops` explains errors in Italian. Two offline tablets with the same lot letter: the database gives the second the
+  next letter, and the tablet moves its queued steps to it and says so on Home.
+- **D-04 · offline times:** `save_ops(p_client_at)`: a check, a step or a task closed offline keeps the time it was done (≤ 7 days);
+  the register prints «inserito nel sistema alle …».
+- **A-14 / D-08 · 60 hours:** `milk_age_hours()`; milk past 60 h cannot start a DOP batch (database and tablet).
+- **A-20 · paper copy:** milk arrival, batch start and close have «Ricopio dal foglio di carta» (date, time, signer); a DDT photo taken
+  offline waits on the tablet and goes up later.
+- **Medium items in the same screens:** A-17 (questions instead of «premi Salva di nuovo»), A-18 (a double tap in dosing is ignored),
+  A-22 («Fatto (non misurato)», the curd pH is never erased), A-23 (cleaning item not done, with the reason), A-26 («Uscire senza
+  salvare?»), A-29 (pasteuriser check decided on Salva; «Ok» after a «NON ok» needs a note).
+- Tests: `prod-test/test_audit_floor.sql` 63/63, `tablet-test/floor_e2e.py` 38/38; every other suite passes on a fresh database.
 
 ## Audit Critical items (v0.96)
 The remaining Critical items of the 12/10/2026 audit (project doc `claude/audit-2026-10-12/`). Migrations `v096a` (milk, CCP,

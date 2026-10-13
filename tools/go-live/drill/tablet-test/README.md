@@ -92,5 +92,14 @@ every migration: the tests still run, after adding one milk supplier
     13/10/2026: 37/37, 11/11, 12/12. The other e2e tests now store the operator like a login (`e2e_op.py`), fill «kg pesati
     qui» when a farm load is picked, and record the start steps of batches they create in SQL (A-03 resumes them otherwise).
 
-Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
-paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.
+Last run 13/10/2026 (v0.97), fresh replay (no backup) + setup.sql + one milk supplier, in this order: pack_e2e 17/17, e2e 23/23,
+prod_e2e 13/13, audit_e2e 18/18, operator_e2e 37/37, s_items_e2e 38/38 (needs the owner row operator_e2e creates), offline_e2e 11/11,
+paper_e2e 9/9, device_e2e 9/9, farm_amend_e2e 16/16, farm_test 12/12, farm_weight_e2e 11/11, notify_fn_e2e 12/12, floor_e2e 38/38,
+guard_e2e 18/18 (last). Rerunning on the same day: delete today's T-CF1 tasks first (offline_e2e adds them at fixed times).
+
+19. `python3 floor_e2e.py` (v0.97, audit floor flows) — red «È giusto?» before an out-of-limit value (cold room, milk), the NC card,
+    the re-check as a red box with the minutes left, «Annulla» asks, cleaning item not done, «Non fatta…» on an earlier task, stock
+    count with nothing prefilled, refused saves banner + «Rifai», a dependent record held back, an offline check keeps its time,
+    two tablets with the same lot letter, a double tap in dosing ignored, 60 h DOP, milk arrival from the paper sheet.
+    Expect `FAILURES: none` (38 checks). Confirmations are now a question on screen: tests answer them with `e2e_op.answer_ask`.
+

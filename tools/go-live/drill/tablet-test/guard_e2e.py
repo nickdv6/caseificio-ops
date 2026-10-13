@@ -5,7 +5,7 @@ The day's pasteuriser check is asked at the first batch start (NON ok = no batch
 recorded asks for it at close; a fully recorded batch closes with no alert from Zio Ciro."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -78,11 +78,15 @@ try:
     check('first batch of the day: start form asks the pasteuriser check', view() == 'v-form' and has('valve'), toast())
     pg.evaluate("(() => { const s = document.getElementById('product'); const o = [...s.options].find(x => /mozzarella/i.test(x.text)); s.value = o.value; s.dispatchEvent(new Event('change')); })()")
     setf({'kg': 250, 'valve': '1'}); pg.wait_for_timeout(1500)
-    check('NON ok: batch not started, recorded as a non-conformity',
-          'NON ok' in toast() and sql(f"select count(*) from fabula.batch_milk_inputs i join fabula.milk_intake m on m.id = i.milk_intake_id where m.milk_lot = '{LOT}'") == '0'
-          and int(sql(VALVE.format('<>'))) == ko0 + 1, toast())
+    check('v0.97 (A-29): choosing «NON ok» records nothing until Salva', int(sql(VALVE.format('<>'))) == ko0 and view() == 'v-form')
+    pg.evaluate("document.getElementById('btn-form-save').click()")
+    q = answer_ask(pg, wait=500)
+    check('NON ok: batch not started, recorded as a non-conformity (after a red «È giusto?», then a card that stays)',
+          'non si pastorizza' in q and 'NON CONFORMITÀ' in pg.evaluate("document.getElementById('f-title').textContent")
+          and sql(f"select count(*) from fabula.batch_milk_inputs i join fabula.milk_intake m on m.id = i.milk_intake_id where m.milk_lot = '{LOT}'") == '0'
+          and int(sql(VALVE.format('<>'))) == ko0 + 1, q)
     home(); code('LOT:' + LOT)
-    check('after a NON ok the check is asked again', view() == 'v-form' and has('valve'))
+    check('after a NON ok the check is asked again, with a note of what was done', view() == 'v-form' and has('valve') and has('valvenote'))
     pick = lambda rx: pg.evaluate("rx => { const s = document.getElementById('product'); const o = [...s.options].find(x => new RegExp(rx, 'i').test(x.text)); s.value = o.value; s.dispatchEvent(new Event('change')); }", rx)
     # v0.95 (audit A-16): ricotta starts from a closed lot's whey, never from milk — so a test product with no preset stands in here
     check('ricotta is not offered when a vat starts from milk', not pg.evaluate("[...document.getElementById('product').options].some(o => /ricotta/i.test(o.text))"),
@@ -92,6 +96,8 @@ try:
     pick('mozzarella')
     check('preset with a pasteurisation step: no separate CCP 2 field', not has('past'), pg.evaluate("document.getElementById('preset').selectedOptions[0].text"))
     setf({'kg': 250, 'valve': '0'}); save_form()
+    check('v0.97 (A-29): «Ok» after a NON ok today needs the note', view() == 'v-form' and 'cosa è stato fatto' in toast(), toast())
+    setf({'valvenote': 'guarnizione cambiata da Nicola, provata di nuovo'}); save_form()
     st = dose_state()
     check('pasteurisation step (CCP 2) asks for the measured value: no one-tap, no skip', view() == 'v-dose' and 'astorizz' in st['name'] and st['ok'] == 'none' and st['skip'] == 'none' and st['alt'] == 'block', json.dumps(st, ensure_ascii=False))
     seen = through({'past': 72.5})
@@ -108,13 +114,13 @@ try:
         st = dose_state()
         if 'filata' in st['name'].lower() and 'CCP' in st['name']:
             stretch_seen.append(st)
-            pg.evaluate("document.getElementById('d-skip').click()"); pg.wait_for_timeout(400)
+            pg.evaluate("document.getElementById('d-skip').click()"); pg.wait_for_timeout(800)
             skipped_toast = toast()
-            pg.evaluate("v => { document.getElementById('d-alt-in').value = v; document.getElementById('d-alt-ok').click(); }", '64'); pg.wait_for_timeout(500)
+            pg.evaluate("v => { document.getElementById('d-alt-in').value = v; document.getElementById('d-alt-ok').click(); }", '64'); pg.wait_for_timeout(800)
         elif st['ok'] == 'none':
-            pg.evaluate("v => { document.getElementById('d-alt-in').value = v; document.getElementById('d-alt-ok').click(); }", '5.2'); pg.wait_for_timeout(500)
+            pg.evaluate("v => { document.getElementById('d-alt-in').value = v; document.getElementById('d-alt-ok').click(); }", '5.2'); pg.wait_for_timeout(800)
         else:
-            pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(500)
+            pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(800)
     check('stretching step (CCP 3): no one-tap, no skip ("non si salta")', len(stretch_seen) == 1 and stretch_seen[0]['ok'] == 'none' and 'non si salta' in skipped_toast, json.dumps(stretch_seen, ensure_ascii=False)[:200])
     check('stretching logged at 64 °C for the lot', sql(f"select l.measured_value from fabula.haccp_log l join fabula.haccp_control_points cp on cp.id = l.control_point_id join fabula.production_batches b on b.id = l.batch_id where cp.code = 'CCP-STRETCH' and b.batch_lot = '{lot1}'") == '64.00')
     if view() != 'v-form': home(); code('LOT:' + lot1)
@@ -122,10 +128,10 @@ try:
     setf({'out': 75, 'n': 1})
     if has('ricyn'): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()
-    if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
+    answer_ask(pg)   # v0.97: the question replaces «premi Salva di nuovo»
     for _ in range(10):
         if view() != 'v-dose': break
-        pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(450)
+        pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(800)
     time.sleep(1)
     check('fully recorded batch closed: no CCP alert from Zio Ciro', sql(f"select output_kg from fabula.production_batches where batch_lot = '{lot1}'") == '75.000'
           and sql(f"select count(*) from fabula.bot_messages where agent = 'produzione' and title like 'Lotto {lot1} chiuso senza%'") == '0')
@@ -145,10 +151,10 @@ try:
     setf({'out': 60, 'ccpv': 66, 'n': 1})
     if has('ricyn'): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()
-    if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
+    answer_ask(pg)   # v0.97: the question replaces «premi Salva di nuovo»
     for _ in range(10):
         if view() != 'v-dose': break
-        pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(450)
+        pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(800)
     time.sleep(1)
     check('saved with the close: CCP 3 = 66 °C on the lot, no alert',
           sql(f"select l.measured_value from fabula.haccp_log l join fabula.haccp_control_points cp on cp.id = l.control_point_id join fabula.production_batches b on b.id = l.batch_id where cp.code = 'CCP-STRETCH' and b.batch_lot = '{lot2}'") == '66.00'

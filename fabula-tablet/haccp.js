@@ -90,7 +90,7 @@
       sb.from('v_haccp_plan').select('*'),
       sb.from('v_lots_on_hold').select('*'),
       sb.from('non_conformities').select('id, opened_at, severity, status, description, lot_number, corrective_action, root_cause, preventive_action').in('status', ['open', 'investigating']).order('opened_at', { ascending: false }),
-      sb.from('haccp_log').select('id, logged_at, measured_value, result, operator, corrective_action, correction_note, source, haccp_control_points(code, ccp_no, name, unit, form_code), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
+      sb.from('haccp_log').select('id, logged_at, created_at, measured_value, result, operator, corrective_action, correction_note, source, haccp_control_points(code, ccp_no, name, unit, form_code), production_batches(batch_lot)').gte('logged_at', since7).order('logged_at', { ascending: false }).limit(200),
       sb.from('v_lab_plan_status').select('*'),
       sb.from('v_lab_samples_recent').select('*').limit(80),
       sb.from('v_pest_status').select('*'),
@@ -239,7 +239,7 @@
     $('logs').innerHTML = `<table><tr><th>Quando</th><th>Punto</th><th>Modulo</th><th class="num">Valore</th><th>Esito</th><th>Lotto</th><th>Chi</th><th>Azione</th><th></th></tr>${rows.map(l => `
       <tr><td class="nw">${fmtDT(l.logged_at)}</td><td>${esc(l.haccp_control_points?.ccp_no || '')} ${esc(l.haccp_control_points?.name || '')}</td><td class="nw">${modChip(l.haccp_control_points?.form_code)}</td>
       <td class="num">${l.measured_value == null ? '—' : l.haccp_control_points?.unit === 'esito' ? (Number(l.measured_value) === 0 ? 'ok' : 'NON OK') : num(l.measured_value, 2) + ' ' + esc(l.haccp_control_points?.unit || '')}</td><td>${res[l.result] || esc(l.result)}</td>
-      <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}${l.source === 'paper' ? ' <small title="Ricopiata dal foglio di carta">📝 carta</small>' : ''}</td><td>${esc(l.corrective_action || '')}${l.correction_note ? `<br><small class="ko">Correzione: ${esc(l.correction_note)}</small>` : ''}</td>
+      <td class="nw">${esc(l.production_batches?.batch_lot || '')}</td><td>${esc(l.operator || l.source || '')}${l.source === 'paper' ? ' <small title="Ricopiata dal foglio di carta">📝 carta</small>' : l.created_at && Date.parse(l.created_at) - Date.parse(l.logged_at) > 120000 ? ` <small title="Registrata senza rete sul tablet: arrivata dopo">📶 inserita alle ${fmtDT(l.created_at)}</small>` : ''}</td><td>${esc(l.corrective_action || '')}${l.correction_note ? `<br><small class="ko">Correzione: ${esc(l.correction_note)}</small>` : ''}</td>
       <td>${isManager && l.haccp_control_points?.unit !== 'esito' && l.haccp_control_points?.code !== 'PRP-CLEAN' ? `<button class="btn sm sec" data-fixlog="${l.id}">Correggi</button>` : ''}</td></tr>`).join('')}</table>`;
     // v0.96 (audit D-02): a record is never edited or deleted; a correction keeps the original value and the reason, and prints on the register
     $('logs').querySelectorAll('[data-fixlog]').forEach(b => b.onclick = async () => {

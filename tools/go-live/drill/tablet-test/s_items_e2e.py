@@ -12,7 +12,7 @@ DDT: incomplete company data → red banner and printing disabled (PRINT-03).
 Expect "FAILURES: none"."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'; PORT = 8773
@@ -125,7 +125,7 @@ try:
     def dose_through():
         for _ in range(40):
             if view() != 'v-dose': break
-            pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); i.value = '70'; document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(450)
+            pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); i.value = '70'; document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(800)
 
     # D-09 / A-16 · a vat from milk: no ricotta offered, the milk still left, more is refused
     code('LOT:' + MILK)
@@ -153,7 +153,7 @@ try:
     check('D-12 a curd pH of 52 is refused on the tablet before anything is saved or queued', view() == 'v-form' and 'pH della cagliata impossibile: 52' in toast()
           and sql1(f"select output_kg is null from fabula.production_batches where batch_lot = '{LB}'") == 't', toast())
     setf({'ph': ''}); save_form()
-    if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
+    answer_ask(pg)   # v0.97: the question replaces «premi Salva di nuovo»
     dose_through(); pg.wait_for_timeout(1200)
     check('A-16 «No» closes the lot and records "no ricotta" (whey 0)', sql1(f"select output_kg::int || '|' || whey_kg::int from fabula.production_batches where batch_lot = '{LB}'") == '90|0',
           sql1(f"select output_kg || '|' || coalesce(whey_kg::text, 'null') from fabula.production_batches where batch_lot = '{LB}'"))

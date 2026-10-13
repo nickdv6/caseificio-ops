@@ -4,7 +4,7 @@ by lot number); the day's task list still shows without network (kept from the l
 a direct shipment from a closed lot works offline (product and customers kept on the tablet); a held lot is refused."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -54,7 +54,7 @@ try:
         for k, v in vals.items(): pg.evaluate("([k, v]) => { const e = document.getElementById(k); e.value = v; e.dispatchEvent(new Event('change')); e.dispatchEvent(new Event('input')); }", [k, str(v)])
     def save_form(): pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; const c = document.getElementById('ccpv'); if (c && !c.value) c.value = (c.previousElementSibling && /CCP 4/.test(c.previousElementSibling.textContent)) ? '88' : '65'; })()"); pg.evaluate("document.getElementById('btn-form-save').click()"); pg.wait_for_timeout(1500)
     def dose_through(n=0):
-        while view() == 'v-dose' and n < 40: pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); const m = (document.getElementById('d-instr').textContent.match(/Obiettivo ([0-9.,]+)/) || [])[1]; i.value = (m || '70').replace(',', '.'); document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(450); n += 1
+        while view() == 'v-dose' and n < 40: pg.evaluate("(() => { const ok = document.getElementById('d-ok'); if (ok.style.display === 'none') { const i = document.getElementById('d-alt-in'); const m = (document.getElementById('d-instr').textContent.match(/Obiettivo ([0-9.,]+)/) || [])[1]; i.value = (m || '70').replace(',', '.'); document.getElementById('d-alt-ok').click(); } else ok.click(); })()"); pg.wait_for_timeout(800); n += 1
         return n
     def go_off(): state['off'] = True; pg.evaluate("window.__off=true; dispatchEvent(new Event('offline'))")
     def go_on(): state['off'] = False; pg.evaluate("window.__off=false; dispatchEvent(new Event('online'))"); pg.wait_for_timeout(5000)
@@ -78,7 +78,7 @@ try:
     code('LOT:' + LOT)
     if view() == 'v-form' and pg.evaluate("!!document.getElementById('kg')"):
         setf({'kg': 400}); save_form()
-        if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
+        answer_ask(pg)   # v0.97: the question replaces «premi Salva di nuovo»
         dose_through()
     blot = pg.evaluate("(JSON.parse(localStorage.getItem('fabula_queue')||'[]').flatMap(i => i.ops||[]).find(o => o.table === 'production_batches' && !o.update) || {row:{}}).row.batch_lot || ''")
     check('offline: batch start queued with its lot number', blot != '' and queued() >= 1, f'{blot} · queue {queued()}')
@@ -89,7 +89,7 @@ try:
     setf({'out': 120, 'n': 1})
     if pg.evaluate("!!document.getElementById('ricyn')"): setf({'ricyn': 'no'})   # v0.95 (audit A-16): ricotta yes/no is a required choice
     save_form()
-    if view() == 'v-form' and 'Salva di nuovo' in toast(): save_form()
+    answer_ask(pg)   # v0.97: the question replaces «premi Salva di nuovo»
     dose_through()
     check('offline: close queued behind the start, nothing in the database yet', queued() >= 2 and sql(f"select count(*) from fabula.production_batches where batch_lot = '{blot}'") == '0', f'queue {queued()}')
     tasks_off = pg.evaluate("document.getElementById('tasks').innerText")

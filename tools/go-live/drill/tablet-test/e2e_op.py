@@ -10,3 +10,14 @@ def op_js(sess, db='restore_drill'):
     sid, name = r.split('|', 1); now = int(time.time() * 1000)
     op = {'id': sid, 'full_name': name, 'badge_code': None, 'via': 'login', 'at': now, 'last': now}
     return f"; localStorage.setItem('perla_operator_v1', {json.dumps(json.dumps(op))})"
+
+def answer_ask(pg, yes=True, wait=300):
+    """v0.97 (audit A-17/A-07): confirmations are a question on screen (.ask) whose buttons work after 1,5 s — no more «premi Salva di
+    nuovo». Answers it if there is one; returns its text ('' if none)."""
+    pg.wait_for_timeout(wait)
+    txt = pg.evaluate("(document.querySelector('.ask') || {}).innerText || ''")
+    if txt:
+        pg.wait_for_timeout(1600)
+        pg.evaluate(f"(() => {{ const b = document.querySelectorAll('.ask button'); (b[{0 if yes else 1}] || b[0]).click(); }})()")
+        pg.wait_for_timeout(1500)
+    return txt

@@ -4,7 +4,7 @@ printed sheet is typed in from 🛡 → "Ricopia da foglio di carta" with the sh
 time when sent; out of limit it opens the same non-conformity as a live check; after each line the paper menu comes back."""
 import json, subprocess, time, os, hmac, hashlib, base64, datetime
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -69,11 +69,13 @@ try:
     row = sql(f"select source || '|' || to_char(logged_at at time zone 'Europe/Rome', 'YYYY-MM-DD HH24:MI') from fabula.haccp_log l join fabula.haccp_control_points cp on cp.id = l.control_point_id where cp.code = 'PRP-CLEAN' and source = 'paper' order by created_at desc limit 1")
     check('back online: sent with the sheet time, not the send time', row == f'paper|{yday} 18:45', row)
     # out of limit from paper: same non-conformity as a live check
+    nc0 = int(sql("select count(*) from fabula.non_conformities n join fabula.haccp_log l on l.id = n.haccp_log_id where l.source = 'paper'"))
     code(pg, 'PAPER:CCP-COLD-2')
     fill_save(pg, yday, '12:00', '8.5', action='prodotto spostato in cella 1')
-    t = pg.evaluate("document.getElementById('toast').textContent")
-    nc = sql("select count(*) from fabula.non_conformities n join fabula.haccp_log l on l.id = n.haccp_log_id where l.source = 'paper'")
-    check('out of limit: NON CONFORMITÀ toast and a non-conformity opened', 'NON CONFORMIT' in t and nc == '1', f'{t[:60]} · nc={nc}')
+    q = answer_ask(pg, wait=0)                  # v0.97 (A-07): red «È giusto?» first, then a card that stays (not a toast)
+    t = pg.evaluate("document.getElementById('f-title').textContent")
+    nc = int(sql("select count(*) from fabula.non_conformities n join fabula.haccp_log l on l.id = n.haccp_log_id where l.source = 'paper'"))
+    check('out of limit: red question, then the NON CONFORMITÀ card, and a non-conformity opened', 'fuori limite' in q and 'NON CONFORMIT' in t and nc == nc0 + 1, f'{q[:60]} · {t[:60]} · nc={nc0}→{nc}')
     # a sheet older than 7 days is refused on the tablet
     code(pg, 'PAPER:CCP-COLD-1')
     old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=9)).strftime('%Y-%m-%d')

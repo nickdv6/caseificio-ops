@@ -5,7 +5,7 @@ orders in packing order with lots and flags; W1 opens with two rows already fill
 refused on the spot; W1 and S1 save at once; W2 (2 kg short) asks to confirm with the reason, then saves."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'
@@ -61,6 +61,7 @@ try:
     def open_order(num):
         pg.evaluate(f"[...document.querySelectorAll('#form .task')].find(d => d.innerText.includes('{num}')).click()"); pg.wait_for_timeout(2000)
     def save(): pg.evaluate("document.getElementById('btn-form-save').click()"); pg.wait_for_timeout(1800)
+    def weigh(): pg.evaluate("document.querySelectorAll('#form input[id^=q]').forEach(q => { q.value = (q.placeholder || '').replace('previsti ', '').replace(',', '.'); q.dispatchEvent(new Event('input')); })")   # v0.97 (A-09): read the scale
     def done_home():
         pg.evaluate("[...document.querySelectorAll('#form button')].find(x => x.textContent === 'Fatto').click()"); pg.wait_for_timeout(1500)
 
@@ -72,7 +73,7 @@ try:
     pg.screenshot(path='/tmp/pack_list.png')
 
     open_order(f'W1-{R}')
-    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map((s, i) => s.value + '=' + document.getElementById('q' + s.id.slice(3)).value)")
+    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map((s, i) => s.value + '=' + (document.getElementById('q' + s.id.slice(3)).placeholder || '').replace('previsti ', ''))")
     check('W1 opens with two rows already filled: A 5 + B 1', f == [f'A{R}=5', f'B{R}=1'], str(f))
     check('the card lists the lots not to use (held C, expired X)', f'C{R} · bloccato' in form_txt() and f'X{R} · scaduto' in form_txt(), form_txt()[:300].replace('\n', ' | '))
     pg.screenshot(path='/tmp/pack_w1.png')
@@ -81,21 +82,23 @@ try:
     pg.evaluate(f"c => {{ document.getElementById('manual').value = c; document.getElementById('btn-manual').click(); }}", f'LOT:C{R}'); pg.wait_for_timeout(1200)
     check('scanning the held lot is refused on the spot', 'bloccato per sicurezza alimentare' in toast() and pg.evaluate("document.querySelector('#form select[id^=lot]').value") == f'A{R}', toast())
     if view() != 'v-form': pg.evaluate("document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-form'))")
-    save()
+    check('v0.97 (A-09): the weights are empty, to be read on the scale (the planned kg is only the hint)',
+          pg.evaluate("[...document.querySelectorAll('#form input[id^=q]')].every(q => q.value === '')"))
+    weigh(); save()
     check('W1 saved at once: DDT, stock moved, order fulfilled', 'DDT-' in form_txt() and sql(f"select status from fabula.sales_orders where order_number = 'W1-{R}'") == 'fulfilled', form_txt()[:160].replace('\n', ' | '))
     done_home()
 
     open_list(); open_order(f'S1-{R}')
-    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + document.getElementById('q' + s.id.slice(3)).value)")
-    check('S1 online opens on B (A expires too soon for online)', f == [f'B{R}=5'], str(f)); save()
+    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + (document.getElementById('q' + s.id.slice(3)).placeholder || '').replace('previsti ', ''))")
+    check('S1 online opens on B (A expires too soon for online)', f == [f'B{R}=5'], str(f)); weigh(); save()
     check('S1 saved; guest order got a consignee', 'DDT-' in form_txt() and sql(f"select p.legal_name from fabula.sales_orders o join fabula.parties p on p.id = o.customer_id where o.order_number = 'S1-{R}'") == f'Cliente online S1-{R}', form_txt()[:120].replace('\n', ' | '))
     done_home()
 
     open_list(); open_order(f'W2-{R}')
-    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + document.getElementById('q' + s.id.slice(3)).value)")
-    check('W2 opens with what is left: B 2 (2 kg short shown)', f == [f'B{R}=2'] and 'mancano 2 kg' in form_txt(), str(f)); save()
-    check('W2: weight off asks to confirm with the reason', view() == 'v-form' and 'Da confermare: pesati 2.00 kg contro 4.00 ordinati' in toast(), toast())
-    save()
+    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + (document.getElementById('q' + s.id.slice(3)).placeholder || '').replace('previsti ', ''))")
+    check('W2 opens with what is left: B 2 (2 kg short shown)', f == [f'B{R}=2'] and 'mancano 2 kg' in form_txt(), str(f)); weigh(); save()
+    q = answer_ask(pg, wait=0)                 # v0.97 (A-17): the reasons in a question that stays, «Sì, spedisco così»
+    check('W2: weight off asks to confirm with the reason', 'pesati 2.00 kg contro 4.00 ordinati' in q, q or toast())
     check('second Salva saves and shows what was confirmed', 'DDT-' in form_txt() and 'Confermato:' in form_txt(), form_txt()[:200].replace('\n', ' | '))
     check('stock after packing: A 0, B 0, C and X untouched',
           sql(f"select string_agg(lot_number || '=' || trim_scale(qty_on_hand), ',' order by lot_number) from fabula.v_stock_on_hand where lot_number like '%{R}'") == f'C{R}=10,X{R}=3')
@@ -104,11 +107,11 @@ try:
     sql(f"insert into fabula.sales_orders (order_number, channel, order_date, customer_id, status, source) values ('W3-{R}', 'wholesale', {D} + 1, '{CUST}', 'confirmed', 'test')")
     sql(f"insert into fabula.sales_order_lines (sales_order_id, product_id, qty, unit_price_eur, iva_rate) select id, '{MOZ}', 4, 12, 4 from fabula.sales_orders where order_number = 'W3-{R}'")
     open_list(); open_order(f'W3-{R}')
-    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + document.getElementById('q' + s.id.slice(3)).value)")
+    f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + (document.getElementById('q' + s.id.slice(3)).placeholder || '').replace('previsti ', ''))")
     check('W3 opens split: D 3 + E 1', f == [f'D{R}=3', f'E{R}=1'], str(f))
+    weigh()
     pg.evaluate("(() => { const s = [...document.querySelectorAll('#form select[id^=lot]')][1]; const q = document.getElementById('q' + s.id.slice(3)); q.value = '0'; q.dispatchEvent(new Event('input')); })()")
-    save()
-    if view() == 'v-form' and 'Quantità non valida' not in toast(): save()
+    save(); answer_ask(pg, wait=0)
     check('second row set to 0: saved with one line (no "Quantità non valida")', 'DDT-' in form_txt()
           and sql(f"select string_agg(l.lot_number || '=' || trim_scale(l.qty), ',') from fabula.shipment_lines l join fabula.shipments sh on sh.id = l.shipment_id join fabula.sales_orders o on o.id = sh.sales_order_id where o.order_number = 'W3-{R}'") == f'D{R}=3', toast())
     check('no page errors', not logs, ' | '.join(logs)[:300])

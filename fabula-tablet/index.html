@@ -70,6 +70,25 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .notice.warn{border-color:#c98a1a}.notice.warn .nt{color:#8a5a00}
 .nitem{display:block;width:100%;text-align:left;border:0;background:var(--tile);border-radius:8px;padding:12px;margin-top:6px;font:600 1.1rem var(--body);color:var(--fg);cursor:pointer}
 .btn.attention{border:2px solid var(--warn);color:var(--warn);font-weight:700}
+/* v0.97 (audit A-07/A-17): questions that stay until answered; red when the answer rejects milk or holds a lot */
+.ask-wrap{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
+.ask{background:var(--paper);border-radius:14px;padding:20px;max-width:560px;width:100%;max-height:90vh;overflow:auto;border:3px solid var(--accent)}
+.ask.danger{border-color:var(--warn);background:#fdecea}
+.ask-t{font-family:var(--display);font-size:1.5rem;font-weight:700;margin-bottom:8px}.ask.danger .ask-t{color:var(--warn)}
+.ask-l{font-size:1.2rem;margin-top:6px}
+/* v0.97 (audit A-11/A-07): refused saves and non-conformities stay on screen */
+.card.rej{background:#fdecea;border:2px solid var(--warn)}.card.rej .scan{color:var(--warn)}
+#rej-banner{cursor:pointer}
+/* v0.97 (audit A-15): follow-ups with the time left */
+#followups{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.fu{display:block;width:100%;text-align:left;border:3px solid #c98a1a;background:#fff6e5;border-radius:10px;padding:12px 14px;font:inherit;color:var(--fg);cursor:pointer}
+.fu.soon,.fu.late{border-color:var(--warn);background:#fdecea}
+.fu-t{font-weight:700;font-size:1.15rem}.fu-m{margin-top:4px;color:var(--muted)}.fu.late .fu-m{color:var(--warn);font-weight:700}
+/* v0.97 (audit A-05): «Non fatta…» on each task, earlier days apart */
+.task .skip{border:1px solid var(--rule);background:var(--paper);color:var(--muted);border-radius:8px;padding:8px 10px;font:600 .85rem var(--body);margin-left:10px;cursor:pointer}
+.fu .skip{display:inline-block;margin-top:8px;border:1px solid var(--rule);background:var(--paper);color:var(--muted);border-radius:8px;padding:6px 10px;font:600 .85rem var(--body)}
+.toast.info{background:var(--accent);color:#fff}
+.dose-last{color:var(--ok);font-weight:600;text-align:center;margin-top:10px;min-height:1.3em}
 </style>
 </head>
 <body>
@@ -85,6 +104,9 @@ input[type=number]{font-variant-numeric:tabular-nums}
 
 <section class="view" id="v-home">
   <div id="update-banner" class="notice warn" style="display:none"><div class="nt">È disponibile una nuova versione dell'app</div><button class="nitem" onclick="location.reload()">Aggiorna ora ›</button></div>
+  <div id="rej-banner" class="notice alert" style="display:none"></div>
+  <div id="followups" style="display:none"></div>
+  <div id="renames" class="notice warn" style="display:none"></div>
   <button class="btn big" id="btn-scan">▣ Scansiona</button>
   <div class="row"><button class="btn secondary" id="btn-receive">📦 Arrivo merce</button><button class="btn secondary" id="btn-count">📋 Conta magazzino</button><button class="btn secondary" id="btn-effl">💧 Reflui</button></div>
   <button class="btn secondary" id="btn-ship" style="width:100%;margin-top:8px">🚚 Da spedire <span id="ship-n"></span></button>
@@ -95,6 +117,7 @@ input[type=number]{font-variant-numeric:tabular-nums}
   <div id="selldown-wrap" style="display:none"><h2 style="margin-top:22px">Da vendere prima</h2><div class="tasks" id="selldown"></div></div>
   <h2 style="margin-top:22px">Da fare oggi</h2>
   <div class="tasks" id="tasks"></div>
+  <div id="tasks-old-wrap" style="display:none"><h2 style="margin-top:22px">Non fatte nei giorni scorsi</h2><div class="pending" style="text-align:left;margin:0 0 8px">Falle adesso, oppure «Non fatta…» con il motivo: restano nel registro.</div><div class="tasks" id="tasks-old"></div></div>
   <div class="pending" id="pending"></div>
   <div class="pending" id="acct" style="margin-top:28px"></div>
   <button class="btn secondary" id="btn-logout" style="margin-top:6px">Esci</button>
@@ -124,6 +147,7 @@ input[type=number]{font-variant-numeric:tabular-nums}
     <div class="dose-instr" id="d-instr"></div>
     <div class="dose-src" id="d-src"></div>
   </div>
+  <div class="dose-last" id="d-last"></div>
   <button class="btn huge" id="d-ok">✓ Fatto</button>
   <button class="btn secondary" id="d-diff">Ho usato una quantità diversa</button>
   <div id="d-alt" style="display:none">

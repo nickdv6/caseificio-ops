@@ -33,6 +33,8 @@ def sql1(q): return (sql(q).splitlines() or [''])[0]
 RUN = time.strftime('%H%M%S')
 BADGE = 'STAFF:OPE2E' + RUN
 AIUTO = sql1(f"insert into fabula.staff (full_name, role, app_role, active, badge_code) values ('Aiuto E2E {RUN}', 'commesso', 'banco', true, '{BADGE}') returning id")
+# since the quick fixes of 13/10 (audit C-24) the database gives every badge a random code: use the one it gave
+BADGE = sql1(f"select badge_code from fabula.staff where id = '{AIUTO}'") or BADGE
 sql(f"insert into fabula.staff(id, full_name, auth_user_id, app_role, role, active) values ('10000000-0000-4000-a000-0000000000b1', 'Owner E2E', '{OWNER[0]}', 'titolare', 'owner', true) on conflict do nothing")
 sql(f"select fabula.staff_set_pin('{CAS_ID}', '4826')")
 sql(f"select fabula.staff_set_pin('{AIUTO}', '3917')")

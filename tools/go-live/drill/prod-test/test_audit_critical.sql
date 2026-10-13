@@ -11,9 +11,9 @@ $$ select set_config('request.jwt.claims', format('{"sub":"%s","role":"authentic
 select id moz from fabula.products where sku = 'MOZ-DOP-KG' \gset
 select id raw from fabula.products where sku = 'RAW-MILK' \gset
 insert into fabula.staff (id, full_name, role, app_role, active, auth_user_id, badge_code) values
-  ('10000000-0000-4000-a000-0000000096a1', 'Titolare C', 'owner', 'titolare', true, '00000000-0000-4000-a000-0000000096a1', 'TIT'),
-  ('10000000-0000-4000-a000-0000000096a2', 'Casaro C', 'casaro', 'produzione', true, '00000000-0000-4000-a000-0000000096a2', 'CAS'),
-  ('10000000-0000-4000-a000-0000000096a3', 'Banco C', 'commesso', 'banco', true, '00000000-0000-4000-a000-0000000096a3', 'BAN')
+  ('10000000-0000-4000-a000-0000000096a1', 'Titolare C', 'owner', 'titolare', true, '00000000-0000-4000-a000-0000000096a1', 'STAFF:TTTTTTTTT2'),
+  ('10000000-0000-4000-a000-0000000096a2', 'Casaro C', 'casaro', 'produzione', true, '00000000-0000-4000-a000-0000000096a2', 'STAFF:CCCCCCCCC2'),
+  ('10000000-0000-4000-a000-0000000096a3', 'Banco C', 'commesso', 'banco', true, '00000000-0000-4000-a000-0000000096a3', 'STAFF:BBBBBBBBB2')
 on conflict do nothing;
 insert into fabula.parties (id, type, legal_name, is_milk_supplier, active) values ('50000000-0000-4000-a000-0000000096f1', 'supplier', 'Masseria C', true, true) on conflict do nothing;
 update fabula.settings set value = '0123456789abcdef0123456789abcdef' where key = 'milk.farm_token';
@@ -50,7 +50,7 @@ select (fabula.haccp_register('MOD-01', current_date, current_date) -> 'rows') m
 select pg_temp.ck('A-04 the milk register shows the positive linked test', exists (select 1 from jsonb_array_elements(:'mr'::jsonb) r where r ->> 'lotto' = 'MC96-1' and r ->> 'abx' = 'POSITIVO' and r ->> 'accettato' like 'NO%'), :'mr');
 select pg_temp.err($q$select fabula.log_milk_check('70000000-0000-4000-a000-0000000096d1', 'CCP-STRETCH', 60)$q$) e_wrong \gset
 select pg_temp.ck('A-04 only milk checks go through it', :'e_wrong' like 'Questo controllo non è del latte%', :'e_wrong');
-select pg_temp.ck('A-04 the offline queue may call it', pg_get_functiondef('fabula.save_ops(jsonb,uuid)'::regprocedure) like '%''log_milk_check''%');
+select pg_temp.ck('A-04 the offline queue may call it', pg_get_functiondef((select p.oid from pg_proc p where p.proname = 'save_ops' and p.pronamespace = 'fabula'::regnamespace order by p.pronargs desc limit 1)) like '%''log_milk_check''%');
 
 -- A-03 · a lot closed without its CCPs is held, not just reported
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LC96-B', :'moz', 200, 'milk', now(), 'tablet');
@@ -179,8 +179,8 @@ update fabula.staff_pins set locked_until = null where staff_id = '10000000-0000
 -- badge: first scan clocks in, a second scan does NOT clock out; badge-out is explicit; a late offline scan keeps its time
 select pg_temp.as_user('00000000-0000-4000-a000-0000000096a3');
 set role authenticated;
-select fabula.badge_in('CAS', null, now() - interval '40 minutes') b1 \gset
-select fabula.badge_in('CAS') b2 \gset
+select fabula.badge_in('STAFF:CCCCCCCCC2', null, now() - interval '40 minutes') b1 \gset
+select fabula.badge_in('STAFF:CCCCCCCCC2') b2 \gset
 select fabula.badge_in(null, '10000000-0000-4000-a000-0000000096a1') b3 \gset
 select pg_temp.err($q$select fabula.badge_in('NOPE')$q$) e_badge \gset
 reset role;
@@ -210,13 +210,13 @@ select pg_temp.ck('A-01 the daily check lists checks signed by someone not clock
 
 select pg_temp.as_user('00000000-0000-4000-a000-0000000096a3');
 set role authenticated;
-select fabula.badge_out('CAS') o1 \gset
-select fabula.badge_out('CAS') o2 \gset
+select fabula.badge_out('STAFF:CCCCCCCCC2') o1 \gset
+select fabula.badge_out('STAFF:CCCCCCCCC2') o2 \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
 select pg_temp.ck('A-01 badge-out closes the shift with its hours; a second one changes nothing',
   :'o1'::jsonb ->> 'action' = 'out' and (:'o1'::jsonb ->> 'hours')::numeric between 0.6 and 0.75 and :'o2'::jsonb ->> 'action' = 'none', :'o1');
-select pg_temp.ck('A-01 the offline queue may send badge scans', pg_get_functiondef('fabula.save_ops(jsonb,uuid)'::regprocedure) like '%''badge_in'',''badge_out''%');
+select pg_temp.ck('A-01 the offline queue may send badge scans', pg_get_functiondef((select p.oid from pg_proc p where p.proname = 'save_ops' and p.pronamespace = 'fabula'::regnamespace order by p.pronargs desc limit 1)) like '%''badge_in'',''badge_out''%');
 
 -- E-01 · alerts leave the building (Telegram): link, route by topic, quiet hours, «Me ne occupo io», reminder after 30 min
 update fabula.settings set value = 'Banco C' where key = 'food.responsabile_autocontrollo';
