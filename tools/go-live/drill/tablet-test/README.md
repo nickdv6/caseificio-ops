@@ -63,5 +63,20 @@ every migration: the tests still run, after adding one milk supplier
     Console → Oggi as the owner: every load in transit is listed and the 40 h one is flagged; «annulla» asks for a
     reason, cancels it with the owner's name, and the list updates. 12/10/2026: 16/16.
 
+15. `python3 s_items_e2e.py` (v0.95, port 8773; needs v095a/b in the DB) — the audit backlog items under an hour:
+    - tablet: a milk vat offers no ricotta, says the milk still left and refuses more; curd pH 52 refused before saving;
+      batch close asks ricotta Sì/No (required; «No» stored as whey 0); Home «Avvia ricotta» starts the R-lot from that whey;
+      Esci refused with records waiting, a second tap logs out;
+    - farm page: 105 kg against the order spelled out in the red box; «1.0xx» read with the thousands dot; under 50 kg refused;
+    - Autocontrollo as the owner: no default outcome, result required, «Correggi esito» with reason; «Prelevato» lot picker
+      (Enter means OK; unknown lot refused in the dialog); register review dialog (dates up to today, count, required tick,
+      signed by the owner); calibration needs certificate + deviation;
+    - Configurazione: kg per piece pre-filled 0,25 from the title, grams shown, 250 refused; delivery days seven boxes,
+      cut-off a time field; DDT without P.IVA: red banner and printing disabled, back to normal once filled in.
+    12/10/2026: 41/41. The tablet tests that close a batch (e2e, guard_e2e, offline_e2e, prod_e2e) now answer the ricotta
+    choice; guard_e2e uses a test product without preset for the CCP 2 field (ricotta is no longer offered from milk);
+    prod_e2e expects the over-draw to be refused. On the long-used restore_drill copy pack_e2e, prod_e2e and paper_e2e
+    have failures caused by data left by earlier runs (same failures with the v0.94 code).
+
 Last run 06/10/2026 (v0.80), fresh DB in this order: pack_e2e 16/16, e2e 23/23, prod_e2e 13/13, device_e2e 8/8,
 paper_e2e 9/9, offline_e2e 11/11, guard_e2e 15/15.

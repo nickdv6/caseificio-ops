@@ -84,6 +84,7 @@ try:
     def ship(k):
         fp.click('#ship-open'); fp.fill('#kg', k); fp.click('#ship-go'); fp.wait_for_timeout(200)
         fp.click('#ship-warn-yes' if fp.is_visible('#ship-warn') else '#ship-go'); fp.wait_for_timeout(1500)   # v0.95: a weight far from the usual loads is confirmed in the red box
+        if fp.is_visible('#ship-warn'): fp.click('#ship-warn-yes'); fp.wait_for_timeout(1500)                # …also when the server asks (its numbers were newer)
         return sql("select milk_lot from fabula.milk_shipments where status = 'shipped' order by created_at desc limit 1")
     fp.goto(f'http://localhost:{PORT}/latte.html?t={TOKEN}'); fp.wait_for_timeout(1500)
     l1 = ship(str(K1))

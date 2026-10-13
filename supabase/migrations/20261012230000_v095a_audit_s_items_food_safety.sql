@@ -73,10 +73,10 @@ $s$  -- v0.95a (audit B-03): no future dates; an external calibration needs its 
 $s$);
   n := replace(n, $s$when p_kind = 'taratura_esterna' and v_dev is null then 'ok'$s$, $s$when p_kind = 'taratura_esterna' and v_dev is null then 'da_verificare'$s$);
   n := replace(n, E'  if v_res = ''ok'' then\n    update fabula.equipment set out_of_service = false,',
-                  E'  if v_res in (''ok'', ''da_verificare'') then   -- v0.95a: back in service only with a deviation inside tolerance\n    update fabula.equipment set out_of_service = case when v_res = ''ok'' then false else out_of_service end,');
+                  E'  if v_res = ''da_verificare'' then   -- v0.95a: certificate kept, but no return to service and the due date does not move until the deviation is written\n    update fabula.equipment set calibration_cert_ref = coalesce(p_certificate_no, calibration_cert_ref) where id = e.id;\n  elsif v_res = ''ok'' then\n    update fabula.equipment set out_of_service = false,');
   n := replace(n, $s$'records_to_review', v_affected);$s$, $s$'records_to_review', v_affected, 'out_of_service', (select out_of_service from fabula.equipment where id = e.id));$s$);
   if position('Scrivi il numero del certificato' in n) = 0 or position('then ''da_verificare''' in n) = 0
-     or position('else out_of_service end' in n) = 0 or position('''out_of_service'', (select' in n) = 0 then
+     or position('the due date does not move' in n) = 0 or position('''out_of_service'', (select' in n) = 0 then
     raise exception 'v095a: record_calibration_check patterns not found';
   end if;
   execute n;
@@ -121,8 +121,8 @@ begin
   n := replace(d, $s$  if p_lot is not null and p_lot <> '' then select id into v_batch from fabula.production_batches where batch_lot = p_lot; end if;$s$,
 $s$  p_lot := nullif(upper(regexp_replace(coalesce(p_lot, ''), '\s', '', 'g')), '');   -- v0.95a (audit B-05)
   if p_lot is not null then select id into v_batch from fabula.production_batches where batch_lot = p_lot; end if;
-  if p_lot is not null and v_batch is null and not exists (select 1 from fabula.milk_intake where upper(milk_lot) = p_lot)
-     and not exists (select 1 from fabula.milk_shipments where upper(milk_lot) = p_lot) then
+  if p_lot is not null and v_batch is null and not exists (select 1 from fabula.milk_intake where upper(regexp_replace(milk_lot, '\s', '', 'g')) = p_lot)
+     and not exists (select 1 from fabula.milk_shipments where upper(regexp_replace(milk_lot, '\s', '', 'g')) = p_lot) then
     raise exception 'Lotto % non trovato: controlla il codice sull''etichetta (es. L20261012-A) oppure lascia vuoto se il campione non è di un lotto', p_lot using errcode = '22023';
   end if;$s$);
   if n = d then raise exception 'v095a: record_sample_taken pattern not found'; end if;
@@ -134,15 +134,19 @@ end $mig$;
 --     Every change of the hold is written to the audit log.
 --     (D-12, part) the curd pH must be a pH: 3–8.
 create or replace function fabula.trg_batch_guard() returns trigger language plpgsql set search_path = fabula, public as $$
+declare v_ctx boolean := false;
 begin
+  if tg_op = 'UPDATE' and coalesce(current_setting('fabula.hold_ctx', true), '') = 'on' then
+    v_ctx := true; perform set_config('fabula.hold_ctx', '', true);   -- one use: the next update in the same transaction is checked again
+  end if;
   if new.curd_ph is not null and (tg_op = 'INSERT' or new.curd_ph is distinct from old.curd_ph) and (new.curd_ph < 3 or new.curd_ph > 8) then
     raise exception 'pH della cagliata impossibile: % (possibile da 3 a 8). Controlla la virgola e riscrivi.', fabula._it_num(new.curd_ph) using errcode = '23514';
   end if;
   if tg_op = 'UPDATE' and (old.food_safety_hold is distinct from new.food_safety_hold or old.hold_released_at is distinct from new.hold_released_at
                            or old.hold_released_by_id is distinct from new.hold_released_by_id or old.hold_reason is distinct from new.hold_reason
                            or old.hold_at is distinct from new.hold_at or old.hold_nc_id is distinct from new.hold_nc_id) then
-    if coalesce(current_setting('fabula.hold_ctx', true), '') = 'on' then
-      perform set_config('fabula.hold_ctx', '', true);        -- one use: the next update in the same transaction is checked again
+    if v_ctx then
+      null;                                                    -- hold_lot / release_lot_hold / log_ccp
     elsif (old.food_safety_hold and not coalesce(new.food_safety_hold, false))
           or (old.food_safety_hold and coalesce(new.food_safety_hold, false) and (old.hold_reason is distinct from new.hold_reason or old.hold_nc_id is distinct from new.hold_nc_id))
           or old.hold_released_at is distinct from new.hold_released_at or old.hold_released_by_id is distinct from new.hold_released_by_id then
@@ -192,8 +196,10 @@ create trigger batch_milk_left before insert or update of qty_kg, milk_intake_id
 alter table fabula.haccp_control_points add column if not exists plausible_min numeric(10,2), add column if not exists plausible_max numeric(10,2);
 comment on column fabula.haccp_control_points.plausible_min is 'Lowest physically possible reading: below it the reading is refused as a typing error (v0.95a)';
 update fabula.haccp_control_points c set plausible_min = v.lo, plausible_max = v.hi
-  from (values ('CCP-PAST', 40, 100), ('CCP-STRETCH', 40, 99), ('CCP-RIC', 50, 99), ('CCP-MILK-TEMP', -2, 40),
-               ('CCP-COLD-1', -10, 25), ('CCP-COLD-2', -10, 25), ('CCP-MILK-ABX', 0, 1), ('PRP-PAST-VALVE', 0, 1)) v(code, lo, hi)
+  -- wide enough to record a real failure (a pasteuriser that did not heat, a cold room that broke down in August),
+  -- narrow enough to catch a slipped comma (7,2 or 720 for 72; 520 for 52; 45 for 4,5 °C of milk stays possible and opens the NC)
+  from (values ('CCP-PAST', 10, 100), ('CCP-STRETCH', 10, 99), ('CCP-RIC', 10, 99), ('CCP-MILK-TEMP', -2, 45),
+               ('CCP-COLD-1', -10, 45), ('CCP-COLD-2', -10, 45), ('CCP-MILK-ABX', 0, 1), ('PRP-PAST-VALVE', 0, 1)) v(code, lo, hi)
  where c.code = v.code and c.plausible_min is null and c.plausible_max is null;
 
 create or replace function fabula.trg_haccp_log_plausible() returns trigger language plpgsql set search_path = fabula, public as $$

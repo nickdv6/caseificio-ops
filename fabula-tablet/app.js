@@ -52,7 +52,26 @@
   const retryable = e => !e || !e.code || /fetch|network|timeout|jwt|token/i.test(e.message || '') || e.code === 'PGRST301' || e.status === 401;
   // every insert carries its own id, generated once on the tablet: a re-send after a lost reply hits the same row instead of duplicating it
   const stamp = ops => ops.forEach(op => { if (op.table && !op.update && op.row && !op.row.id && UUID_TABLES.has(op.table)) op.row.id = uuid(); });
+  // v0.95 (audit D-12): the same "possible values" as the database (haccp_control_points.plausible_min/max, kept on the tablet;
+  // built-in copy if not read yet), checked before saving or queuing — offline too, so one slipped comma cannot send a whole
+  // batch close to «rifiutate» when the queue goes out
+  const PLAUS = { 'CCP-PAST': [10, 100], 'CCP-STRETCH': [10, 99], 'CCP-RIC': [10, 99], 'CCP-MILK-TEMP': [-2, 45], 'CCP-COLD-1': [-10, 45], 'CCP-COLD-2': [-10, 45], 'CCP-MILK-ABX': [0, 1], 'PRP-PAST-VALVE': [0, 1] };
+  const itN = v => String(v).replace('.', ',');
+  function plausCheck(code, v) {
+    if (v == null || v === '' || !code) return;
+    const c = refStore()['cp_' + code] || {}, lo = c.plausible_min ?? (PLAUS[code] || [])[0], hi = c.plausible_max ?? (PLAUS[code] || [])[1];
+    if ((lo != null && Number(v) < Number(lo)) || (hi != null && Number(v) > Number(hi)))
+      throw new Error(`Valore impossibile: ${itN(v)}${c.unit && c.unit !== 'esito' ? ' ' + c.unit : ''} per «${c.name || code}» (possibili ${itN(lo)}–${itN(hi)}). Controlla la virgola e riscrivi.`);
+  }
+  const phCheck = v => { if (v != null && v !== '' && (Number(v) < 3 || Number(v) > 8)) throw new Error(`pH della cagliata impossibile: ${itN(v)} (possibile da 3 a 8). Controlla la virgola e riscrivi.`); };
+  function plausOps(ops) {
+    for (const op of ops) {
+      if (op.rpc === 'log_ccp' && op.args) plausCheck(op.args.p_cp_code, op.args.p_value);
+      if (op.table === 'production_batches' && op.row) phCheck(op.row.curd_ph);
+    }
+  }
   async function save(ops) {                 // ops: [{table, row}] executed in order; later rows may reference earlier via $0.id
+    plausOps(ops);
     stamp(ops);
     const qid = uuid();                       // v0.62: one id per save — the server writes it once, however many times it is sent
     const st = { done: 0, out: [] };          // v0.59: progress travels with the queued item, so a re-send skips the steps already saved
@@ -193,11 +212,20 @@
   PERM.forgot(sb, toast);
   // v0.95 (audit A-12): records still waiting would be sent later under the next person's login (wrong name, maybe refused):
   // try to send them now, and if they cannot go out, do not log out
+  // A second tap within 10 s logs out anyway (Wi-Fi down at shift change, expired login): better than the next person working under
+  // this login. The queued records keep the name of who did them (p_staff_id), but may be refused if the next profile has fewer rights.
+  let logoutAsk = 0;
   $('btn-logout').onclick = async () => {
+    for (let i = 0; i < 20 && flushing; i++) await new Promise(r => setTimeout(r, 500));   // a send already running: wait for it
     if (queue().length && navigator.onLine) await flush();
     const n = queue().length;
-    if (n) { toast(`${n === 1 ? 'C\'è 1 registrazione non ancora inviata' : `Ci sono ${n} registrazioni non ancora inviate`}: collegati a internet prima di uscire. Partono da sole appena torna la rete.`, 'err', 7000); return; }
-    staff = null; await sb.auth.signOut(); show('login');
+    if (n && Date.now() - logoutAsk > 10000) {
+      logoutAsk = Date.now();
+      toast(`${n === 1 ? 'C\'è 1 registrazione non ancora inviata' : `Ci sono ${n} registrazioni non ancora inviate`}: collegati a internet prima di uscire, partono da sole. Se devi uscire per forza, tocca di nuovo «Esci» entro 10 secondi.`, 'err', 9000);
+      return;
+    }
+    logoutAsk = 0; staff = null; await sb.auth.signOut(); show('login');
+    if (n) toast(`${n === 1 ? '1 registrazione resta' : n + ' registrazioni restano'} su questo tablet: ${n === 1 ? 'parte' : 'partono'} con il prossimo accesso`, 'err', 6000);
   };
 
   // ---------- Tasks ----------
@@ -221,8 +249,10 @@
   let planCache = null;
   const hhmm = iso => new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
   const planPut = (p, at) => { planCache = p; try { localStorage.setItem(PLK, JSON.stringify({ at: at || Date.now(), p })); } catch {} };
+  let planRun = 0;
   async function loadPlan() {
     const wrap = $('plan-wrap'), box = $('plan'), sum = $('plan-sum'); if (!wrap) return;
+    const run = ++planRun;
     if (!PERM.can('produzione', 2)) { wrap.style.display = 'none'; return; }
     let p = null, at = null;
     const r = await live(sb.rpc('production_plan'));
@@ -251,13 +281,14 @@
     // v0.95 (audit A-16): today's closed mozzarella lots whose whey has not gone into ricotta (online only)
     const [rb, rp] = await Promise.all([live(sb.from('production_batches').select('batch_lot, product_id, output_kg, whey_kg, input_kind, finished_at').eq('batch_date', today())),
                                         live(sb.from('products').select('id, byproduct_product_id').not('byproduct_product_id', 'is', null))]);
-    if (!rb.error && rb.data && !rp.error && rp.data) {
+    if (run === planRun && !rb.error && rb.data && !rp.error && rp.data) {
       const byp = new Map(rp.data.map(p => [p.id, p.byproduct_product_id])), lots = new Set(rb.data.map(b => b.batch_lot));
-      const cand = rb.data.filter(b => b.output_kg != null && b.input_kind !== 'whey' && byp.has(b.product_id) && !lots.has('R' + String(b.batch_lot).slice(1)))
+      const fresh = b => b.finished_at && Date.now() - Date.parse(b.finished_at) < 4 * 36e5;   // whey waits a few hours at most
+      const cand = rb.data.filter(b => b.output_kg != null && b.input_kind !== 'whey' && byp.has(b.product_id) && !lots.has('R' + String(b.batch_lot).slice(1)) && fresh(b) && !(Number(b.whey_kg) > 0))
                           .map(b => ({ ...b, byp: byp.get(b.product_id) })).sort((a, b) => String(a.batch_lot).localeCompare(String(b.batch_lot)));
       if (cand.length) {
         const d = document.createElement('div'); d.className = 'task';
-        d.innerHTML = `<div><div>🧀 Avvia ricotta dal siero di oggi</div><div class="code">lotti chiusi senza ricotta: ${esc(cand.map(b => b.batch_lot).join(', '))}</div></div><time>▶</time>`;
+        d.innerHTML = `<div><div>🧀 Avvia ricotta dal siero di oggi</div><div class="code">lotti chiusi nelle ultime 4 ore senza ricotta: ${esc(cand.map(b => b.batch_lot).join(', '))}</div></div><time>▶</time>`;
         d.onclick = () => startRicottaLater(cand); box.append(d);
       }
     }
@@ -378,10 +409,11 @@
       if ([milk, open, recent, prods].some(r => r.error || !r.data)) return;      // keep the previous copy
       const byId = new Map(); [...recent.data, ...open.data].forEach(b => byId.set(b.id, b));
       const openIds = open.data.map(b => b.id), lotOf = id => (byId.get(id) || {}).batch_lot;
-      const [inp, stp] = openIds.length ? await Promise.all([live(sb.from('batch_milk_inputs').select('batch_id, milk_intake_id, qty_kg').in('batch_id', openIds)),
-                                                            live(sb.from('batch_step_logs').select('batch_id, step_id').in('batch_id', openIds))]) : [{ data: [] }, { data: [] }];
+      // v0.95: milk inputs of every recent batch (closed ones too), so the milk still left is right offline as well
+      const [inp, stp] = await Promise.all([live(sb.from('batch_milk_inputs').select('batch_id, milk_intake_id, qty_kg, production_batches!inner(batch_date)').gte('production_batches.batch_date', since).limit(2000)),
+                                            openIds.length ? live(sb.from('batch_step_logs').select('batch_id, step_id').in('batch_id', openIds)) : { data: [] }]);
       if (inp.error || stp.error) return;
-      localStorage.setItem(LK, JSON.stringify({ at: Date.now(), milk: milk.data, batches: [...byId.values()], inputs: inp.data, steps: (stp.data || []).map(x => ({ ...x, batch_lot: lotOf(x.batch_id) })), products: prods.data }));
+      localStorage.setItem(LK, JSON.stringify({ at: Date.now(), milk: milk.data, batches: [...byId.values()], inputs: (inp.data || []).map(({ batch_id, milk_intake_id, qty_kg }) => ({ batch_id, milk_intake_id, qty_kg })), steps: (stp.data || []).map(x => ({ ...x, batch_lot: lotOf(x.batch_id) })), products: prods.data }));
     } catch (e) { console.warn('warmLots', e); }
   }
   setInterval(() => { if (navigator.onLine && staff) warmLots(); }, 5 * 60000);
@@ -797,6 +829,7 @@
     openForm('Inizio lotto ' + batchLot, `latte ${lot} · restano ${fmtKg(leftKg)} kg${usedKg ? ` (ricevuti ${fmtKg(milk.qty_kg)}, già in caldaia ${fmtKg(usedKg)})` : ''}`, async () => {
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
       const product = val('product'), preset = val('preset') || null;
+      if (pastIn.required) plausCheck('CCP-PAST', val('past'));             // v0.95 (audit D-12)
       // v0.95 (audit D-09): the database refuses more than the milk left (+2 % for the scale): say it here, before the dosing starts
       if (kg > leftKg * 1.02) throw new Error(`Sul latte ${lot} restano ${fmtKg(leftKg)} kg: hai scritto ${fmtKg(kg)} kg. Controlla il lotto sull'etichetta e i kg`);
       batchLot = await nextLot();                            // another tablet may have opened a lot meanwhile (offline: the device copy)
@@ -864,6 +897,7 @@
       ric.addEventListener('change', tog); tog();
     }
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
+      phCheck(val('ph')); if (!ccpDone) plausCheck(ccpCode, val('ccpv'));   // v0.95 (audit D-12): before the packing steps, not after them
       const ricNo = !!byp && val('ricyn') === 'no';
       if (byp && val('ricyn') === 'si' && !(val('whey') > 0)) throw new Error('Scrivi i kg di siero per la ricotta');
       const out = val('out'), ph = val('ph'), n = val('n'), whey = byp && val('ricyn') === 'si' ? val('whey') : 0, y = Math.round(out / b.milk_in_kg * 1000) / 10;
@@ -1251,6 +1285,7 @@
       if (raw === '' || isNaN(Number(raw))) return toast(s.kind === 'process' ? 'Scrivi il valore misurato' : 'Scrivi la quantità usata', 'err');
       if (s.kind === 'process') {
         const v = Number(raw), out = (s.lo != null && v < s.lo) || (s.hi != null && v > s.hi);
+        try { if (s.ccp) plausCheck(s.ccp, v); if (s.metric === 'ph') phCheck(v); } catch (e) { return toast(e.message, 'err', 6000); }   // v0.95 (audit D-12)
         if (out && !warned) { warned = true; $('d-warn').textContent = `Fuori dall'intervallo ${s.lo ?? '…'}–${s.hi ?? '…'} ${(METRIC[s.metric] || [''])[0]}. Ricontrolla e premi di nuovo Conferma.`; return; }
         return next(v);
       }

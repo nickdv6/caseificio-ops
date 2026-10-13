@@ -41,10 +41,17 @@ select pg_temp.err($q$select fabula.record_sample_taken('MOZ-LM', 'L2026012-A')$
 select pg_temp.err($q$select fabula.record_sample_taken('MOZ-ENT', 'm95-1')$q$) e_milklot \gset
 select pg_temp.err($q$select fabula.record_sample_taken('MOZ-ENT', '')$q$) e_nolot \gset
 reset role;
+insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
+values (current_date, '07:10', '50000000-0000-4000-a000-0000000095f1', 'CS 95/2', 10, true, 4, 'tablet');
+select pg_temp.as_user('00000000-0000-4000-a000-0000000095a1');
+set role authenticated;
+select pg_temp.err($q$select fabula.record_sample_taken('LAT-CBT', 'cs 95/2')$q$) e_space \gset
+reset role;
 select pg_temp.ck('B-05 a lot typed in lower case with spaces is stored upper-case and linked to its batch',
   (select lot_number = 'L95-A' and batch_id is not null from fabula.lab_samples where sample_code = :'s1'::jsonb->>'sample_code'), :'s1');
 select pg_temp.ck('B-05 an unknown lot is refused with a sentence', :'e_lot' like 'Lotto L2026012-A non trovato%', :'e_lot');
 select pg_temp.ck('B-05 a milk lot and an empty lot are accepted', :'e_milklot' = '' and :'e_nolot' = '', :'e_milklot' || :'e_nolot');
+select pg_temp.ck('B-05 a supplier milk lot with a space in it is found', :'e_space' = '', :'e_space');
 
 -- B-02 · a lab outcome can be corrected with a reason; the first outcome is kept
 select :'s1'::jsonb->>'sample_code' sc \gset
@@ -76,7 +83,7 @@ select pg_temp.as_user('00000000-0000-4000-a000-0000000095a1');
 set role authenticated;
 select fabula.record_calibration_check('TERM-01', 'taratura_esterna', 'certificato_lab', '[]', null, 'Rossi', 'C-77', 'd0000000-0000-4000-a000-0000000095d1') k1 \gset
 reset role;
-select out_of_service oos1 from fabula.equipment where code = 'TERM-01' \gset
+select out_of_service oos1, coalesce(last_calibrated_on::text, 'null') lc1, coalesce(calibration_cert_ref, '') cr1 from fabula.equipment where code = 'TERM-01' \gset
 select pg_temp.as_user('00000000-0000-4000-a000-0000000095a1');
 set role authenticated;
 select fabula.record_calibration_check('TERM-01', 'taratura_esterna', 'certificato_lab', '[{"ref":0,"reading":0.2}]', null, 'Rossi', 'C-78') k2 \gset
@@ -88,6 +95,7 @@ select pg_temp.ck('B-03 …and without deviation or PDF', :'e_dev' like 'Scrivi 
 select pg_temp.ck('B-03 a calibration dated in the future is refused', :'e_future' like '%nel futuro%', :'e_future');
 select pg_temp.ck('B-03 certificate + PDF but no deviation: "da verificare" and the instrument stays out of service',
   :'k1'::jsonb->>'result' = 'da_verificare' and :'oos1'::boolean and (:'k1'::jsonb->>'out_of_service')::boolean, :'k1');
+select pg_temp.ck('B-03 …and its due date does not move until the deviation is written (the certificate number is kept)', :'lc1' <> :'today' and :'cr1' = 'C-77', :'lc1' || ' ' || :'cr1');
 select pg_temp.ck('B-03 with a deviation inside tolerance it is back in service', :'k2'::jsonb->>'result' = 'ok' and not (select out_of_service from fabula.equipment where code = 'TERM-01'), :'k2');
 select pg_temp.ck('B-03 the calibration register prints "da verificare", not "FUORI TOLLERANZA"',
   exists (select 1 from jsonb_array_elements(fabula.haccp_register('MOD-09', :'today'::date - 1, :'today'::date)->'rows') r where r->>'esito' like 'da verificare%' and (r->>'_warn')::boolean));
@@ -119,6 +127,8 @@ select pg_temp.ck('D-03 …and from SQL too', :'e_rel_sql' like 'Lotto L95-A blo
 select pg_temp.ck('D-03 putting a lot on hold directly is still allowed', :'e_set' = '' and (select food_safety_hold from fabula.production_batches where batch_lot = 'L95-B'), :'e_set');
 select pg_temp.ck('D-03 the release permission is used once: a second plain update in the same transaction is refused', :'e_twice' like 'Lotto L95-A bloccato%'
   and (select food_safety_hold from fabula.production_batches where batch_lot = 'L95-B'), :'e_twice');
+select pg_temp.err($q$do $d$ begin perform fabula.hold_lot('L95-B', 'controllo visivo'); perform fabula.hold_lot('L95-B', 'controllo visivo'); update fabula.production_batches set food_safety_hold = false where batch_lot = 'L95-A'; end $d$$q$) e_leak \gset
+select pg_temp.ck('D-03 a hold call that changes nothing does not leave the permission open', :'e_leak' like 'Lotto L95-A bloccato%', :'e_leak');
 select pg_temp.as_user('00000000-0000-4000-a000-0000000095a1');
 set role authenticated;
 select pg_temp.err($q$select fabula.release_lot_hold('L95-A', null, 'esito rianalisi conforme')$q$) e_ok \gset
@@ -146,13 +156,15 @@ select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value 
 select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value => null, p_staff_id => '10000000-0000-4000-a000-0000000095a2', p_batch_lot => 'L95-C')$q$) e_null \gset
 select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-MILK-ABX', p_value => 5, p_staff_id => '10000000-0000-4000-a000-0000000095a2')$q$) e_abx \gset
 select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-COLD-1', p_value => 3.5, p_staff_id => '10000000-0000-4000-a000-0000000095a2')$q$) e_cold \gset
+select pg_temp.err($q$select fabula.log_ccp(p_cp_code => 'CCP-COLD-2', p_value => 27, p_staff_id => '10000000-0000-4000-a000-0000000095a2')$q$) e_hot \gset
 select pg_temp.err($q$update fabula.production_batches set curd_ph = 52 where batch_lot = 'L95-C'$q$) e_ph \gset
 select pg_temp.err($q$update fabula.production_batches set curd_ph = 5.2 where batch_lot = 'L95-C'$q$) e_ph2 \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
-select pg_temp.ck('D-12 stretching 520 °C is refused with a sentence', :'e_520' = 'Valore impossibile: 520 °C per «Filatura: temperatura della pasta» (possibili 40–99). Controlla la virgola e riscrivi.', :'e_520');
-select pg_temp.ck('D-12 …nothing saved, no NC, lot not held', (select count(*) from fabula.haccp_log) = :n0 + 1
-  and not (select food_safety_hold from fabula.production_batches where batch_lot = 'L95-C'), 'one row = the cold-room reading');
+select pg_temp.ck('D-12 stretching 520 °C is refused with a sentence', :'e_520' = 'Valore impossibile: 520 °C per «Filatura: temperatura della pasta» (possibili 10–99). Controlla la virgola e riscrivi.', :'e_520');
+select pg_temp.ck('D-12 a real cold-room failure (27 °C) is recorded, not refused', :'e_hot' = '', :'e_hot');
+select pg_temp.ck('D-12 …nothing saved, no NC, lot not held', (select count(*) from fabula.haccp_log) = :n0 + 2
+  and not (select food_safety_hold from fabula.production_batches where batch_lot = 'L95-C'), 'two rows = the cold-room readings');
 select pg_temp.ck('D-12 an empty CCP is refused', :'e_null' like '%è un punto critico, scrivi il valore misurato%', :'e_null');
 select pg_temp.ck('D-12 an antibiotic test is 0 or 1', :'e_abx' like 'Valore impossibile: 5 per%', :'e_abx');
 select pg_temp.ck('D-12 a normal reading goes through', :'e_cold' = '', :'e_cold');
@@ -184,6 +196,15 @@ select pg_temp.ck('FARM-01 a weight close to what is still missing of the order 
 select pg_temp.err($q$select fabula.farm_milk_ship('0123456789abcdef0123456789abcdef', 30)$q$) e_small \gset
 select pg_temp.ck('FARM-01 under 50 kg is refused', :'e_small' like 'Peso troppo basso: 30%', :'e_small');
 select fabula.farm_milk_ship(:'tok', 107) f4 \gset
+update fabula.milk_plans set status = 'superseded' where plan_date = :'today';
+update fabula.milk_shipments set status = 'cancelled' where ship_date = :'today';
+insert into fabula.milk_shipments (shipped_at, ship_date, kg, milk_lot, status) values
+  (now() - interval '3 days', current_date - 3, 1100, 'M95U-1', 'received'), (now() - interval '2 days', current_date - 2, 1100, 'M95U-2', 'received'), (now() - interval '1 day', current_date - 1, 1100, 'M95U-3', 'received');
+select count(*) ns1 from fabula.milk_shipments \gset
+select fabula.farm_milk_ship(:'tok', 105, null, null, null, false) f5 \gset
+select pg_temp.ck('FARM-01 with no order today, 105 kg against usual loads of 1.100 kg asks for confirmation',
+  (:'f5'::jsonb->>'needs_confirm')::boolean and :'f5'::jsonb->>'message_it' = 'Hai scritto 105 kg: di solito una spedizione è di circa 1.100 kg. È giusto?'
+  and (select count(*) from fabula.milk_shipments) = :ns1, :'f5');
 select pg_temp.ck('FARM-01 an older farm-order function (no p_confirm) keeps working', (:'f4'::jsonb->>'milk_lot') is not null, :'f4');
 select pg_temp.ck('FARM-01 farm_milk_ship stays out of reach of app users',
   not has_function_privilege('authenticated', 'fabula.farm_milk_ship(text,numeric,numeric,text,text,boolean)', 'execute')
@@ -209,11 +230,14 @@ update fabula.settings set value = 'lun, mar,mer' where key = 'trade.delivery_da
 select value d1 from fabula.settings where key = 'trade.delivery_days' \gset
 update fabula.settings set value = '1 - 6' where key = 'trade.delivery_days';
 select value d2 from fabula.settings where key = 'trade.delivery_days' \gset
+update fabula.settings set value = 'lun-sab' where key = 'trade.delivery_days';
+select value d3 from fabula.settings where key = 'trade.delivery_days' \gset
 select pg_temp.err($q$update fabula.settings set value = 'tutti' where key = 'trade.delivery_days'$q$) e_d \gset
 select pg_temp.ck('C-04 "18.00" and "ore 7" become 18:00 and 07:00', :'c1' = '18:00' and :'c2' = '07:00', :'c1' || ' ' || :'c2');
 select pg_temp.ck('C-04 an unreadable time is refused with a sentence', :'e_c' like 'Orario limite non valido%', :'e_c');
 select pg_temp.ck('C-04 "lun, mar,mer" and "1 - 6" become day numbers', :'d1' = '1,2,3' and :'d2' = '1,2,3,4,5,6', :'d1' || ' / ' || :'d2');
 select pg_temp.ck('C-04 an unknown day is refused', :'e_d' like 'Giorno di consegna non riconosciuto%', :'e_d');
+select pg_temp.ck('C-04 "lun-sab" becomes Monday to Saturday', :'d3' = '1,2,3,4,5,6', :'d3');
 alter table fabula.settings disable trigger settings_format;
 update fabula.settings set value = '18.00' where key = 'trade.cutoff_time';
 alter table fabula.settings enable trigger settings_format;
@@ -249,5 +273,8 @@ update fabula.settings set value = 'Via Salvo D''Acquisto 17, 84043 Agropoli (SA
 select fabula.company_docs_check() p2 \gset
 select pg_temp.ck('PRINT-03 missing P.IVA and street are reported', not (:'p1'::jsonb->>'done')::boolean and :'p1'::jsonb->>'detail' like '%P.IVA, indirizzo (via e numero)%', :'p1');
 select pg_temp.ck('PRINT-03 complete data passes', (:'p2'::jsonb->>'done')::boolean, :'p2');
+select pg_temp.ck('PRINT-03 street addresses are recognised (via, lungomare, SS18, house number), a town or CAP alone is not',
+  fabula.is_street_address('Via Salvo D''Acquisto 17, 84043 Agropoli (SA)') and fabula.is_street_address('Lungomare San Marco 12') and fabula.is_street_address('SS18 km 90')
+  and fabula.is_street_address('Contrada Foce Sele snc') and not fabula.is_street_address('Agropoli (SA)') and not fabula.is_street_address('84043 Agropoli (SA)'));
 select pg_temp.ck('PRINT-03 the check is on the go-live board', exists (select 1 from fabula.dash_checks where key = 'company_docs' and kind = 'auto')
   and fabula.ops_dashboard()::text like '%Legal name, P.IVA and street address set%');

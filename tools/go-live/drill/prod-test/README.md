@@ -67,3 +67,19 @@ broke the sync and task times came out at 07:45/08:45 instead of 06:45.
   - Grants.
 
   12/10/2026: 18/18 PASS; on v0.93 12 fail.
+- `test_audit_s_items.sql` (v0.95, audit backlog items under an hour, High/Critical):
+  - A-12: a queued check closes its task in the name sent with it.
+  - B-02/B-05: lab outcome corrected with a reason (first outcome kept, NC and hold on a correction to NON conforme);
+    sample lots upper-cased, unknown lots refused, milk lots (also with a space) accepted.
+  - B-03: external calibration needs certificate + deviation or PDF, no future date; without deviation «da verificare», still
+    out of service, due date unchanged; the register prints it.
+  - B-04: review period cut at today, a future start refused, signed by the logged-in user.
+  - D-03: a plain UPDATE lifting a hold is refused (app user and SQL); setting a hold is allowed; the release permission is
+    used once and does not leak; hold changes audited.
+  - D-09: a delivery cannot be over-drawn (+2 % allowed). D-12: impossible readings, empty CCPs and curd pH 52 refused; a real
+    27 °C cold room recorded; sensor rows exempt; a CCP row without value does not count at batch close.
+  - FARM-01: needs_confirm against today's order and, with no order, against the usual loads; confirmed loads recorded;
+    under 50 kg refused; older callers (no p_confirm) unchanged; grants.
+  - C-28, C-04 (time, day lists and ranges, fallback), E-20 (`bots_ok`), PRINT-03 (`company_docs_check`, street addresses).
+
+  12/10/2026: 63/63 PASS on a fresh replay and on the database built by the SQL Editor script.

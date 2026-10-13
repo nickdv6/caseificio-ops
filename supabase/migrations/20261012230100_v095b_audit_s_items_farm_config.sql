@@ -20,13 +20,13 @@ $s$  -- v0.95b (audit FARM-01): compare with today's approved order (and what is
     select milk_kg into v_order from fabula.milk_plans where status = 'approved' and plan_date = v_today order by milk_kg desc limit 1;
     v_left := v_order - coalesce((select sum(kg) from fabula.milk_shipments where ship_date = v_today and status <> 'cancelled'), 0);
     select count(*), percentile_cont(0.5) within group (order by kg) into v_nrec, v_med
-      from (select kg from fabula.milk_shipments where status <> 'cancelled' order by shipped_at desc limit 10) x;
+      from (select kg from fabula.milk_shipments where status <> 'cancelled' and ship_date >= v_today - 30 order by shipped_at desc limit 10) x;   -- the loads the farm page shows
     if v_nrec < 3 then v_med := null; end if;
     v_fit := (v_order is null and v_med is null)
           or (v_order is not null and p_kg between v_order * 0.7 and v_order * 1.3)
           or (v_left > 0 and p_kg between v_left * 0.7 and v_left * 1.3)
           or (v_med is not null and p_kg between v_med * 0.7 and v_med * 1.3);
-    if not v_fit then
+    if not coalesce(v_fit, false) then   -- NULL = no reference matched (e.g. no order today and the weight far from the usual loads)
       return jsonb_build_object('needs_confirm', true, 'kg', round(p_kg, 1), 'order_kg', v_order, 'left_kg', case when v_left > 0 then v_left end,
         'usual_kg', round(v_med),
         'message_it', case when v_order is not null
@@ -56,7 +56,12 @@ begin
   execute n;
 end $mig$;
 alter table fabula.shopify_variant_map drop constraint if exists shopify_variant_map_kg_per_unit_check;
-alter table fabula.shopify_variant_map add constraint shopify_variant_map_kg_per_unit_check check (kg_per_unit > 0 and kg_per_unit <= 25);
+alter table fabula.shopify_variant_map add constraint shopify_variant_map_kg_per_unit_check check (kg_per_unit > 0 and kg_per_unit <= 25) not valid;
+do $$ begin
+  alter table fabula.shopify_variant_map validate constraint shopify_variant_map_kg_per_unit_check;
+exception when check_violation then
+  raise notice 'v095b: some kg per piece are outside 0–25 kg: fix them in Configurazione → Prodotti Shopify (new values are checked already)';
+end $$;
 
 -- 3 · (C-04) B2B cut-off and delivery days: written the Italian way they are normalised ("18.00", "ore 18" → 18:00; "lun,mar" or
 --     "1-6" → 1,2,3,4,5,6); anything unreadable is refused with a sentence instead of breaking the trade portal. The cut-off falls back
@@ -83,9 +88,12 @@ begin
     v := regexp_replace(v, '\s*-\s*', '-', 'g');
     foreach x in array regexp_split_to_array(v, '\s*[,;/ ]+\s*') loop
       continue when x = '';
-      if x ~ '^[1-7]\s*-\s*[1-7]$' then
-        a := split_part(x, '-', 1)::int; b := trim(split_part(x, '-', 2))::int;
-        if a > b then raise exception 'Giorni di consegna: «%» va scritto dal più piccolo al più grande (es. 1-6)', x using errcode = '22023'; end if;
+      if x like '%-%' then                                 -- a range: 1-6, lun-sab, lunedì-venerdì
+        a := case when split_part(x, '-', 1) ~ '^[1-7]$' then split_part(x, '-', 1)::int else array_position(array['lun','mar','mer','gio','ven','sab','dom'], left(split_part(x, '-', 1), 3)) end;
+        b := case when split_part(x, '-', 2) ~ '^[1-7]$' then split_part(x, '-', 2)::int else array_position(array['lun','mar','mer','gio','ven','sab','dom'], left(split_part(x, '-', 2), 3)) end;
+        if a is null or b is null or split_part(x, '-', 3) <> '' then
+          raise exception 'Giorni di consegna non riconosciuti: «%». Usa 1 = lunedì … 7 = domenica, es. 1-6 oppure 1,2,3', x using errcode = '22023'; end if;
+        if a > b then raise exception 'Giorni di consegna: «%» va scritto dal primo all''ultimo giorno (es. 1-6 o lun-sab)', x using errcode = '22023'; end if;
         days := days || array(select generate_series(a, b));
       elsif x ~ '^[1-7]$' then days := days || x::int;
       else
@@ -139,8 +147,10 @@ create or replace function public.fabula_health() returns jsonb language sql sta
 $$;
 
 -- 5 · (PRINT-03) Go-live board: an automatic check that DDTs and purchase orders carry the legal name, the P.IVA and a street address.
+-- a street address = a street word (via, lungomare, località…) or a house number (a number that is not the 5-digit CAP)
 create or replace function fabula.is_street_address(p text) returns boolean language sql immutable set search_path = fabula, public as $$
-  select coalesce(p, '') ~* '(^|[[:space:],])(via|v\.le|viale|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|traversa|borgo|frazione|fraz\.|s\.s\.|ss|s\.p\.|sp)([[:space:].,]|$)'
+  select coalesce(p, '') ~* '(^|[[:space:],])(via|v\.|viale|v\.le|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|vico|traversa|borgo|frazione|fraz\.|lungomare|rione|salita|discesa|calata|parco|zona|s\.s\.|ss|s\.p\.|sp|snc)([[:space:].,0-9]|$)'
+      or regexp_replace(coalesce(p, ''), '(^|[^0-9])[0-9]{5}([^0-9]|$)', '\1\2', 'g') ~ '[0-9]'
 $$;
 create or replace function fabula.company_docs_check() returns jsonb language sql stable set search_path = fabula, public as $$
   with c as (select trim(coalesce(fabula.setting_text('company.legal_name', ''), '')) ln, trim(coalesce(fabula.setting_text('company.piva', ''), '')) piva,

@@ -51,9 +51,13 @@ tr.tot td{border-bottom:0;font-weight:600}
   const fmtD = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
   const fmtT = s => s ? new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '—';
   // v0.95 (audit PRINT-03): the document header needs the legal name, the P.IVA and a street address (Configurazione → Azienda)
-  const STREET = /(^|[\s,])(via|v\.le|viale|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|traversa|borgo|frazione|fraz\.|s\.s\.|ss|s\.p\.|sp)(?=[\s.,]|$)/i;
+  // a street = a street word (via, lungomare, località…) or a house number (a number that is not the 5-digit CAP)
+  const STREET = /(^|[\s,])(via|v\.|viale|v\.le|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|vico|traversa|borgo|frazione|fraz\.|lungomare|rione|salita|discesa|calata|parco|zona|s\.s\.|ss|s\.p\.|sp|snc)(?=[\s.,0-9]|$)/i;
+  const isStreet = a => STREET.test(a) || /\d/.test(String(a).replace(/(^|\D)\d{5}(?!\d)/g, '$1'));
+  // blocking gaps: legal name, P.IVA, no address at all (or the settings could not be read); an address without a recognisable street only warns
   const companyGaps = (cs, legal, piva, address) => !cs || !cs.length ? ['i dati azienda (non letti: ricarica la pagina)']
-    : [!String(legal || '').trim() && 'ragione sociale', !/^(IT)?\s*\d{11}$/i.test(String(piva || '').trim()) && 'P.IVA', !STREET.test(String(address || '')) && 'indirizzo (via e numero)'].filter(Boolean);
+    : [!String(legal || '').trim() && 'ragione sociale', !/^(IT)?\s*\d{11}$/i.test(String(piva || '').trim()) && 'P.IVA', !String(address || '').trim() && 'indirizzo'].filter(Boolean);
+  const addressWarn = (cs, address) => cs && cs.length && String(address || '').trim() && !isStreet(String(address)) ? `Controlla l'indirizzo dell'azienda («${String(address).trim()}»): manca la via con il numero? (Configurazione → Azienda)` : '';
   async function show(ref) {
     const sheet = $('sheet');
     $('incomplete').hidden = true; $('print').disabled = false; document.body.classList.remove('blockprint');
@@ -70,6 +74,7 @@ tr.tot td{border-bottom:0;font-weight:600}
     const gaps = online ? [] : companyGaps(cs, C.legal_name, C.piva, C.address);   // a wholesale DDT is a legal document; the online packing list is not
     if (gaps.length) { $('incomplete').textContent = `Documento incompleto: mancano ${gaps.join(', ')} (Configurazione → Azienda). Il DDT non si stampa finché non sono compilati.`;
       $('incomplete').hidden = false; $('print').disabled = true; document.body.classList.add('blockprint'); }
+    else if (!online && addressWarn(cs, C.address)) { $('incomplete').textContent = addressWarn(cs, C.address); $('incomplete').hidden = false; }   // a warning, printing stays possible
     const lines = d.lines || []; const totKg = lines.reduce((s, l) => s + Number(l.qty), 0), ordKg = lines.reduce((s, l) => s + Number(l.ordered || 0), 0);
     const destName = d.customer || a.name || 'Cliente online';
     const destAddr = online && a.address1 ? [a.address1, a.address2, [a.zip, a.city].filter(Boolean).join(' ') + (a.provinceCode ? ' (' + a.provinceCode + ')' : '')].filter(Boolean) : [d.customer_address, [d.customer_postcode, d.customer_city].filter(Boolean).join(' ') + (d.customer_province ? ' (' + d.customer_province + ')' : '')].filter(x => x && x.trim());

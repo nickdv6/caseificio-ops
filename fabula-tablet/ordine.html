@@ -67,9 +67,13 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
   const COMPANY = { name: BRAND.name, line1: 'Caseificio di mozzarella di bufala · Agropoli (SA)', legal: '', piva: '', email: '', hours: '' };
 
   // v0.95 (audit PRINT-03): the document header needs the legal name, the P.IVA and a street address (Configurazione → Azienda)
-  const STREET = /(^|[\s,])(via|v\.le|viale|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|traversa|borgo|frazione|fraz\.|s\.s\.|ss|s\.p\.|sp)(?=[\s.,]|$)/i;
+  // a street = a street word (via, lungomare, località…) or a house number (a number that is not the 5-digit CAP)
+  const STREET = /(^|[\s,])(via|v\.|viale|v\.le|piazza|p\.zza|piazzale|corso|c\.so|largo|strada|str\.|località|loc\.|contrada|c\.da|vicolo|vico|traversa|borgo|frazione|fraz\.|lungomare|rione|salita|discesa|calata|parco|zona|s\.s\.|ss|s\.p\.|sp|snc)(?=[\s.,0-9]|$)/i;
+  const isStreet = a => STREET.test(a) || /\d/.test(String(a).replace(/(^|\D)\d{5}(?!\d)/g, '$1'));
+  // blocking gaps: legal name, P.IVA, no address at all (or the settings could not be read); an address without a recognisable street only warns
   const companyGaps = (cs, legal, piva, address) => !cs || !cs.length ? ['i dati azienda (non letti: ricarica la pagina)']
-    : [!String(legal || '').trim() && 'ragione sociale', !/^(IT)?\s*\d{11}$/i.test(String(piva || '').trim()) && 'P.IVA', !STREET.test(String(address || '')) && 'indirizzo (via e numero)'].filter(Boolean);
+    : [!String(legal || '').trim() && 'ragione sociale', !/^(IT)?\s*\d{11}$/i.test(String(piva || '').trim()) && 'P.IVA', !String(address || '').trim() && 'indirizzo'].filter(Boolean);
+  const addressWarn = (cs, address) => cs && cs.length && String(address || '').trim() && !isStreet(String(address)) ? `Controlla l'indirizzo dell'azienda («${String(address).trim()}»): manca la via con il numero? (Configurazione → Azienda)` : '';
   async function show(poNumber) {
     const sheet = $('sheet');
     $('incomplete').hidden = true;
@@ -81,6 +85,7 @@ tr.tot td{border-bottom:0;font-weight:600}tr.tot.g td{font-family:var(--display)
     BRAND.set(Object.fromEntries((cs || []).map(r => [r.key, r.value])), true);
     const CV = Object.fromEntries((cs || []).map(r => [r.key, r.value])), gaps = companyGaps(cs, CV['company.legal_name'], CV['company.piva'], CV['company.address']);
     if (gaps.length) { $('incomplete').textContent = `Documento incompleto: mancano ${gaps.join(', ')} (Configurazione → Azienda).`; $('incomplete').hidden = false; }
+    else if (addressWarn(cs, CV['company.address'])) { $('incomplete').textContent = addressWarn(cs, CV['company.address']); $('incomplete').hidden = false; }
     const { data: po, error } = await sb.from('purchase_orders').select('*, supplier:parties(legal_name, address, city, province, postcode, email, phone, piva, payment_terms_days), lines:purchase_order_lines(qty_ordered, qty_received, unit_price_eur, iva_rate, product:products(sku, name, unit))').eq('po_number', poNumber).maybeSingle();
     if (error) { sheet.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!po) { sheet.innerHTML = `<div class="empty">Ordine ${esc(poNumber)} non trovato.</div>`; return; }

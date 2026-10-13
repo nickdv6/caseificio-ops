@@ -17,6 +17,61 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Audit backlog: items under an hour, High/Critical (v0.95)
+From the 12/10/2026 audit backlog (project doc `claude/audit-2026-10-12/`): every item with effort S and severity High or
+Critical that v0.93/v0.94 had not fixed. Migrations `v095a` (food safety, production) and `v095b` (farm, settings, print,
+watcher); live apply: `tools/go-live/live-apply/2026-10-12_v095_sql-editor.sql`.
+- **Tablet** (`app.js`):
+  - **Esci** (A-12): with records still waiting it first tries to send them. If they cannot go out it refuses, and a second tap
+    within 10 s logs out anyway (no dead end). `close_open_task` signs with the staff id sent with the record.
+  - **Ricotta** (A-16):
+    - A vat started from milk no longer offers ricotta.
+    - The batch close asks «Ricotta con il siero di questo lotto?» Sì / No as a required choice; «No» is stored as `whey_kg = 0`.
+    - Home → Produzione di oggi offers «Avvia ricotta dal siero di oggi» for lots closed in the last 4 hours without ricotta.
+  - **Milk left** (D-09): the start form says «restano 400 kg (ricevuti 1.000, già in caldaia 600)» and refuses more (+2 %).
+    The offline copy now keeps the milk used by closed batches too.
+  - **Impossible values** (D-12): CCP readings and curd pH are checked against the same ranges as the database before
+    anything is saved or queued, offline too.
+- **Database guards:**
+  - D-03: a food-safety hold is lifted only through `release_lot_hold`. A plain UPDATE is refused, and every hold change goes
+    to the audit log. Setting a hold stays open.
+  - D-09: `batch_milk_inputs` cannot exceed the delivery's kg + 2 %, with an Italian message.
+  - D-12:
+    - `haccp_control_points.plausible_min/max` (PAST/STRETCH/RIC 10–99/100, milk −2–45, cold rooms −10–45, ABX and valve 0–1):
+      a reading outside is refused («Valore impossibile… controlla la virgola»). Sensor and simulation rows are exempt.
+    - A CCP is never recorded empty, and `batch_ccp_check` counts only readings with a value.
+    - Curd pH must be between 3 and 8.
+- **Autocontrollo** (`haccp.js`):
+  - B-02: no default lab outcome, and the result is required for conforme/non conforme. «Correggi esito» takes a reason
+    (`correct_lab_result`); the first outcome stays in the sample's notes and the audit log.
+  - B-03: an external calibration needs the certificate number plus the deviation or the PDF, and cannot be dated in the
+    future. Without a deviation it is «da verificare»: the instrument does not go back in service and the due date does not move.
+  - B-04: the register review is a dialog. The period runs from the last review to today (never later), it shows the record
+    and out-of-limit count, needs «Ho letto le registrazioni», and is signed by whoever is logged in.
+  - B-05: «Prelevato» picks the lot from the recent lots, or a typed lot is looked up. `record_sample_taken` upper-cases it
+    and refuses an unknown lot.
+- **Configurazione** (`admin.js`):
+  - C-28: kg per Shopify piece shows the grams, is pre-filled from the title, asks above 5 kg and refuses above 25. DB check 0–25.
+  - C-04: the B2B cut-off is a time field and the delivery days are seven boxes. The database normalises «18.00», «ore 18»,
+    «lun-sab» and «1-6», refuses the rest, and `trade_cutoff_at` falls back to 18:00.
+- **Farm page** (FARM-01):
+  - The weight is read the Italian way («1.050» = 1050) and under 50 kg is refused.
+  - A weight more than ±30 % from today's order (or what is still missing of it) and from the usual loads is spelled out big
+    with «Sì, 105 kg» / «Correggi».
+  - `farm_milk_ship(p_confirm)` repeats the check on the server. The edge function `farm-order` passes it and still works
+    against an older database.
+- **Print** (PRINT-03): a wholesale DDT without legal name, P.IVA or address shows a red banner and cannot be printed. An
+  address without a recognisable street only warns. The PO shows the same banner, and the go-live board has the
+  `company_docs` check.
+- **Outside watcher** (E-20): `public.fabula_health()` adds `bots_ok`/`bots_missed` (a bot slot of the last 4 hours with no run
+  of its own), and `tools/watch/check.sh` fails on it.
+- **SOP** (E-26): rev. 4. The «tablet non funziona» box points to the printed MOD sheet → 🛡 → 📝 Ricopia da foglio di carta
+  with the sheet's date and time; there is a «Chi chiamare» box, the red banner and the 60 h DOP rule.
+- **Tests:**
+  - `prod-test/test_audit_s_items.sql` 63/63 (most fail on v0.94b).
+  - `tablet-test/s_items_e2e.py` 41/41.
+  - Existing e2e tests were updated for the ricotta choice and the refused over-draw.
+
 ## Milk arrival: the load is checked against the driver's paper (v0.94)
 Rest of audit A-10. When more than one farm load is in transit, the tablet:
 - lists them by departure time, age and kg, without lot or DDT;

@@ -31,8 +31,8 @@
     return new Promise(res => {
       const d = $('dlg'), f = $('dlg-form');
       $('dlg-title').textContent = title; $('dlg-body').innerHTML = html; $('dlg-ok').textContent = okText; $('dlg-err').textContent = '';
+      $('dlg-cancel').onclick = () => d.close();                            // a plain button: Enter in a field never means Annulla
       f.onsubmit = async e => {
-        if (e.submitter && e.submitter.value === 'cancel') return;          // method=dialog closes it
         e.preventDefault();
         try { const v = await check(f); d.close(); res(v); } catch (er) { $('dlg-err').textContent = er.message; }
       };
@@ -302,9 +302,15 @@
       const lot = await ask(`Campione ${b.dataset.take} · ${t.analyte_it || ''}`,
         `<div class="form"><div><label>Lotto</label><select id="sm-lot"><option value="">${noLot ? '— nessun lotto (acqua / ambiente) —' : '— scegli il lotto —'}</option>${opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('')}<option value="__none">Nessun lotto: il campione non è di un lotto</option></select></div>
          <div><label>Oppure scrivi il lotto (es. L20261012-A)</label><input id="sm-typed" type="text" autocomplete="off" style="text-transform:uppercase"></div></div>`,
-        'Registra il prelievo', () => {
+        'Registra il prelievo', async () => {
           const typed = $('sm-typed').value.replace(/\s/g, '').toUpperCase(), sel = $('sm-lot').value;
-          if (typed) { if (!known.has(typed) && !/^[LRM]\d/.test(typed)) throw new Error(`Lotto ${typed} non riconosciuto: controlla il codice sull'etichetta`); return typed; }
+          if (typed) {                                                     // not in the list: look it up (older lots, other suppliers' milk)
+            if (!known.has(typed)) {
+              const [a, m] = await Promise.all([sb.from('production_batches').select('batch_lot').eq('batch_lot', typed).limit(1), sb.from('milk_intake').select('milk_lot').ilike('milk_lot', typed).limit(1)]);
+              if (!(a.data || []).length && !(m.data || []).length) throw new Error(`Lotto ${typed} non trovato: controlla il codice sull'etichetta`);
+            }
+            return typed;
+          }
           if (sel === '__none' || (noLot && !sel)) return '';
           if (!sel) throw new Error('Scegli il lotto dall\'elenco, scrivilo, oppure scegli «Nessun lotto»');
           return sel;
