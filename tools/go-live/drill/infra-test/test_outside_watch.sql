@@ -129,8 +129,15 @@ select pg_temp.ck('v_recipe_active uses the Rome date, not current_date',
   pg_get_viewdef('fabula.v_recipe_active'::regclass) not ilike '%current_date%' and pg_get_viewdef('fabula.v_recipe_active'::regclass) ilike '%Europe/Rome%'
   and (select reloptions from pg_class where oid = 'fabula.v_recipe_active'::regclass) @> array['security_invoker=true']);
 set session_replication_role = replica;
+-- a recipe line whose product/component pair has no other version starting today (ids are random: picking «the first»
+-- could hit the one-version-per-day key, as on GitHub's CI #4)
 update fabula.recipes set valid_from = (now() at time zone 'Europe/Rome')::date, valid_to = (now() at time zone 'Europe/Rome')::date
- where id = (select id from fabula.recipes order by id limit 1) returning id as rcp_today \gset
+ where id = (select r.id from fabula.recipes r
+              where not exists (select 1 from fabula.recipes o where o.finished_product_id = r.finished_product_id
+                                  and o.component_product_id = r.component_product_id and o.id <> r.id
+                                  and o.valid_from = (now() at time zone 'Europe/Rome')::date)
+              order by r.id limit 1)
+ returning id as rcp_today \gset
 set session_replication_role = origin;
 set timezone = 'Pacific/Pago_Pago';   -- UTC-11: current_date here is the Rome date minus one for most of the day
 select pg_temp.ck('a component valid only on Rome''s today is in force even when the session date differs',
