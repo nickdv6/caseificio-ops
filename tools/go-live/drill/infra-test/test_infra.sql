@@ -88,7 +88,7 @@ end $$;
 
 -- 6. advisors from the bot: same counts → ok; unknown lint → notice
 do $$ declare s jsonb := (select data->'counts' from fabula.infra_status where key = 'security_scan'); r jsonb; begin
-  r := fabula.infra_record_advisors((select jsonb_agg(jsonb_build_object('name', k, 'level', 'WARN', 'count', v::int)) from jsonb_each_text(s) x(k, v) where k not in ('anon_table_grant','public_bucket')));
+  r := fabula.infra_record_advisors((select jsonb_agg(jsonb_build_object('name', k, 'level', 'WARN', 'count', v::int)) from jsonb_each_text(s) x(k, v) where k not in ('anon_table_grant','public_bucket','rls_open_without_role_rule')));  -- SQL-only checks the advisor never reports
   if jsonb_array_length(r->'unknown') <> 0 then raise exception 'FAIL advisors matching counts flagged: %', r; end if;
   r := fabula.infra_record_advisors('[{"name":"auth_leaked_password_protection","level":"WARN","count":1}]');
   if jsonb_array_length(r->'unknown') <> 1 or not exists (select 1 from fabula.notices where key = 'infra_advisors' and resolved_at is null) then raise exception 'FAIL unknown lint not flagged: %', r; end if;

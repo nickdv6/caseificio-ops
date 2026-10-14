@@ -45,3 +45,16 @@ anon cannot call. 06/10/2026: 32/32 PASS, and the security scan finds nothing ne
 a preamble, Dare/Avere, quoted commas, 1.234,56, Shopify payments CSV in English and Italian: 16/16 PASS.
 (The replay needs `encrypted_password`, `recovery_sent_at`, `confirmation_sent_at` on the stub `auth.users` — added to
 `bootstrap.sql` in v0.82, the v0.81 login migration failed without them.)
+
+## RLS role rules (v1.01a)
+```
+tools/go-live/drill/infra-test/replay.sh rls_test
+su postgres -c "psql -d rls_test -f tools/go-live/drill/infra-test/test_rls_role_rules.sql" | grep -E "PASS|FAIL"
+```
+No write rule reads `true`; bank_rules, milk_shipments, payment_payouts, payment_transactions and recon_acks have their
+`_role_delete` rule; a production login's unfiltered DELETE removes nothing from the finance tables (before v1.01a it emptied
+them), the consultant and marketing can read but not delete, a production login still records a milk shipment, a token
+without a user id writes nothing, the owner still deletes. Scan: a new table with the old pattern raises an ERROR «open
+delete» plus the always-true / missing WITH CHECK warnings and turns the board red; the new pattern (signed in + four role
+rules) is clean; a RESTRICTIVE `true` does not count as a role rule; the advisor cross-check compares `permissive_rls_policy`.
+14/10/2026: 24/24 PASS; on a replay without v1.01a the same suite fails 16 checks (the delete hole included).
