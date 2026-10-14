@@ -1,6 +1,6 @@
 -- v1.00a ops batch (audit E-22, E-24, E-25) · run on a fresh replay:
---   tools/go-live/drill/infra-test/replay.sh ow_test  (after v1.00a is in supabase/migrations; until then add tools/ops/v100a_outside_watch_offsite.sql as an extra file)
---   su postgres -c "psql -d ow_test -f tools/go-live/drill/infra-test/test_outside_watch.sql (moves there with the migration)" | grep -E "PASS|FAIL"
+--   tools/go-live/drill/infra-test/replay.sh ow_test
+--   su postgres -c "psql -d ow_test -f tools/go-live/drill/infra-test/test_outside_watch.sql" | grep -E "PASS|FAIL"   (CI runs it on every push)
 \set ON_ERROR_STOP 0
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
@@ -124,6 +124,18 @@ update fabula.bot_schedule set active = true where agent <> 'test_bot_ow';
 select pg_temp.ck('hourly job scheduled at :50', exists (select 1 from cron.job where jobname = 'fabula_outside_watch' and schedule = '50 * * * *'));
 select pg_temp.ck('board: the off-site check is new, the watcher check is now automatic',
   jsonb_array_length(fabula.ops_dashboard()->'checks') >= 42 and pg_temp.chk('outside_watcher')->>'kind' = 'auto' and pg_temp.chk('offsite_backup') is not null, jsonb_array_length(fabula.ops_dashboard()->'checks')::text);
+-- 6. recipes in force «today» = the Rome date, whatever the session clock says
+select pg_temp.ck('v_recipe_active uses the Rome date, not current_date',
+  pg_get_viewdef('fabula.v_recipe_active'::regclass) not ilike '%current_date%' and pg_get_viewdef('fabula.v_recipe_active'::regclass) ilike '%Europe/Rome%'
+  and (select reloptions from pg_class where oid = 'fabula.v_recipe_active'::regclass) @> array['security_invoker=true']);
+set session_replication_role = replica;
+update fabula.recipes set valid_from = (now() at time zone 'Europe/Rome')::date, valid_to = (now() at time zone 'Europe/Rome')::date
+ where id = (select id from fabula.recipes order by id limit 1) returning id as rcp_today \gset
+set session_replication_role = origin;
+set timezone = 'Pacific/Pago_Pago';   -- UTC-11: current_date here is the Rome date minus one for most of the day
+select pg_temp.ck('a component valid only on Rome''s today is in force even when the session date differs',
+  exists (select 1 from fabula.v_recipe_active where recipe_id = :'rcp_today'), current_date::text || ' vs Rome ' || (now() at time zone 'Europe/Rome')::date::text);
+reset timezone;
 select pg_temp.ck('security scan: nothing new',
   not exists (select 1 from fabula.security_findings() f where not exists (select 1 from fabula.security_accepted a where a.key = f.key)),
   (select string_agg(f.key, ', ') from fabula.security_findings() f where not exists (select 1 from fabula.security_accepted a where a.key = f.key)));

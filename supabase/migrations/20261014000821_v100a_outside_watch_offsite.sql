@@ -5,6 +5,7 @@
 --   Supabase down                             → the watcher alerts the partners' Telegram group directly.
 -- Board: «Outside watcher» becomes automatic, new check «Off-site backup copy»; the monthly restore drill on GitHub
 -- records itself, so «Backup restore tested» stays green without a hand-written row.
+-- Also (5): v_recipe_active decides «today» on the Rome date, not the database's UTC date (found by CI on 13/10).
 
 -- 1. reports from GitHub. Token = the Vault secret backup_export_token (the GitHub jobs hold it as BACKUP_EXPORT_TOKEN).
 create or replace function public.fabula_outside_report(p_token text, p_kind text, p_detail jsonb default '{}'::jsonb)
@@ -192,3 +193,13 @@ insert into fabula.dash_checks (key, sort, label, kind, done, note, updated_at) 
   ('outside_watcher', 42, 'Outside watcher running and reporting (GitHub, last run < 24 h)', 'auto', false, null, now()),
   ('offsite_backup', 43, 'Off-site backup copy in the last 2 nights (encrypted, GitHub)', 'auto', false, null, now())
 on conflict (key) do update set label = excluded.label, sort = excluded.sort, kind = excluded.kind, updated_at = excluded.updated_at;
+
+-- 5. recipes in force today: the Rome date, not current_date (the database runs on UTC: between 00:00 and 02:00 Rome,
+--    01:00 in winter, «today» was still yesterday, so a component added or taken out in that window took effect late;
+--    v0.99's recipe editor view already used the Rome date). Same columns; security_invoker kept.
+create or replace view fabula.v_recipe_active with (security_invoker = true) as
+select r.id as recipe_id, r.finished_product_id, p.sku, p.name, p.unit, r.basis, r.qty_per_unit, r.round_up,
+       r.phase, r.step_order, r.instruction_it, r.source
+from fabula.recipes r join fabula.products p on p.id = r.component_product_id
+where r.valid_from <= (now() at time zone 'Europe/Rome')::date
+  and (r.valid_to is null or r.valid_to >= (now() at time zone 'Europe/Rome')::date);
