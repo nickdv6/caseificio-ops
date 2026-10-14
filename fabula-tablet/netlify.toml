@@ -1,0 +1,8 @@
+# Netlify: deploy only when the app changed (14/10/2026). Every push to main used to rebuild and redeploy the site,
+# 155 pushes since 01/10, and the account ran out of its plan allowance («usage_exceeded», site paused 14/10).
+# Pushes that touch only migrations, tests, docs, tools or workflows are now skipped (exit 0 = skip the build).
+# Two copies on purpose: Netlify reads this file from the site's base directory, which may be the repo root or
+# fabula-tablet/. The path below starts with «:/», so it means the repo's fabula-tablet/ folder either way.
+# Only «ignore» is set here: base, publish and build settings stay as they are in the Netlify dashboard.
+[build]
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- :/fabula-tablet/"
