@@ -4,6 +4,11 @@ v0.87 changed ONLY the messaging parts of the 15 scheduled bots. The data/SQL/Sh
 so to roll a bot back: take its v0.87 prompt (tools/bots/prompts/<agent>.txt), delete the "MESSAGE RULES" block and the
 bot's message step, and paste back the old message step below plus the two shared blocks at the bottom.
 
+**v1.02 (14/10/2026):** the three Shopify tasks are paused: the database does their job (server function `shopify-sync`).
+Their prompts stay in `tools/bots/prompts/` marked RETIRED, for going back (`shopify.sync_enabled = 0`). The weekly brief task
+is merged into the daily brief (v0.88) and its prompt file is gone. The shared rules are copied into every prompt by
+`tools/bots/sync_rules.py`; after a change the prompts are pasted into the tasks again (by Claude, with the ids below).
+
 Scheduled task IDs:
 | agent | task id | schedule (Rome) |
 |---|---|---|

@@ -19,7 +19,7 @@
     ['acquisti', 'Acquisti', ['purchasing'], 'Quando il bot Acquisti propone un ordine. Tempi e minimi per singolo fornitore: <a class="lnk" href="console.html#anag">Console → Anagrafiche</a>.'],
     ['vendite', 'Vendite e prezzi', ['price', 'sell', 'sales'], 'Prezzi di riferimento, soglie del bot Vendere prima (lotti in scadenza) e obiettivi del bot Vendite.'],
     ['professionisti', 'Professionisti · ingrosso B2B', ['trade'], 'Regole del portale per ristoranti, pizzerie e hotel: minimo, ora limite, giorni e fasce di consegna, sconti e pagamento. Richieste, piani e listino: <a class="lnk" href="ingrosso.html">Ingrosso</a>.'],
-    ['canali', 'Shopify, ritiri e spedizioni', ['shopify', 'pickup', 'ship'], 'Shopify è la cassa e il sito: le vendite arrivano ogni mattina (bot Ordini Shopify). Fasce di ritiro (anche in Marketing) e vettori/tolleranze usati dal tablet in spedizione.'],
+    ['canali', 'Shopify, ritiri e spedizioni', ['shopify', 'pickup', 'ship'], 'Shopify è la cassa e il sito: ordini, clienti e giacenze li sincronizza il database ogni mattina (Configurazione → Bot → Ordini, Clienti e Giacenze Shopify). Fasce di ritiro (anche in Marketing) e vettori/tolleranze usati dal tablet in spedizione.'],
     ['incassi', 'Incassi e banca', ['recon'], 'Tolleranze degli abbinamenti fra versamenti Shopify, estratto conto e ordini (<a class="lnk" href="console.html#incassi">Console → Incassi</a>).'],
     ['marketing', 'Marketing', ['mkt'], 'Usati dal bot Marketing e dalle bozze dei contenuti.'],
     ['sicurezza', 'Sicurezza alimentare e DOP', ['food', 'dop'], 'Latte crudo o pastorizzato (attiva il CCP 2), laboratorio, consulenti, revisione del manuale e tariffe DOP. Regole complete nel <a class="lnk" href="haccp.html">Manuale di Autocontrollo</a>.'],
@@ -31,7 +31,7 @@
   ];
   const SEC_OF = Object.fromEntries(SECTIONS.flatMap(([id, , g]) => g.map(p => [p, id])));
   // keys that are ids, tokens or addresses: folded under "Impostazioni tecniche" at the end of their section
-  const TECH = new Set(['milk.farm_token', 'milk.farm_supplier_id', 'trade.shopify_market_id', 'trade.shopify_catalog_id', 'trade.shopify_price_list_id', 'trade.edge_url', 'trade.job_secret', 'trade.store_url',
+  const TECH = new Set(['shopify.sync_url', 'milk.farm_token', 'milk.farm_supplier_id', 'trade.shopify_market_id', 'trade.shopify_catalog_id', 'trade.shopify_price_list_id', 'trade.edge_url', 'trade.job_secret', 'trade.store_url',
     'mkt.ai_provider', 'mkt.predis_brand_id', 'mkt.output_language', 'sales.whey_sku_regex', 'infra.sw_seen']);
   const SECRET = new Set(['trade.job_secret', 'milk.farm_token']);   // shown masked, "mostra" reveals
   const READONLY = new Set(['infra.sw_seen']);   // written by the system, shown as text
@@ -246,7 +246,13 @@
     haccp_nudge: 'Prepara l\'elenco serale delle registrazioni HACCP che mancano (compare anche sul tablet).',
     ops_health: 'Fa il controllo serale del sistema e ne scrive il riepilogo.',
     sell_down: 'Prepara la proposta di promozione dei prodotti da vendere prima (da approvare).',
-    backup_export: 'Avvia subito il backup completo del database (quello della notte).' };
+    backup_export: 'Avvia subito il backup completo del database (quello della notte).',
+    // v1.02 (E-18): the Shopify jobs run in the database itself; «Esegui ora» starts them now
+    shopify_orders: 'Copia subito da Shopify gli ordini online e del banco degli ultimi giorni e conferma su Shopify le spedizioni imballate.',
+    shopify_customers: 'Copia subito da Shopify l\'elenco completo dei clienti (non disattiva nessuno se ne mancano troppi).',
+    shopify_inventory: 'Confronta subito le giacenze con Shopify (e le aggiorna, se l\'aggiornamento è acceso).' };
+  // jobs the database runs by itself (bot_schedule.runner = 'db'): no Claude task behind them
+  const DBJOB = new Set(['shopify_orders', 'shopify_customers', 'shopify_inventory', 'backup_export']);
   // a message's button only opens a page of the app (the same rule as fabula.safe_link in the database)
   const LINK_OK = /^(index|console|haccp|admin|ingrosso|vendite|marketing|latte|consorzio|labels|registro)\.html(#[A-Za-z0-9=&:._-]{0,120})?$/;
   // Bot dashboard redesign (03/10): status summary on top, bots grouped by status (da sistemare → da controllare → in ordine → disattivati),
@@ -336,7 +342,7 @@
       const st = !b.active ? 'off' : (b.last_status === 'error' || b.unread_alerts > 0 || b.last_severity === 'alert') ? 'al' : b.last_severity === 'warn' ? 'wn' : !b.last_run_at ? 'new' : 'ok';
       const raw = (b.last_title || '').trim(), generic = !raw || [b.name_it, b.display_name, bdRole[b.agent]].some(x => x && (raw === x || raw.startsWith(x + ' · ')));
       return { agent: b.agent, nick: bdNick[b.agent] ? bdNick[b.agent].nickname || '' : '', role: bdRole[b.agent], st, err: b.active && b.last_status === 'error',
-        sched: schedTxt(b.due_times, b.weekdays, b.month_day), next: b.active ? nextRun(b.due_times, b.weekdays, b.month_day) : null,
+        sched: schedTxt(b.due_times, b.weekdays, b.month_day) + (DBJOB.has(b.agent) ? ' · dal database' : ''), next: b.active ? nextRun(b.due_times, b.weekdays, b.month_day) : null,
         last: b.last_run_at, line: cleanTxt(b.last_status === 'error' ? (b.last_summary || 'Ultima esecuzione fallita') : generic ? (b.last_summary || raw) : raw),
         unread: b.unread || 0, unreadAl: b.unread_alerts || 0, active: b.active, run: !!RUN_NOW[b.agent] };
     });
@@ -376,7 +382,8 @@
     const rn = $('bd-run');
     if (bdAgent && RUN_NOW[bdAgent] && PERM.can('sistema', 2)) {
       rn.hidden = false;
-      rn.innerHTML = `<div><b>${esc(bdRole[bdAgent] || bdAgent)} · Esegui ora (versione del database)</b><span>${esc(RUN_NOW[bdAgent])} Usa i numeri del database, senza il commento del bot, e resta registrato con il tuo nome.</span></div><button class="btn sm" id="bd-run-go" type="button">Esegui ora</button>`;
+      const sync = /^shopify_/.test(bdAgent);
+      rn.innerHTML = `<div><b>${esc(bdRole[bdAgent] || bdAgent)} · Esegui ora${sync ? '' : ' (versione del database)'}</b><span>${esc(RUN_NOW[bdAgent])} ${sync ? 'Il risultato arriva qui entro un paio di minuti e resta registrato con il tuo nome.' : 'Usa i numeri del database, senza il commento del bot, e resta registrato con il tuo nome.'}</span></div><button class="btn sm" id="bd-run-go" type="button">Esegui ora</button>`;
       $('bd-run-go').onclick = () => runNow(bdAgent);
     } else { rn.hidden = true; rn.innerHTML = ''; }
     // the feed: for me / open alarms / everything
@@ -439,13 +446,13 @@
   }
   async function runNow(agent) {
     const t = bdRole[agent] || botTitle(agent), b = $('bd-run-go');
-    if (!confirm(`${t}: eseguire adesso la versione del database?\n\n${RUN_NOW[agent]}`)) return;
+    if (!confirm(/^shopify_/.test(agent) ? `${t}: avviare adesso la sincronizzazione con Shopify?\n\n${RUN_NOW[agent]}` : `${t}: eseguire adesso la versione del database?\n\n${RUN_NOW[agent]}`)) return;
     await UI.act(b, async () => {
       let r = await sb.rpc('run_bot_fallback', { p_agent: agent });
       if (r.error && r.error.hint === 'confirm') { if (!confirm(r.error.message)) return false; r = await sb.rpc('run_bot_fallback', { p_agent: agent, p_confirm: true }); }
       if (r.error) throw r.error;
       loadBotFeed(); if ($('runs-card').open) loadRuns(); return r.data;
-    }, d => `Fatto · ${(d && (d.title || d.summary)) || t}`);
+    }, d => d && d.started ? `${d.title} · ${d.summary}` : `Fatto · ${(d && (d.title || d.summary)) || t}`);
   }
   document.querySelectorAll('.bd-bar .chip[data-f]').forEach(c => c.onclick = () => { bdFilter = c.dataset.f; bdLimit = 50; document.querySelectorAll('.bd-bar .chip[data-f]').forEach(x => x.setAttribute('aria-pressed', x === c)); loadBotFeed(); });
   $('bd-en').onclick = () => { bdEn = !bdEn; $('bd-en').setAttribute('aria-pressed', bdEn); loadBotFeed(); };
@@ -812,7 +819,8 @@
   // ---------- Avvisi su Telegram (v0.96, audit E-01) ----------
   // Each person links their own Telegram (or the owner makes the link for them); the alerts then reach the phone with
   // «Me ne occupo io». Owner/partners also see who is linked and the last alerts with who took them.
-  const NT_TOPICS = [['food_safety', 'Sicurezza alimentare', 'a qualsiasi ora'], ['infra', 'Sistema: backup, bot, tablet', 'a qualsiasi ora'], ['decisions', 'Decisioni da prendere', 'non nelle ore di silenzio']];
+  // v1.02b (E-07): at night only food safety and «system down» go out at once; the rest waits for the end of the silence
+  const NT_TOPICS = [['food_safety', 'Sicurezza alimentare', 'a qualsiasi ora'], ['infra', 'Sistema: backup, bot, tablet', 'subito solo se il sistema è giù, il resto dopo il silenzio'], ['decisions', 'Decisioni da prendere (latte, promo, ingrosso)', 'non nelle ore di silenzio']];
   const NT_TZ = [['Europe/Rome', 'ora italiana'], ['America/New_York', 'ora della costa est USA']];
   const ntTime = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
   function ntLinkBox(box, d, forOther) {
@@ -842,10 +850,12 @@
         <div class="hint">Il responsabile HACCP e chi è in turno ricevono comunque la sicurezza alimentare.</div>
         <div class="row" style="align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px">Silenzio dalle <input type="time" id="nt-qf" value="${esc(me.quiet_from)}"> alle <input type="time" id="nt-qt" value="${esc(me.quiet_to)}">
           <select id="nt-tz" aria-label="Fuso orario">${tzs.map(([v, l]) => `<option value="${esc(v)}"${v === me.tz ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="row" style="align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px">Riepilogo ogni giorno alle <input type="time" id="nt-dg" value="${esc(me.digest_at || '')}" aria-label="Ora del riepilogo">
+          <small class="status">decisioni in attesa, allarmi aperti, novità e approvazioni automatiche in un solo messaggio · vuoto = nessun riepilogo</small></div>
         <div class="row" style="gap:6px;margin-top:8px"><button class="btn save" id="nt-save">Salva</button><button class="btn sec" id="nt-test">Manda un messaggio di prova</button><button class="btn warn" id="nt-unlink">Scollega</button></div>`;
       $('nt-save').onclick = async () => {
         const topics = [...meBox.querySelectorAll('[data-topic]')].filter(x => x.checked).map(x => x.dataset.topic);
-        const { error } = await sb.rpc('notify_set_prefs', { p_topics: topics, p_quiet_from: $('nt-qf').value || null, p_quiet_to: $('nt-qt').value || null, p_tz: $('nt-tz').value });
+        const { error } = await sb.rpc('notify_set_prefs', { p_topics: topics, p_quiet_from: $('nt-qf').value || null, p_quiet_to: $('nt-qt').value || null, p_tz: $('nt-tz').value, p_digest_at: $('nt-dg').value || '' });
         if (error) return toast(error.message, 'err'); toast('Salvato'); loadNotify();
       };
       $('nt-test').onclick = async () => { const { error } = await sb.rpc('notify_test'); if (error) return toast(error.message, 'err'); toast('Messaggio di prova in partenza: arriva entro un minuto'); };

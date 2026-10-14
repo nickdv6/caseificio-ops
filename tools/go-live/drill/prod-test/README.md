@@ -156,3 +156,21 @@ runs the watchdog, the evening check's «già segnalato», a bot that failed is 
 (profile, only the stand-in bots, asks again the second time), refused saves (profiles, values without ids, HACCP flag, «Segna come
 rifatta» with a note, the alarm closes when nothing is left for that tablet), the waiting-records date, grants and the security
 check. 14/10/2026: 71/71 PASS on a fresh copy and on the database built by the SQL Editor script (live-identical functions).
+
+`test_shopify_sync_digest.sql` (v1.02, audit E-18 Shopify sync in the database and E-07 morning summary / quiet nights) — the customer
+copy (a list shorter than Shopify's count changes nothing, a repeat is refused, a mass disappearance deactivates nobody and lists
+who is missing, a few within 5 % are deactivated, the old one-argument call still works, a browser cannot run the copy nor read the
+function key nor call the sync), the order copy (count, total or a repeat that disagree write nothing; the rest as before, the POS
+day closed), the clock (database jobs vs Claude tasks, the slot calls with the key, no second call within 20 minutes, one retry for a
+call that never started and one for a failed run, a run in progress left alone, Sunday, switched off), one run at a time, the
+messages written by the database (new customers are info, a refused copy is an error with the cause and no second Telegram, an
+unlinked product then «(invariato)», a refused shipment, stock report-only then «(invariato)», a missing Shopify permission),
+«Esegui ora» (profile, asks when it already ran or was just started, the name in the call), the watchdog incident text, the review
+fixes (a run cut short is marked failed and called again, a call that never reached the function becomes a failed run with the
+reason, the same alarm while open is «(invariato)» with no second Telegram, a stock failure with the push on is an alarm, backups
+without the key), Telegram timing (a bot that did not start waits for the end of the silence, «system down» and food safety go now,
+the scheduler stopped is urgent, a routine decision is «Da decidere» without reminder and says when it approves itself), the
+summary (once a day at the person's time, before/after/twice, the sections, no buttons, across midnight, «Niente da segnalare»,
+what a casaro may not see, an incident that cleared is not sent late, one still open is folded into the summary), the summary time
+in Configurazione, and the security check. Run on a fresh replay. 14/10/2026: 43/43 PASS on a fresh copy and on the database built
+by the SQL Editor script (live-identical functions).

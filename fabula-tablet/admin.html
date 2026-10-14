@@ -236,11 +236,12 @@ details.tech .hint{margin-top:4px}
         <div class="box"><h4>2 · Il lavoro non si ferma</h4><ul>
           <li>Tablet, Autocontrollo, etichette e consegne funzionano senza bot.</li>
           <li>Se un bot non parte o dà errore, poco dopo l'orario il database fa da solo il lavoro essenziale: piano latte, ordini ai fornitori, ordini fissi ingrosso, elenco HACCP della sera, controllo serale, promozione «vendere prima», backup della notte. Lo trovi come «Sostituito dal database».</li>
-          <li>Per farlo subito: tocca il bot qui sopra → «Esegui ora (versione del database)».</li></ul></div>
+          <li>Per farlo subito: tocca il bot qui sopra → «Esegui ora (versione del database)».</li>
+          <li>Ordini, clienti e giacenze Shopify li copia il database stesso (non sono bot di Claude): se danno errore, tocca il bot → «Esegui ora».</li></ul></div>
         <div class="box"><h4>3 · Cosa manca finché non ripartono</h4><ul>
-          <li>Ordini e giacenze Shopify: controlla gli ordini online direttamente su Shopify e non lasciare in vendita online un prodotto finito al banco.</li>
           <li>Brief del mattino: guarda Console → Oggi.</li>
-          <li>Clienti Shopify, Vendite, Marketing, scadenze e revisione mensile possono aspettare un giorno.</li></ul></div>
+          <li>Vendite, Marketing, scadenze e revisione mensile possono aspettare un giorno.</li>
+          <li>Se è la sincronizzazione Shopify a non riuscire nemmeno con «Esegui ora»: controlla gli ordini online direttamente su Shopify e non lasciare in vendita online un prodotto finito al banco.</li></ul></div>
         <div class="box"><h4>4 · Farli ripartire</h4><ul>
           <li>I bot sono attività programmate di Claude sull'account di Nick: li fa ripartire solo chi ha quell'account (di solito c'è da ricollegare Supabase o Shopify).</li>
           <li>Scrivi a Nick quale bot, da quando e cosa dice l'allarme. Per lui è notte fino alle 13 italiane: intanto vale il punto 2.</li>

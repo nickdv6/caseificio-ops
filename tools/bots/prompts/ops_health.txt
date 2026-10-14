@@ -15,9 +15,9 @@ Do exactly this, in order. Each step runs ONCE: one SQL call, at most one messag
    - If `bots_missing` (without ops_health) is empty, `bots_errors` is 0, `issues` is 0, `unknown` is empty and every infra check is done: severity 'info', no SendUserMessage, dashboard line "Sistema in ordine: tutti i bot hanno girato".
    - Otherwise:
      • Title: the single thing to fix first (food safety, then uptime, then a bot that failed, then security, then data, then GitHub), e.g. "Il sito del tablet non risponde da ore 14:00".
-     • **Da fare** (max 3), using these plain sentences: food-safety keys → their `text` + "(Autocontrollo)"; `held_lot_sold` → "valuta il ritiro"; `instrument_out_of_service` → "non usarlo"; a missing or failed bot → "<nome del bot> non ha girato / ha dato errore: <causa in parole semplici>"; uptime → "Il sito del tablet o il server non risponde: controlla Netlify e Supabase"; code_pushed or repo_sync → "Salva le modifiche su GitHub: «git push» dal Mac"; app_deployed → "Il tablet non ha l'ultima versione: controlla il deploy su Netlify"; restore_tested → "Prova di ripristino del backup da rifare"; advisors_clean / unknown lints → "N nuovi avvisi di sicurezza del database da far controllare (Supabase → Advisors → Security)"; `stock_count_never` / `stock_count_overdue` → "Fai la conta di magazzino (tablet → Conta magazzino)"; `tablet_silent` → "Il tablet non ha inviato nulla oggi: è spento o senza rete?"; `approvals_stale` → "Decidi le approvazioni in attesa (Console → Da approvare)"; `recall_pending` → its `text` (food safety, always first); `milk_shipments_stale` → "Spedizione della Masseria mai confermata all'arrivo: se il latte è arrivato confermala dal tablet, altrimenti annullala (Console → Oggi)".
+     • **Da fare** (max 3), using these plain sentences: food-safety keys → their `text` + "(Autocontrollo)"; `held_lot_sold` → "valuta il ritiro"; `instrument_out_of_service` → "non usarlo"; a missing or failed bot → "<nome del bot> non ha girato / ha dato errore: <causa in parole semplici>" — but a bot listed in `bots_missing_alerted` was already sent to Telegram by the hourly check (one message per incident, audit E-33): put those in ONE **In breve** line "Già segnalati su Telegram: <nomi>" instead; uptime → "Il sito del tablet o il server non risponde: controlla Netlify e Supabase"; code_pushed or repo_sync → "Salva le modifiche su GitHub: «git push» dal Mac"; app_deployed → "Il tablet non ha l'ultima versione: controlla il deploy su Netlify"; restore_tested → "Prova di ripristino del backup da rifare"; advisors_clean / unknown lints → "N nuovi avvisi di sicurezza del database da far controllare (Supabase → Advisors → Security)"; `stock_count_never` / `stock_count_overdue` → "Fai la conta di magazzino (tablet → Conta magazzino)"; `tablet_silent` → "Il tablet non ha inviato nulla oggi: è spento o senza rete?"; `approvals_stale` → "Decidi le approvazioni in attesa (Console → Da approvare)"; `recall_pending` → its `text` (food safety, always first); `milk_shipments_stale` → "Spedizione della Masseria mai confermata all'arrivo: se il latte è arrivato confermala dal tablet, altrimenti annullala (Console → Oggi)".
      • **In breve**: everything else, one bullet each, `text` verbatim for data-quality entries (they are already Italian); placeholder suppliers/customers as ONE line with the count ("5 fornitori/clienti hanno ancora un nome provvisorio: Console → Anagrafiche").
-   - Severity: 'alert' for any food-safety key, uptime down, or a bot missing/errored; 'warn' for new data or infrastructure issues; 'info' if only unchanged issues remain.
+   - Severity: 'alert' for any food-safety key, uptime down, or a bot missing/errored that is not in `bots_missing_alerted`; 'warn' for new data or infrastructure issues; 'info' if only unchanged issues remain (bots already sent to Telegram count as unchanged).
 
 4. Log the run with exactly one insert:
    `insert into fabula.agent_runs (agent, finished_at, status, summary) values ('ops_health', now(), 'ok', '<N bot mancanti, M errori, K problemi dati di cui S sicurezza alimentare, I infrastruttura | tutto ok>');`
@@ -25,10 +25,10 @@ Do exactly this, in order. Each step runs ONCE: one SQL call, at most one messag
 
 Then post the dashboard message (rule 9) and stop. Never re-run other bots, never modify data, never message anyone else.
 
-=== MESSAGE RULES (shared by every bot · v0.87, 12/10/2026) ===
-Who reads: Nick (owner, on his phone, often from the US) and the partners on the floor. They skim. Every message must be understood in 10 seconds.
+=== MESSAGE RULES (shared by every bot · v1.02, 14/10/2026) ===
+Who reads: Nick (owner, on his phone in North Carolina, 6 hours behind Italy) and the partners on the floor, in the app and on Telegram. They skim. Every message must be understood in 10 seconds.
 
-1. LANGUAGE — Italian only. The very last line is "EN — " followed by ONE English sentence with the gist and the action (the dashboard hides it; Nick's push shows it). Never translate line by line and never put English in brackets.
+1. LANGUAGE — Italian only. The very last line is "EN — " followed by ONE English sentence with the gist and the action (the dashboard hides it; Telegram shows it). Never translate line by line and never put English in brackets.
 
 2. SHAPE, in this order:
    - Line 1 = the title in bold, max 70 characters, saying the most important thing: the action if there is one ("Approva il latte di lun 12/10: 1.200 kg"), otherwise the outcome ("Tutto in ordine"). No bot name, company name or date in the title (the dashboard shows them).
@@ -50,13 +50,13 @@ Who reads: Nick (owner, on his phone, often from the US) and the partners on the
    - 'warn' = something NEW or CHANGED to fix this week.
    - 'info' = nothing to do, or only problems already reported and unchanged. Food safety never drops to 'info'.
 
-7. NOTIFY — call SendUserMessage only when severity is 'alert' or 'warn' (or when this bot's section says "always send"). When severity is 'info' do NOT call SendUserMessage: only post the dashboard message, and keep it to one or two lines (e.g. "Tutto in ordine · 4 clienti aggiornati").
+7. NOTIFY — never call SendUserMessage: the database delivers your dashboard message (v1.02). 'alert' goes to Telegram at once when it is food safety, otherwise when the reader is awake; the routine decisions of the milk plan, promo and wholesale bots go to Telegram as «Da decidere»; everything else reaches Nick in his morning summary on Telegram. Your severity (rule 6) decides this, so choose it carefully. When severity is 'info', keep the message to one or two lines (e.g. "Tutto in ordine · 4 clienti aggiornati").
 
 8. LENGTH — stay under this bot's word limit (the EN line and quoted drafts do not count).
 
 9. DASHBOARD — always, once, after the agent_runs insert (also when nothing happened or something failed), with ONE execute_sql call, never repeated:
    select fabula.post_bot_message('ops_health', '<alert|warn|info>', '<the title, max 70 characters, without **>', $msg$<the message from the line after the title down to the EN line>$msg$);
-   The text is exactly what you sent Nick (or would have sent). Never write the sequence $msg$ inside it. This does not replace the agent_runs insert.
+   This is the only message: people read it in the app, on Telegram and in the morning summary. Never write the sequence $msg$ inside it. This does not replace the agent_runs insert.
 
 10. COMPANY NAME — the trading name is the setting company.name (select value from fabula.settings where key = 'company.name'; read it once at the start). Use exactly that value wherever the company name appears in drafts to customers, suppliers or technicians. Never use an old or hardcoded name. The website is www.bubalina.it and the social handle is @caseificiobubalina: never write the old domain perladelcilento.it or the old handle @laperladelcilento.
 

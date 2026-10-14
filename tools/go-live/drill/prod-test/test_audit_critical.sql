@@ -268,19 +268,20 @@ select pg_temp.ck('E-01 a decision goes to who subscribed, after their quiet hou
   and (select due_at <= now() from fabula.notify_deliveries where outbox_id = :'dc1' and chat_id = 9003),
   (select string_agg(chat_id || '@' || to_char(due_at at time zone 'Europe/Rome', 'HH24:MI'), ', ') from fabula.notify_deliveries where outbox_id = :'dc1'));
 select fabula.post_bot_message('ops_health', 'alert', 'Backup notturno non riuscito', null) bm3 \gset
-select pg_temp.ck('E-01 an infrastructure alert goes to the owner only, at once (quiet hours or not), with no reminder',
-  (select topic = 'infra' and escalate_at is null from fabula.notify_outbox where source_ref = :'bm3')
-  and (select string_agg(chat_id::text, ',') = '9001' and bool_and(due_at <= now()) from fabula.notify_deliveries d join fabula.notify_outbox o on o.id = d.outbox_id where o.source_ref = :'bm3'));
+-- v1.02b (E-07): a system alarm that is not «system down» waits for the end of the owner's quiet hours, like a decision
+select pg_temp.ck('E-01 an infrastructure alert goes to the owner only, with no reminder; in his quiet hours it waits (v1.02b)',
+  (select topic = 'infra' and escalate_at is null and not urgent from fabula.notify_outbox where source_ref = :'bm3')
+  and (select string_agg(chat_id::text, ',') = '9001' and bool_and(due_at > now() + interval '30 minutes') from fabula.notify_deliveries d join fabula.notify_outbox o on o.id = d.outbox_id where o.source_ref = :'bm3'));
 select fabula.post_bot_message('produzione', 'warn', 'Resa bassa sul lotto LY', null) bm4 \gset
 select fabula.post_bot_message('produzione', 'alert', 'SIMULAZIONE · Lotto LZ senza CCP', null) bm5 \gset
 select pg_temp.ck('E-01 warnings and simulations are not pushed', not exists (select 1 from fabula.notify_outbox where source_ref in (:'bm4', :'bm5')));
 
 select fabula.notify_tick() t1 \gset
 select pg_temp.ck('E-01 the minute tick wakes the sender when something is due',
-  (:'t1'::jsonb ->> 'due')::int = 5 and exists (select 1 from net.http_request_queue where url like '%/functions/v1/notify' and body ->> 'op' = 'dispatch'), :'t1');
+  (:'t1'::jsonb ->> 'due')::int = 4 and exists (select 1 from net.http_request_queue where url like '%/functions/v1/notify' and body ->> 'op' = 'dispatch'), :'t1');
 select fabula.notify_claim(25) cl \gset
 select pg_temp.ck('E-01 the sender gets the due messages only (decision for the owner waits), as Telegram HTML with buttons',
-  jsonb_array_length(:'cl'::jsonb) = 5
+  jsonb_array_length(:'cl'::jsonb) = 4
   and exists (select 1 from jsonb_array_elements(:'cl'::jsonb) x where x ->> 'text' like E'⚠ <b>SICUREZZA ALIMENTARE</b>\n<b>Lotto LX chiuso senza CCP 3 &lt;filatura&gt;</b>\n<b>Da fare</b>%Zio Ciro%' and (x ->> 'buttons')::boolean)
   and not exists (select 1 from jsonb_array_elements(:'cl'::jsonb) x where (x ->> 'chat_id')::bigint = 9001 and x ->> 'outbox_id' = :'dc1'),
   left(:'cl', 400));

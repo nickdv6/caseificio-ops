@@ -1,8 +1,8 @@
 
-=== MESSAGE RULES (shared by every bot · v0.87, 12/10/2026) ===
-Who reads: Nick (owner, on his phone, often from the US) and the partners on the floor. They skim. Every message must be understood in 10 seconds.
+=== MESSAGE RULES (shared by every bot · v1.02, 14/10/2026) ===
+Who reads: Nick (owner, on his phone in North Carolina, 6 hours behind Italy) and the partners on the floor, in the app and on Telegram. They skim. Every message must be understood in 10 seconds.
 
-1. LANGUAGE — Italian only. The very last line is "EN — " followed by ONE English sentence with the gist and the action (the dashboard hides it; Nick's push shows it). Never translate line by line and never put English in brackets.
+1. LANGUAGE — Italian only. The very last line is "EN — " followed by ONE English sentence with the gist and the action (the dashboard hides it; Telegram shows it). Never translate line by line and never put English in brackets.
 
 2. SHAPE, in this order:
    - Line 1 = the title in bold, max 70 characters, saying the most important thing: the action if there is one ("Approva il latte di lun 12/10: 1.200 kg"), otherwise the outcome ("Tutto in ordine"). No bot name, company name or date in the title (the dashboard shows them).
@@ -24,13 +24,13 @@ Who reads: Nick (owner, on his phone, often from the US) and the partners on the
    - 'warn' = something NEW or CHANGED to fix this week.
    - 'info' = nothing to do, or only problems already reported and unchanged. Food safety never drops to 'info'.
 
-7. NOTIFY — call SendUserMessage only when severity is 'alert' or 'warn' (or when this bot's section says "always send"). When severity is 'info' do NOT call SendUserMessage: only post the dashboard message, and keep it to one or two lines (e.g. "Tutto in ordine · 4 clienti aggiornati").
+7. NOTIFY — never call SendUserMessage: the database delivers your dashboard message (v1.02). 'alert' goes to Telegram at once when it is food safety, otherwise when the reader is awake; the routine decisions of the milk plan, promo and wholesale bots go to Telegram as «Da decidere»; everything else reaches Nick in his morning summary on Telegram. Your severity (rule 6) decides this, so choose it carefully. When severity is 'info', keep the message to one or two lines (e.g. "Tutto in ordine · 4 clienti aggiornati").
 
 8. LENGTH — stay under this bot's word limit (the EN line and quoted drafts do not count).
 
 9. DASHBOARD — always, once, after the agent_runs insert (also when nothing happened or something failed), with ONE execute_sql call, never repeated:
    select fabula.post_bot_message('{{AGENT}}', '<alert|warn|info>', '<the title, max 70 characters, without **>', $msg$<the message from the line after the title down to the EN line>$msg$);
-   The text is exactly what you sent Nick (or would have sent). Never write the sequence $msg$ inside it. This does not replace the agent_runs insert.
+   This is the only message: people read it in the app, on Telegram and in the morning summary. Never write the sequence $msg$ inside it. This does not replace the agent_runs insert.
 
 10. COMPANY NAME — the trading name is the setting company.name (select value from fabula.settings where key = 'company.name'; read it once at the start). Use exactly that value wherever the company name appears in drafts to customers, suppliers or technicians. Never use an old or hardcoded name. The website is www.bubalina.it and the social handle is @caseificiobubalina: never write the old domain perladelcilento.it or the old handle @laperladelcilento.
 

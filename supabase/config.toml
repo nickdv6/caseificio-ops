@@ -434,3 +434,7 @@ verify_jwt = false
 # predis-webhook: Predis.ai callbacks.
 [functions.predis-webhook]
 verify_jwt = false
+
+# v1.02 (audit E-18): shopify-sync is called only by the database (pg_cron / «Esegui ora»), with its own key (fabula.job_secrets)
+[functions.shopify-sync]
+verify_jwt = false

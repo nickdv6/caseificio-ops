@@ -12,17 +12,59 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
-- `sop/` — printable floor procedure sheet, the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield, and for v0.99: the lot label at the start), and «Bot fermi: cosa fare» (v1.00).
+- `sop/` — printable floor procedure sheet, the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield, and for v0.99: the lot label at the start), and «Bot fermi: cosa fare» (v1.00; rev. 2 in v1.02: the Shopify syncs run in the database).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
+
+## Shopify sync in the database, morning summary, quiet nights (v1.02)
+The «Shopify sync and digest» items of the 12/10/2026 audit (project doc `claude/audit-fixes-v102-2026-10-14.md`). Migrations
+`v102a` (Shopify sync) and `v102b` (summary and quiet nights); live apply: `tools/go-live/live-apply/2026-10-14_v102_sql-editor.sql`
+(built by `make_v102_script.py`); new edge function `shopify-sync`; tablet sw `perla-v69`.
+- **E-18 · Shopify without an LLM in between:** `supabase/functions/shopify-sync/` (index.ts, shopify.ts, sync.ts) copies orders
+  (and confirms packed web shipments on Shopify with the tracking), customers and stock. The three Shopify «bots» are database
+  jobs now (`bot_schedule.runner = 'db'`, same times: customers 06:05, orders 06:11, stock 07:32 and 13:32): pg_cron
+  `fabula_shopify_sync` (every 5 minutes) runs `shopify_sync_tick()`, which calls the function at each slot with the key in
+  `fabula.job_secrets` (service role only, never in a backup). A call that never started or failed is repeated once after 20
+  minutes; a run cut short is marked failed; a call that never reached the function (not published, a login asked, no answer)
+  becomes a failed run with the reason in plain words. The function logs its run (`shopify_sync_start` / `shopify_sync_finish`)
+  and the database writes the message from the numbers (`shopify_sync_finish`): what changed, what to do, «(invariato)» when
+  nothing changed, and no second alarm while the same one is still open. Configurazione → Bot → «Esegui ora» starts a sync now
+  (`run_bot_fallback` → `shopify_sync_now`).
+- **Guards:** the customer list must have as many customers as Shopify's own count, or nothing changes; one run never deactivates
+  more than `shopify.max_deactivate_pct` % (5) of the Shopify customers — it lists the missing ones instead; the orders must
+  match Shopify's own count for a fixed window (`ordersCount`, read once more if an order moved while reading), with no order twice,
+  or nothing is written. A cancelled order is never confirmed as shipped. The stock is only compared until
+  `shopify_push_enabled()`; then only the quantities that differ are set, with an idempotency key (required since API 2026-04).
+  Shopify permissions the app «Caseificio ops» still needs for the stock (`read_inventory`, `write_inventory`, `read_locations`)
+  and for confirming shipments (`read/write_merchant_managed_fulfillment_orders`): without them those parts say what is missing
+  and change nothing. Rollback: `shopify.sync_enabled = 0` and switch the Claude tasks back on (prompts kept, marked RETIRED).
+- **E-07 · morning summary, quiet nights:** `notify_targets.digest_at` — a daily Telegram «Riepilogo» at each person's own time
+  (`notify_digest_tick()`, from `notify_tick`): decisions waiting and when they approve by themselves, open alarms, what is new,
+  what was approved automatically, bots to check, the morning brief; only what the person may see in the app (Sistema «vede» for
+  messages, «gestisce» for approvals). Nick: 07:30 New York, silence 22:00–07:30. At night only food safety and «system down»
+  (site or server not answering, database scheduler stopped) go out at once; other system alarms wait for the end of the silence,
+  are dropped if they cleared meanwhile, and are folded into the summary when it goes out at that moment. The routine decisions of
+  the day (`notify.decision_agents`: milk plan, promo, wholesale) reach Telegram as «Da decidere» even when not alarms, without the
+  30-minute reminder, saying when they approve by themselves. Configurazione → Utenti → Avvisi Telegram: «Riepilogo ogni giorno
+  alle …».
+- **Prompts:** message rules v1.02 — rule 7: bots never call SendUserMessage (the database delivers: Telegram + summary); the
+  «Allarme bot» task pushes only when the database's automations are stopped. `tools/bots/sync_rules.py` copies the rules into
+  every prompt (`--check` reports drift). Milk plan: «alert» only when demand stays uncovered (E-06); the evening check lists bots
+  already sent to Telegram on one line (E-33); the partners are «i soci» (E-17); `weekly_brief.txt` and
+  `tools/sales/bot_vendite_prompt.md` removed (E-17). The live tasks held older prompts than the repo (v0.99 changes never
+  pasted): the apply step replaces them all from the repo.
+- Tests: `prod-test/test_shopify_sync_digest.sql` 43/43; `supabase/functions/shopify-sync/sync_test.ts` (Deno) 12/12;
+  `tablet-test/shopify_sync_fn_e2e.py` 12/12 (the function with Deno against PostgREST and a fake Shopify);
+  `tablet-test/sync_e2e.py` 10/10 (browser); `test_audit_critical.sql` updated for the new night rule. Every SQL suite (766
+  checks, 24 suites, only the known B-19 failures) and all 20 browser suites in a row pass on a fresh database.
 
 ## Audit alerts and operations (v1.00)
 The «alerts and operations» items of the 12/10/2026 audit (project doc `claude/audit-fixes-v100-2026-10-14.md`). Migrations
 `v100b` (the feed: reads per person, «Risolto», links, names) and `v100c` (notices for the floor or the office, one incident per
 bot that stopped, «Esegui ora», refused saves); live apply: `tools/go-live/live-apply/2026-10-14_v100_sql-editor.sql` (built by
 `make_v100_script.py`; database first, then the site); tablet sw `perla-v68`. No edge function changes. Shopify sync (E-18) and the
-07:30 digest (E-07) are v1.01.
+07:30 digest (E-07) are v1.02.
 - **E-04 / C-12 · who has read what:** `bot_messages.read_at` now means «closed for everyone». Each person's reads are in
   `bot_message_reads` (written only by `mark_bot_messages_read`); «Segna tutto come letto» is for me and never touches an alarm.
   An alarm stays open until someone with «gestisce» in Sistema marks it «Risolto» with what was done (`resolve_bot_messages`,
@@ -241,7 +283,7 @@ The shop trades as **Caseificio Bubalina** on **www.bubalina.it** (perladelcilen
   is "Caseificio Bubalina". Internal keys keep the old prefix on purpose: service-worker cache `perla-vNN` (the outside
   watcher `tools/watch/check.sh` and `app.js` match on it), localStorage `perla_*`, backup format `la-perla-backup/1`.
 - Bot message rule 10 now says: website www.bubalina.it, handle @caseificiobubalina, never the old domain or handle
-  (`tools/bots/MESSAGE-RULES.md`, `tools/bots/prompts/*.txt`, `tools/sales/bot_vendite_prompt.md`, and the same sentence
+  (`tools/bots/MESSAGE-RULES.md`, `tools/bots/prompts/*.txt` and the same sentence
   in the 14 enabled scheduled bots, updated 13/10; the disabled weekly-brief task was left as it was).
 
 

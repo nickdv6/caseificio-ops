@@ -138,3 +138,20 @@ Last run 14/10/2026 (v1.00), same setup with the 181 migrations (v1.01a included
 `FAILURES: none`. Three suites no longer depend on the hour they run (they failed before 06:00 Rome, also on v0.99): offline_e2e
 (the morning cold-room check is due already), office_e2e (tomorrow's milk plan is urgent only within 24 h of its deadline),
 operator_e2e (the «badge di uscita» item is in a floor notice).
+
+23. `python3 shopify_sync_fn_e2e.py` (v1.02, audit E-18) — the edge function `shopify-sync` run locally with Deno (DENO=…/deno) against
+    PostgREST and a fake Shopify Admin API on :8791: no key or a wrong key 403, «status» lists the missing permissions, customers
+    (every page, Shopify's count, the run record and the «info» message from the database), orders (both written, the till day, the
+    shipping address kept, one fixed window sorted by id, a packed shipment confirmed with its tracking and marked in the database),
+    orders that do not match Shopify's count (the run fails, nothing written, the alarm says why), stock report-only (Shopify
+    untouched, an untracked product listed), stock switched on (without the permission nothing sent; with it only the tracked
+    products that differ, with an idempotency key), no errors in the log. Expect `FAILURES: none` (12 checks).
+24. `python3 sync_e2e.py` (v1.02, audit E-18/E-07; port 8781, browser in it-IT) — Configurazione → Bot: the Shopify jobs say «dal
+    database» and offer «Esegui ora»; the sync message with the products page; the run card (no «versione del database»), asks first,
+    calls the function with the name, says the result comes in a couple of minutes, asks again when pressed again; Utenti → Avvisi
+    Telegram: the system topic waits for the silence unless the system is down, the summary time saved and cleared. Expect
+    `FAILURES: none` (10 checks).
+
+Last run 14/10/2026 (v1.02), same setup with the 184 migrations, all 20 suites in a row (the 18 above in the same order, then
+shopify_sync_fn_e2e, sync_e2e, alerts_e2e last): `FAILURES: none`. shopify_sync_fn_e2e sets the stock push itself, since the
+suites before it post a stock count (which switches the push on).

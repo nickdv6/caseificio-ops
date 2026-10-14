@@ -7,7 +7,8 @@ Run exactly ONE SQL call with the Supabase connector's execute_sql tool, ONCE �
 It returns JSON {checked_at, alerts: [...], open: [...], message_it}. Since v1.00 the database runs this same check by itself every hour at :25 and sends each new problem to Telegram once, so "alerts" lists only problems nobody has been told about yet (usually none; typically when the database's own automations are stopped) and "open" lists everything still open, for information only. The database also posts to the dashboard by itself, so you never call post_bot_message.
 
 - If "alerts" is an empty array: finish immediately with the single line "Nessun problema con i bot." Nothing is noteworthy; do not call SendUserMessage.
-- If "alerts" is not empty: call SendUserMessage once with:
+- If "alerts" has no alert of kind "cron_stopped": finish with the single line "Già inviato su Telegram dal database." and do not call SendUserMessage — the database sent each one to Telegram itself, respecting Nick's quiet hours (v1.02).
+- If an alert has kind "cron_stopped" (the database's own automations are stopped, so nothing can reach Telegram): you are the only way Nick hears of it. Call SendUserMessage once with:
   line 1 (bold): "N bot da controllare" (or "1 bot da controllare");
   then message_it exactly as returned (Italian, one line per problem, already in plain words);
   then, for each alert of kind "error" where the affected part of the system is obvious from the detail, one short Italian line "→ Effetto: <what does not happen because of it>" (e.g. "→ Effetto: Shopify non riceve le giacenze");
