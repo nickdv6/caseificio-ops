@@ -183,7 +183,7 @@ try:
 
     # ================= farm page =================
     farm = b.new_context(service_workers='block', viewport={'width': 390, 'height': 844}); farm.route('**/functions/v1/farm-order**', farm_fn)
-    fp = farm.new_page(); fp.on('pageerror', lambda e: logs.append('PAGEERROR farm ' + str(e)))
+    fp = farm.new_page(); fp.on('pageerror', lambda e: logs.append('PAGEERROR farm ' + str(e))); fp.add_init_script("try { localStorage.setItem('farm_by', 'Test Masseria') } catch (e) {}")   # v1.03: «Chi spedisce» remembered
     fp.goto(f'http://localhost:{PORT}/latte.html?t={TOKEN}&azione=spedizione'); fp.wait_for_timeout(1800)
     nship = sql1("select count(*) from fabula.milk_shipments")
     fp.fill('#kg', '105'); fp.click('#ship-go'); fp.wait_for_timeout(400)

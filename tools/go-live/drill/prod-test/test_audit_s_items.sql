@@ -214,8 +214,10 @@ select pg_temp.ck('FARM-01 with no order today, 105 kg against usual loads of 1.
   and (select count(*) from fabula.milk_shipments) = :ns1, :'f5');
 select pg_temp.ck('FARM-01 an older farm-order function (no p_confirm) keeps working', (:'f4'::jsonb->>'milk_lot') is not null, :'f4');
 select pg_temp.ck('FARM-01 farm_milk_ship stays out of reach of app users',
-  not has_function_privilege('authenticated', 'fabula.farm_milk_ship(text,numeric,numeric,text,text,boolean)', 'execute')
-  and not has_function_privilege('anon', 'fabula.farm_milk_ship(text,numeric,numeric,text,text,boolean)', 'execute')
+  -- v1.03b: one version only (with p_by), never callable by app users
+  not exists (select 1 from pg_proc where proname = 'farm_milk_ship' and pronamespace = 'fabula'::regnamespace
+               and (has_function_privilege('authenticated', oid, 'execute') or has_function_privilege('anon', oid, 'execute')))
+  and (select count(*) from pg_proc where proname = 'farm_milk_ship' and pronamespace = 'fabula'::regnamespace) = 1
   and to_regprocedure('fabula.farm_milk_ship(text,numeric,numeric,text,text)') is null);
 
 -- C-28 · kg per Shopify piece

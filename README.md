@@ -17,6 +17,37 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Secrets hidden, the Masseria's two links, lot labels from the database (v1.03)
+The security and print High items of the 12/10/2026 audit: C-05, FARM-04, PRINT-08 (project doc `claude/audit-fixes-v103-2026-10-14.md`).
+Migrations `v103a` (secrets), `v103b` (farm links), `v103c` (lot labels); live apply:
+`tools/go-live/live-apply/2026-10-14_v103_sql-editor.sql` (built by `make_v103_script.py`); edge function `farm-order` updated;
+tablet sw `perla-v70`.
+- **C-05 · secrets:** `fabula.secret_setting(key)` names them (`milk.farm_token`, `milk.farm_ship_token`, `trade.job_secret`).
+  Restrictive RLS on `settings` hides them from every login (not read, changed, added or deleted through the API; definer functions
+  and the service role still read them); `_setting()` no longer returns them; trigger `settings_secret_format` accepts only 32-64
+  hex characters and two different farm keys; `trg_audit` stores «••••» for their values (old Registro rows scrubbed);
+  `trade.job_secret` replaced once. Wholesale portal keys: `parties.portal_token` is not readable through the API (table SELECT
+  revoked from `authenticated`, every other column granted by name — **a new column on `parties` needs
+  `grant select (col) on fabula.parties to authenticated`**, `test_v103_security_labels.sql` checks it) and only the database
+  changes it (trigger `parties_portal_token_guard`; Ingrosso «Nuovo link» as before). `UI.upd` asks back only the columns it
+  matched on (`select=*` would be refused). `agent_runs`: read-only for logins (bots run as the database role).
+- **FARM-04 · two links:** the full link (owner of the Masseria: orders, 30 days, month, corrections, «Visto») and the QR in the
+  barn (`milk.farm_ship_token`: record a shipment, today's loads, correct its own load within 2 hours). `fabula._farm_scope(token)`
+  says which; `farm_milk_orders/ship/amend/seen` follow it. «Chi spedisce»: names in `milk.farm_people`, asked on the farm page and
+  remembered on the phone, stored in `milk_shipments.recorded_by` with `source` farm_page / farm_qr; shown on the tablet's milk
+  arrival and in the Console. `farm_links()` / `farm_link_rotate('full'|'qr')` (Sistema = gestisce) give the links and make new
+  random keys; Configurazione → Utenti e accessi → «Link della Masseria» (open, copy, WhatsApp, poster, «Genera nuovo link/QR»,
+  «Chi spedisce»); the Console card shows the links only to the same people, with the poster from the QR key. The full link
+  refuses to become a poster. Old functions accept calls without `p_by` (older edge function).
+- **PRINT-08 · lot labels:** tablet Home → «🖨 Ristampa etichette lotto» (`lot_labels()`: lots being worked, then the last 14
+  days; a search goes back 60) → the lot → copies → «Prepara l'etichetta» (`lot_label_reprint()`: counted on the lot's label row,
+  `labels.reprinted_count`, who and when; no row is created for a lot still being worked, its close creates it). `labels.html` checks
+  every `LOT:` line with `lot_label_info()`: name and expiry/arrival from the database (a wrong one corrected); a lot that does not
+  exist is red and not printed unless it is in the tablet's offline queue (amber); a close still in that queue prints as the tablet
+  wrote it (amber); no network or login = «NON controllati». Lot lines from the tablet are read-only («Modifica a mano»).
+- Tests: `prod-test/test_v103_security_labels.sql` 28/28; `tablet-test/v103_e2e.py` (browser, the real `farm-order` with Deno);
+  four older suites updated (new farm function signatures, «Chi spedisce» remembered, the poster from the QR key).
+
 ## Shopify sync in the database, morning summary, quiet nights (v1.02)
 The «Shopify sync and digest» items of the 12/10/2026 audit (project doc `claude/audit-fixes-v102-2026-10-14.md`). Migrations
 `v102a` (Shopify sync) and `v102b` (summary and quiet nights); live apply: `tools/go-live/live-apply/2026-10-14_v102_sql-editor.sql`
@@ -431,7 +462,8 @@ Front end only (`fabula-tablet/admin.html`, `admin.js`; sw perla-v53), no databa
   di prova, Sistema — before, 40 of them fell under "Altri parametri"). One section on screen at a time, section list on the left with
   counts (phone: chips); search looks across every section. Empty values are tagged "da compilare", provisional ones "da confermare"
   (an empty value whose description says "Vuoto = …" is a documented choice, not a gap). Ids, tokens and addresses are folded under
-  "Impostazioni tecniche" at the end of their section; `trade.job_secret` and `milk.farm_token` are masked; `infra.sw_seen` is read-only.
+  "Impostazioni tecniche" at the end of their section; `infra.sw_seen` is read-only. Since v1.03 the secret keys (`milk.farm_token`,
+  `milk.farm_ship_token`, `trade.job_secret`) never reach the browser at all (see «v1.03»).
   Save bar, previous value, Enter/Escape, validation and old `#azienda…#lavoro` links work as before; `#professionisti` etc. added
   (Ingrosso now links there). Dirty counts show per section so nothing typed is lost when switching sections.
 - **No raw keys on screen** (v0.84a): parameter rows show only their description (the key is the row's tooltip); the Registro
@@ -494,10 +526,11 @@ system — lives here. Nothing is a paid app.
   The mozzarella pool is split across the 16 variants: 80 % by kg sold in the last 28 days, 20 % equal (`shopify.mix_weight`),
   equal split while nothing has sold; the pieces offered never add up to more than the pool (`v_shopify_inventory_push`).
 - Milk order to the Masseria (v0.64): approved milk plans appear on the farm's private page `latte.html?t=<milk.farm_token>`
-  (edge function `farm-order`, no login; change the setting to switch an old link off). The farm taps "Visto"; the Console
-  shows the next order and whether it was seen, with the link to copy.
-- Masseria shipments (v0.65): the farm records each load on its page (QR poster: latte.html?t=…&stampa=1 → opens
-  `&azione=spedizione`); the farm's kg is the source of truth and each load gets a lot M<yymmdd>-<n>. The tablet's milk
+  (edge function `farm-order`, no login). The farm taps "Visto"; the Console shows the next order and whether it was seen. Since
+  v1.03 the keys are made by the database and replaced from Configurazione → Utenti e accessi → «Link della Masseria» (titolare
+  and soci only); see «v1.03».
+- Masseria shipments (v0.65): the farm records each load on its page (QR poster: since v1.03 printed from the QR key
+  `milk.farm_ship_token`, latte.html?t=<qr key>&stampa=1 → opens `&azione=spedizione`); the farm's kg is the source of truth and each load gets a lot M<yymmdd>-<n>. The tablet's milk
   intake lists loads still in transit: picking one locks kg/lot/supplier (trigger `milk_intake_shipment_check` enforces it
   and blocks a second receipt); saving marks the load received or rejected, which the farm sees on its page.
 - Sell-down promos (v0.64): the sell-down bot pre-creates a random Shopify code per promo it proposes (ends 20:00); the tablet

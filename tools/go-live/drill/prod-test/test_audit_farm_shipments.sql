@@ -77,5 +77,8 @@ select pg_temp.ck('the owner cancels it, with name and reason',
   :'e10' = '' and (select status = 'cancelled' and cancelled_by = 'Titolare Audit' and cancel_reason = 'mai arrivata, registrata per errore' from fabula.milk_shipments where milk_lot = 'MAUD-OLD'), :'e10');
 select fabula.ops_health_check() h2 \gset
 select pg_temp.ck('…and the health check no longer reports it', not exists (select 1 from jsonb_array_elements(:'h2'::jsonb->'data_quality') x where x->>'key' = 'milk_shipments_stale'));
-select pg_temp.ck('farm_milk_amend is not callable by app users', not has_function_privilege('authenticated', 'fabula.farm_milk_amend(text,text,numeric,boolean,text)', 'execute')
+-- v1.03b: farm_milk_amend has p_by (who at the farm); every version of it stays out of reach of app users
+select pg_temp.ck('farm_milk_amend is not callable by app users', not exists (select 1 from pg_proc where proname = 'farm_milk_amend' and pronamespace = 'fabula'::regnamespace
+                    and (has_function_privilege('authenticated', oid, 'execute') or has_function_privilege('anon', oid, 'execute')))
+  and (select count(*) from pg_proc where proname = 'farm_milk_amend' and pronamespace = 'fabula'::regnamespace) = 1
   and not has_function_privilege('anon', 'fabula.milk_shipment_cancel(uuid,text)', 'execute'));

@@ -5,7 +5,7 @@
    parameters, machines, bots and users in admin.html. */
 (() => {
   const { sb, $, esc, eur, num, fmtD, dateIt, daysAgo, nOrNull, toast, badge, upd, saveBtn, act } = UI;
-  let staff = null, PRODUCTS = {}, NICK = {}, APPR = [], briefP = null, FARM_LINK = null;
+  let staff = null, PRODUCTS = {}, NICK = {}, APPR = [], briefP = null, FARM_LINK = null, FARM_POSTER = null;
 
   // ---------- daily brief: fetched once per refresh, shared by Oggi, Operazioni and Andamento ----------
   const getBrief = () => briefP || (briefP = sb.rpc('daily_brief').then(({ data, error }) => {
@@ -21,8 +21,10 @@
       sb.from('approvals').select('id, kind, summary, amount_eur, requested_by, requested_at, expires_at, payload, related_table, auto_approve_at, auto_rule').eq('status', 'pending').order('requested_at'),
       sb.from('products').select('sku, name, unit'),
       sb.from('bot_nicknames').select('agent, nickname, title_it'),
-      sb.rpc('farm_order_link').then(r => r, () => ({ data: null }))]);   // v0.64: the Masseria's order page
-    FARM_LINK = farm && farm.data ? new URL(farm.data, location.href).href : null;
+      // v0.64: the Masseria's order page. v1.03 (audit FARM-04): only for Sistema = gestisce; the poster uses the QR key (record shipments only)
+      sb.rpc('farm_links').then(r => r.error ? sb.rpc('farm_order_link').then(o => ({ data: o.data ? { full: o.data, poster: o.data + '&stampa=1' } : null }), () => ({ data: null })) : r, () => ({ data: null }))]);
+    FARM_LINK = farm && farm.data && farm.data.full ? new URL(farm.data.full, location.href).href : null;
+    FARM_POSTER = farm && farm.data && farm.data.poster ? new URL(farm.data.poster, location.href).href : null;
     PRODUCTS = Object.fromEntries((prods.data || []).map(p => [p.sku, p]));
     NICK = Object.fromEntries((nick.data || []).map(n => [n.agent, n]));
     APPR = appr.data || [];
@@ -354,21 +356,23 @@
     let el = $('farm-status'); if (!el) { el = document.createElement('div'); el.id = 'farm-status'; el.className = 'status'; el.style.margin = '0 0 10px'; box.parentNode.insertBefore(el, box); }
     const [pl, sh, road] = await Promise.all([
       sb.from('milk_plans').select('plan_date, milk_kg, farm_seen_at').eq('status', 'approved').gte('plan_date', UI.romeISO()).order('plan_date').limit(1),
-      sb.from('milk_shipments').select('milk_lot, kg, shipped_at, status, received_at').neq('status', 'cancelled').order('shipped_at', { ascending: false }).limit(1),   // v0.65
-      sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, original_kg').eq('status', 'shipped').order('shipped_at').limit(20)]);              // v0.94
+      sb.from('milk_shipments').select('milk_lot, kg, shipped_at, status, received_at, recorded_by').neq('status', 'cancelled').order('shipped_at', { ascending: false }).limit(1),   // v0.65
+      sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, original_kg, recorded_by').eq('status', 'shipped').order('shipped_at').limit(20)]);              // v0.94
     const m = pl.data && pl.data[0], s = sh.data && sh.data[0], onRoad = road.data || [];
     const when = t => new Date(t).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
     const ageH = t => Math.round((Date.now() - new Date(t)) / 36e5);
     const parts = [];
-    if (s && !(s.status === 'shipped' && onRoad.length)) parts.push(`🚚 Ultima spedizione Masseria: ${num(s.kg, 1)} kg (${esc(s.milk_lot)}, partita ${when(s.shipped_at)}) · ${s.status === 'received' ? 'ricevuta ' + when(s.received_at) : s.status === 'rejected' ? '<b class="ko">respinta</b>' : '<b class="ko">in viaggio: confermala all\'arrivo dal tablet</b>'}`);
+    if (s && !(s.status === 'shipped' && onRoad.length)) parts.push(`🚚 Ultima spedizione Masseria: ${num(s.kg, 1)} kg (${esc(s.milk_lot)}, partita ${when(s.shipped_at)}${s.recorded_by ? ', da ' + esc(s.recorded_by) : ''}) · ${s.status === 'received' ? 'ricevuta ' + when(s.received_at) : s.status === 'rejected' ? '<b class="ko">respinta</b>' : '<b class="ko">in viaggio: confermala all\'arrivo dal tablet</b>'}`);
     // v0.94 (audit A-10/FARM-03): every load still «in viaggio», the stale ones (> 36 h) in red with a way to close them
     const canCancel = PERM.can('produzione', 2);
     onRoad.forEach(x => { const stale = ageH(x.shipped_at) > 36;
-      parts.push(`🚚 ${stale ? '<b class="ko">' : ''}In viaggio da ${ageH(x.shipped_at) < 1 ? 'meno di 1 ora' : ageH(x.shipped_at) + ' h'}: ${num(x.kg, 1)} kg (${esc(x.milk_lot)}, partita ${when(x.shipped_at)})${stale ? '</b> · mai confermata all\'arrivo: se il latte è arrivato confermala dal tablet, altrimenti annullala' : ' · confermala all\'arrivo dal tablet'}`
+      parts.push(`🚚 ${stale ? '<b class="ko">' : ''}In viaggio da ${ageH(x.shipped_at) < 1 ? 'meno di 1 ora' : ageH(x.shipped_at) + ' h'}: ${num(x.kg, 1)} kg (${esc(x.milk_lot)}, partita ${when(x.shipped_at)}${x.recorded_by ? ', da ' + esc(x.recorded_by) : ''})${stale ? '</b> · mai confermata all\'arrivo: se il latte è arrivato confermala dal tablet, altrimenti annullala' : ' · confermala all\'arrivo dal tablet'}`
         + (x.original_kg != null ? ` · peso corretto dalla Masseria (prima ${num(x.original_kg, 1)} kg)` : '')
         + (canCancel ? ` · <a href="#" data-cancel-ship="${esc(x.id)}" data-lot="${esc(x.milk_lot)}">annulla</a>` : '')); });
     if (m) parts.push(`🥛 Ordine ${esc(dShort(m.plan_date))}: ${num(m.milk_kg, 0)} kg · ${m.farm_seen_at ? 'visto ' + when(m.farm_seen_at) : '<b class="ko">non ancora visto</b>'}`);
-    if (FARM_LINK) parts.push(`<a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina Masseria</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a> · <a href="${esc(FARM_LINK)}&stampa=1" target="_blank" rel="noopener">stampa QR spedizioni</a>`);
+    // v1.03 (audit FARM-04): the full link opens everything (orders, history, corrections): it goes to the farm's owner only
+    if (FARM_LINK) parts.push(`<a href="${esc(FARM_LINK)}" target="_blank" rel="noopener">pagina Masseria</a> · <a href="#" data-copy="${esc(FARM_LINK)}">copia link</a> <small class="status">(accesso completo: solo al titolare della Masseria)</small>`
+      + (FARM_POSTER ? ` · <a href="${esc(FARM_POSTER)}" target="_blank" rel="noopener">stampa QR spedizioni</a>` : '') + ` · <a href="admin.html#utenti&masseria">nuovo link o QR</a>`);
     el.innerHTML = (s || m) ? parts.join('<br>') : (FARM_LINK ? parts.join('') : '');
   }
   function renderHaccp(b, items) {

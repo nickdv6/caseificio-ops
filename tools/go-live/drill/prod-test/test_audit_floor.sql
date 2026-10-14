@@ -311,9 +311,10 @@ select pg_temp.ck('D-05 a sheet opened more than 3 hours ago is replaced by a fr
   :'cid3' <> :'cid2' and (select status = 'abandoned' from fabula.stock_counts where id = :'cid2') and :'e_old' like 'Questo foglio di conta non è più aperto%', :'e_old');
 
 -- ============================== A-14 / D-08 60 hours ==============================
+-- (the arrival is 2 hours after the departure, whatever the time of day: a fixed «2 days ago at 09:00» was older than the departure after 23:00)
 insert into fabula.milk_shipments (id, shipped_at, ship_date, kg, milk_lot, status, supplier_id) values ('60000000-0000-4000-a000-0000000097c1', now() - interval '62 hours', current_date - 3, 900, 'MF97-OLD', 'shipped', '50000000-0000-4000-a000-0000000097f1');
 insert into fabula.milk_intake (id, intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, shipment_id)
-values ('70000000-0000-4000-a000-0000000097d9', pg_temp.today() - 2, '09:00', '50000000-0000-4000-a000-0000000097f1', 'MF97-OLD', 900, true, 4, 'tablet', '60000000-0000-4000-a000-0000000097c1');
+values ('70000000-0000-4000-a000-0000000097d9', ((now() - interval '60 hours') at time zone 'Europe/Rome')::date, ((now() - interval '60 hours') at time zone 'Europe/Rome')::time, '50000000-0000-4000-a000-0000000097f1', 'MF97-OLD', 900, true, 4, 'tablet', '60000000-0000-4000-a000-0000000097c1');
 select pg_temp.ck('A-14 milk_age_hours counts from the farm''s departure', fabula.milk_age_hours('70000000-0000-4000-a000-0000000097d9') between 61.9 and 62.1, fabula.milk_age_hours('70000000-0000-4000-a000-0000000097d9')::text);
 insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source)
 values ('80000000-0000-4000-a000-0000000097b8', current_date, 'LF97-D', :'moz', 300, 'milk', now(), 'tablet'),

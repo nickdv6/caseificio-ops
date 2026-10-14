@@ -1067,6 +1067,7 @@
   }
   function openForm(title, sub, onSave) {
     $('f-title').textContent = title; $('f-sub').textContent = sub; current.onSave = onSave; current.dirty = false; current.openedAt = current.openedAt || Date.now(); $('btn-form-save').style.display = '';
+    $('btn-form-save').textContent = current.saveLabel || 'Salva';   // v1.03: a form can name its button (reprint: «Prepara l'etichetta»)
     // v0.97 (audit A-11): «Rifai» from a refused save: what it was, with its values filled in again where the form has the same field
     if (current.redo && !current.redo.shown && !['OPERATOR', 'REJECTS'].includes(current.code) && !current.picker) {   // not the «who are you?» or a lot chooser on the way
       const r = current.redo; r.shown = true;
@@ -1219,7 +1220,7 @@
     if (!sup || !sup.length) throw new Error(navigator.onLine ? 'Nessun fornitore di latte attivo in anagrafica' : 'Senza rete e fornitori non ancora salvati sul tablet');
     // v0.65: shipments the Masseria registered from its page (its weight is the source of truth): pick one, confirm arrival
     let ships = [];
-    try { const r = await cached('milk_ships_pending', () => sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, supplier_id, ddt_number, temperature_c').eq('status', 'shipped').order('shipped_at', { ascending: false }).limit(10)); ships = r.data || []; } catch {}
+    try { const r = await cached('milk_ships_pending', () => sb.from('milk_shipments').select('id, milk_lot, kg, shipped_at, supplier_id, ddt_number, temperature_c, recorded_by').eq('status', 'shipped').order('shipped_at', { ascending: false }).limit(10)); ships = r.data || []; } catch {}
     const queuedShips = new Set(queue().flatMap(i => (i.ops || []).filter(o => o.table === 'milk_intake' && o.row && o.row.shipment_id).map(o => o.row.shipment_id)));
     ships = ships.filter(x => !queuedShips.has(x.id));                     // already confirmed offline, still in the queue
     // v0.93 (audit A-10/FARM-03): the newest load is no longer picked for you when there is a choice — with two loads in transit
@@ -1238,7 +1239,7 @@
     const pickFirst = fresh.length === 1 && ageH(fresh[0]) < 12;
     const byDdt = ddt ? ships.filter(x => x.ddt_number && norm(x.ddt_number) === norm(ddt)) : [];   // a DDT number read from the paper's QR
     const needCheck = x => !!x && !(pickFirst && x.id === fresh[0].id) && !(byDdt.length === 1 && byDdt[0].id === x.id);
-    const shipLabel = x => `${when(x)} · ${kgTxt(x)} kg · partita ${ageTxt(x)}` + (needCheck(x) ? '' : ` · lotto ${x.milk_lot}`);
+    const shipLabel = x => `${when(x)} · ${kgTxt(x)} kg · partita ${ageTxt(x)}` + (x.recorded_by ? ` · da ${x.recorded_by}` : '') + (needCheck(x) ? '' : ` · lotto ${x.milk_lot}`);   // v1.03 (FARM-04): who sent it
     const shipOpts = list => [...(pickFirst && list === fresh ? [] : [['', list.length ? `— scegli quale spedizione è arrivata (${list.length}) —` : '— scegli —']]),
       ...list.map(x => [x.id, shipLabel(x)]), ...(list === fresh && old.length ? [['old', `— mostra le spedizioni più vecchie di 36 h (${old.length}) —`]] : []),
       ['none', '— nessuna: altro fornitore o latte non registrato —']];
@@ -1984,6 +1985,59 @@
     throw new Error('Questo browser non supporta bilance Bluetooth/USB: inserisci il peso a mano');
   }
   $('btn-ship').onclick = () => stepShipList().catch(e => { toast(e.message, 'err'); show('home'); });
+  $('btn-reprint').onclick = () => stepReprint().catch(e => { toast(e.message, 'err'); show('home'); });
+
+  // v1.03 (audit PRINT-08): a lot label is reprinted from the database (product, lot, expiry or arrival), never typed by hand.
+  // The list: lots still being worked, then the last 14 days; a search finds older ones (up to 60 days) by any part of the code.
+  async function stepReprint(q) {
+    if (!['produzione', 'magazzino', 'spedizioni'].some(a => PERM.can(a, 2))) {
+      toast(`Il profilo "${(PERM.data && PERM.data.role_name) || '?'}" non stampa etichette di lotto: chiedi al responsabile`, 'err'); show('home'); return; }
+    $('form').innerHTML = ''; current = { code: 'REPRINT:' };
+    const r = await live(sb.rpc('lot_labels', { p_q: q || null, p_days: q ? 60 : 14 }));
+    if (r.error) throw new Error(unreachable(r.error) ? 'Serve la rete per ristampare: prodotto, lotto e scadenza vengono dal database' : r.error.message);
+    const lots = r.data || [];
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = '<label for="rp-q">Cerca il lotto (anche solo la fine, es. 15-A)</label>';
+    const row = document.createElement('div'); row.className = 'row';
+    const inp = document.createElement('input'); inp.id = 'rp-q'; inp.value = q || ''; inp.placeholder = 'es. L20261015-A o M261015-1'; inp.autocomplete = 'off';
+    const go = document.createElement('button'); go.type = 'button'; go.className = 'btn secondary'; go.textContent = 'Cerca';
+    row.append(inp, go); c.append(row); $('form').append(c);
+    const search = () => stepReprint(inp.value.trim()).catch(e => { toast(e.message, 'err'); show('home'); });
+    go.onclick = search; inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); search(); } };
+    if (!lots.length) { const d = document.createElement('div'); d.className = 'pending'; d.style.textAlign = 'left';
+      d.textContent = q ? `Nessun lotto con «${q}» negli ultimi 60 giorni.` : 'Nessun lotto negli ultimi 14 giorni.'; $('form').append(d); }
+    lots.forEach(l => {
+      const d = document.createElement('div'); d.className = 'task' + (l.on_hold || l.rejected ? ' overdue' : ''); d.style.marginTop = '8px';
+      const top = document.createElement('div'); const b = document.createElement('b'); b.textContent = l.lot; top.append(b, document.createTextNode(' · ' + (l.name || '')));
+      const sub = document.createElement('div'); sub.className = 'code';
+      sub.textContent = (l.sub || '') + (l.on_hold ? ` · ⚠ BLOCCATO (${l.hold_reason || 'sicurezza alimentare'}): non si vende` : '') + (l.rejected ? ' · latte respinto' : '');
+      const w = document.createElement('div'); w.append(top, sub); d.append(w);
+      d.onclick = () => pickReprint(l).catch(e => { toast(e.message, 'err'); show('home'); });
+      $('form').append(d);
+    });
+    openForm('Ristampa etichette', q ? `Ricerca «${q}» · tocca il lotto da ristampare` : 'Lotti in lavorazione e degli ultimi 14 giorni · tocca quello da ristampare', async () => {});
+    $('btn-form-save').style.display = 'none';
+    if (!q) inp.blur();
+  }
+  async function pickReprint(l) {
+    $('form').innerHTML = ''; current = { code: 'REPRINT:' + l.lot, saveLabel: 'Prepara l\'etichetta' };
+    const c = document.createElement('div'); c.className = 'card' + (l.on_hold || l.rejected ? ' rej' : '');
+    const h = document.createElement('div'); h.className = 'scan'; h.textContent = `Lotto ${l.lot}`; c.append(h);
+    [l.name, l.sub, l.on_hold ? `⚠ Lotto BLOCCATO (${l.hold_reason || 'sicurezza alimentare'}): l'etichetta serve solo a riconoscerlo, non si vende` : null,
+     l.rejected ? 'Latte respinto all\'arrivo: non si usa in produzione' : null].filter(Boolean).forEach(t => { const d = document.createElement('div'); d.textContent = t; c.append(d); });
+    $('form').append(c);
+    const n = field('rp-n', 'Quante etichette?', 'number', { min: 1, max: 60, int: true, limit: 'Nome, lotto e scadenza vengono dal database: non si scrivono a mano.' });
+    setNum(n, l.copies || 1);
+    openForm('Ristampa etichetta', `${l.lot} · ${l.name || ''}`, async () => {
+      const k = val('rp-n');
+      if (!(k >= 1 && k <= 60)) throw new Error('Scrivi quante etichette (da 1 a 60)');
+      const r = await live(sb.rpc('lot_label_reprint', { p_lot: l.lot, p_copies: k, p_staff_id: me() ? me().id : null }));
+      if (r.error) throw new Error(unreachable(r.error) ? 'Serve la rete per ristampare' : r.error.message);
+      const d = r.data;
+      return showDone(`Etichetta lotto ${d.lot} pronta`, [d.name, d.sub],
+        [[`🖨 Stampa ${d.copies} etichett${d.copies === 1 ? 'a' : 'e'} lotto ${d.lot}`, labelUrl(d.lot, d.name, d.sub, d.copies)]]);
+    });
+  }
 
   // ---------- Guided dosing: recipe × milk → one confirm per ingredient ----------
   const MILK_DENSITY = 1.035;                       // kg per litre, buffalo milk (to confirm with the casaro)

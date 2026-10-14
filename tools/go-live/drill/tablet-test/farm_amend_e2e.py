@@ -81,7 +81,7 @@ try:
   with sync_playwright() as p:
     b = p.chromium.launch(); errs = []
     farm = b.new_context(service_workers='block', viewport={'width': 390, 'height': 844}); farm.route('**/functions/v1/farm-order**', farm_fn)
-    fp = farm.new_page(); fp.on('pageerror', lambda e: errs.append('farm: ' + str(e)))
+    fp = farm.new_page(); fp.on('pageerror', lambda e: errs.append('farm: ' + str(e))); fp.add_init_script("try { localStorage.setItem('farm_by', 'Test Masseria') } catch (e) {}")   # v1.03: «Chi spedisce» remembered
     def ship(k):
         fp.click('#ship-open'); fp.fill('#kg', k); fp.click('#ship-go'); fp.wait_for_timeout(200)
         fp.click('#ship-warn-yes' if fp.is_visible('#ship-warn') else '#ship-go'); fp.wait_for_timeout(1500)   # v0.95: a weight far from the usual loads is confirmed in the red box

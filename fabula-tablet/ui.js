@@ -33,7 +33,9 @@
   let toastT = null;
   const toast = (m, cls = '') => { const t = $('toast'); if (!t) return; t.textContent = m; t.className = 'toast ' + cls; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', cls === 'err' ? 5000 : 2800); };
   const badge = (id, n) => { const el = typeof id === 'string' ? $(id) : id; if (!el) return; el.textContent = n || ''; el.classList.toggle('on', n > 0); };
-  const upd = async (table, match, row) => PERM.changed(await sb.from(table).update(row).match(match).select());   // v0.56: 0 rows = not saved
+  // v0.56: 0 rows = not saved. v1.03 (audit C-05): it asks back only the columns it matched on — «select=*» would include columns
+  // a login may not read (parties.portal_token) and the whole save would be refused
+  const upd = async (table, match, row) => PERM.changed(await sb.from(table).update(row).match(match).select(Object.keys(match).join(',')));
 
   // ---------- unsaved changes ----------
   const SCOPE = 'tr, .set-row, .eq, [data-scope]';

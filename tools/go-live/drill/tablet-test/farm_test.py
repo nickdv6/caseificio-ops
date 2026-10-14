@@ -17,6 +17,7 @@ def jwt(role, sub=None):
 SVC = jwt('service_role'); CASARO = jwt('authenticated', '00000000-0000-4000-a000-000000000001')
 def sql(q): return subprocess.run(['su', 'postgres', '-c', f'psql -At -d restore_drill -c "{q}"'], capture_output=True, text=True).stdout.strip()
 TOKEN = sql("select value from fabula.settings where key='milk.farm_token'")
+QR_TOKEN = sql("select value from fabula.settings where key='milk.farm_ship_token'")   # v1.03 (FARM-04): the poster in the barn has its own key
 
 def rpc(fn, args):
     req = urllib.request.Request('http://127.0.0.1:3000/rpc/' + fn, data=json.dumps(args).encode(),
@@ -58,7 +59,7 @@ with sync_playwright() as p:
     # ---- 1. the farm, on a phone, after scanning the QR ----
     farm = b.new_context(service_workers='block', viewport={'width': 390, 'height': 844})
     farm.route('**/functions/v1/farm-order**', farm_fn)
-    fp = farm.new_page(); errs = []; fp.on('pageerror', lambda e: errs.append(str(e)))
+    fp = farm.new_page(); errs = []; fp.on('pageerror', lambda e: errs.append(str(e))); fp.add_init_script("try { localStorage.setItem('farm_by', 'Test Masseria') } catch (e) {}")   # v1.03: «Chi spedisce» remembered
     fp.goto(f'http://localhost:8769/latte.html?t={TOKEN}&azione=spedizione'); fp.wait_for_timeout(1500)
     check('farm: QR opens the shipment form', fp.is_visible('#ship-form'))
     fp.fill('#kg', '1048.5'); fp.fill('#temp', '3.9'); fp.fill('#note', 'cisterna 2')
@@ -94,8 +95,8 @@ with sync_playwright() as p:
     check('farm: month total counts it', 'kg' in fp.inner_text('#totals') and fp.inner_text('#totals').split('\n')[1] != '0 kg', fp.inner_text('#totals').replace('\n', ' | '))
     fp.screenshot(path='/tmp/t62/farm_received.png', full_page=True)
     # ---- 4. QR poster ----
-    fp.goto(f'http://localhost:8769/latte.html?t={TOKEN}&stampa=1'); fp.wait_for_timeout(800)
-    check('poster: QR drawn', fp.evaluate("!!document.querySelector('#qr canvas, #qr img')"))
+    fp.goto(f'http://localhost:8769/latte.html?t={QR_TOKEN}&stampa=1'); fp.wait_for_timeout(1200)
+    check('poster: QR drawn (with the QR key)', fp.evaluate("!!document.querySelector('#qr canvas, #qr img')"))
     fp.screenshot(path='/tmp/t62/farm_poster.png')
     check('no page errors', not errs, ' || '.join(errs[:3]))
     b.close()

@@ -174,3 +174,18 @@ summary (once a day at the person's time, before/after/twice, the sections, no b
 what a casaro may not see, an incident that cleared is not sent late, one still open is folded into the summary), the summary time
 in Configurazione, and the security check. Run on a fresh replay. 14/10/2026: 43/43 PASS on a fresh copy and on the database built
 by the SQL Editor script (live-identical functions).
+
+`test_v103_security_labels.sql` (v1.03, audit C-05 secrets, FARM-04 the Masseria's two links, PRINT-08 lot labels) — the secret
+settings (32 hex, the two farm keys differ; a counter login reads every other setting but no secret, also through `_setting` and
+`setting_text`; not even the titolare reads, changes, adds or deletes one through the API; the format and «keys differ» checks from the
+SQL editor; the Registro records a secret change with «••••» and other settings with their value; no old row keeps a value), the
+customers' portal keys (not readable by a counter login, every other column still readable — a new column must be granted —, an
+update asking every column back refused, the key changed only by «Nuovo link», the manager's link as before), `agent_runs` read-only
+for logins, the farm (the office reminded once to print the new poster; «Chi spedisce» parsing; full link vs QR payload; each load
+with who and which link, an older call without the name; the QR sees today's loads and corrects only its own within 2 hours, the
+full link any load in transit, the office told who; «Visto» only from the full link; links only for Sistema = gestisce; «Genera nuovo
+QR / link» switch the old key off, masked in the Registro, posted to the office), the lot labels (a closed lot's product, expiry and
+copies; a lot still being worked, a milk lot, an unknown lot, other codes ignored; the reprint list order and search; with 90 lots the
+list is cut after sorting; marketing sees but does not print; a reprint counted with who; no label row for a lot being worked, so its
+close still inserts it; grants) and the security check. Run on a fresh replay. 14/10/2026: 28/28 PASS on a fresh copy and on the
+database built by the SQL Editor script.

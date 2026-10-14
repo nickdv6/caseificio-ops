@@ -33,7 +33,8 @@
   // keys that are ids, tokens or addresses: folded under "Impostazioni tecniche" at the end of their section
   const TECH = new Set(['shopify.sync_url', 'milk.farm_token', 'milk.farm_supplier_id', 'trade.shopify_market_id', 'trade.shopify_catalog_id', 'trade.shopify_price_list_id', 'trade.edge_url', 'trade.job_secret', 'trade.store_url',
     'mkt.ai_provider', 'mkt.predis_brand_id', 'mkt.output_language', 'sales.whey_sku_regex', 'infra.sw_seen']);
-  const SECRET = new Set(['trade.job_secret', 'milk.farm_token']);   // shown masked, "mostra" reveals
+  // v1.03 (audit C-05): the secret keys no longer reach the browser at all (the database hides them); kept masked should one ever show
+  const SECRET = new Set(['trade.job_secret', 'milk.farm_token', 'milk.farm_ship_token']);
   const READONLY = new Set(['infra.sw_seen']);   // written by the system, shown as text
   const canEdit = () => PERM.can('sistema', 3);
   let PROWS = [], pendingSection = null, curSec = null;
@@ -570,6 +571,7 @@
       const all = document.createElement('a'); all.className = 'btn sm sec'; all.style.cssText = 'text-decoration:none;display:inline-block;margin-top:8px'; all.target = '_blank';
       all.textContent = `Stampa tutti i badge (${withBadge.length})`; all.href = 'labels.html?' + q; box.append(all); }
     loadNotify().catch(e => toast(e.message || String(e), 'err'));   // v0.96 (E-01)
+    loadFarmLinks().catch(e => toast(e.message || String(e), 'err'));   // v1.03 (FARM-04)
     // matrix
     const mbox = $('roles-matrix'); const lv = {}; (perms || []).forEach(x => { lv[x.role_code + '|' + x.area] = x.level; });
     const mt = document.createElement('table');
@@ -878,13 +880,67 @@
     });
   }
 
+  // ---------- Link della Masseria (v1.03, audit FARM-04 + C-05) ----------
+  // The two keys are made by the database (32 random hex characters) and never typed: «Genera nuovo …» replaces one at once.
+  async function loadFarmLinks() {
+    const box = $('farm-links'); if (!box) return;
+    if (!canEdit()) { box.innerHTML = '<div class="status">Li vede e li cambia solo chi gestisce il sistema (titolare e soci).</div>'; return; }
+    const { data: L, error } = await sb.rpc('farm_links');
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!L) { box.innerHTML = '<div class="status">Link non disponibili.</div>'; return; }
+    const abs = u => u ? new URL(u, location.href).href : '';
+    const full = abs(L.full), qr = abs(L.qr), poster = abs(L.poster);
+    const since = (t, what) => t ? `${what} ${fmtD(String(t).slice(0, 10))}` : '';
+    const used = (t, what) => t ? ` · ${what} ${new Date(t).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })}` : '';
+    const wa = `https://wa.me/?text=${encodeURIComponent(`Buongiorno, questo è il nuovo link per gli ordini e le spedizioni di latte del caseificio (quello vecchio non funziona più). Salvalo sul telefono e non inoltrarlo:
+${full}`)}`;
+    box.innerHTML = `
+      <div style="margin:10px 0 4px"><b>Link completo</b> · per il titolare della Masseria</div>
+      <div class="hint keep">Ordini del caseificio, ultimi 30 giorni, correzioni e «Visto». Chi ha questo link può registrare e correggere spedizioni: mandalo solo al titolare della Masseria.</div>
+      ${full ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><a class="btn sm sec" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(full)}">Apri</a><button class="btn sm sec" data-fcopy>Copia</button>
+        <a class="btn sm sec" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(wa)}">Manda su WhatsApp</a><button class="btn sm warn" data-frot="full">Genera nuovo link</button>
+        <small class="status">${since(L.full_changed_at, 'cambiato il')}${used(L.full_last_used_at, 'ultima spedizione da qui')}</small></div>` : '<div class="status">Link non ancora creato: <button class="btn sm" data-frot="full">Genera il link</button></div>'}
+      <div style="margin:16px 0 4px"><b>QR in stalla</b> · solo spedizioni</div>
+      <div class="hint keep">Chi lo inquadra può solo registrare una spedizione e correggere entro 2 ore quella che ha registrato; non vede ordini né storico. Il poster va appeso dove si carica il latte.</div>
+      ${poster ? `<div class="row" style="gap:6px;flex-wrap:wrap;align-items:center"><a class="btn sm" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(poster)}" data-fposter>🖨 Stampa il poster</a>
+        <a class="btn sm sec" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(qr)}">Apri</a><button class="btn sm warn" data-frot="qr">Genera nuovo QR</button>
+        <small class="status">${since(L.qr_changed_at, 'cambiato il')}${used(L.qr_last_used_at, 'ultima spedizione dal QR')}</small></div>` : '<div class="status">QR non ancora creato: <button class="btn sm" data-frot="qr">Genera il QR</button></div>'}
+      <div id="farm-rot-msg"></div>
+      <div style="margin:16px 0 4px"><b>Chi spedisce</b></div>
+      <div class="hint keep">Nomi di chi registra le spedizioni alla Masseria, separati da virgola. La pagina chiede chi spedisce e lo ricorda sul telefono; ogni spedizione porta il nome (anche sul tablet all'arrivo). Vuoto = scrivono il nome a mano.</div>
+      <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap"><input id="farm-people" type="text" style="flex:1;min-width:220px" maxlength="300" placeholder="es. Mario, Luca, Giovanni" value="${esc(L.people_text || '')}"><button class="btn save" id="farm-people-save">Salva</button></div>`;
+    const cp = box.querySelector('[data-fcopy]');
+    if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(full); toast('Link copiato: mandalo solo al titolare della Masseria'); } catch { prompt('Copia il link:', full); } };
+    box.querySelectorAll('[data-frot]').forEach(b => b.onclick = async () => {
+      const which = b.dataset.frot;
+      const sure = which === 'full'
+        ? 'Generare un nuovo link completo per la Masseria?\nQuello attuale smette di funzionare subito: va mandato il nuovo al titolare della Masseria («Manda su WhatsApp»).'
+        : 'Generare un nuovo QR per le spedizioni?\nIl poster appeso alla Masseria smette di funzionare subito: stampa il nuovo e sostituiscilo.';
+      if ((L.full && which === 'full') || (L.poster && which === 'qr')) { if (!confirm(sure)) return; }
+      b.disabled = true;
+      const { error: e2 } = await sb.rpc('farm_link_rotate', { p_which: which });
+      if (e2) { b.disabled = false; return toast(e2.message, 'err'); }
+      await loadFarmLinks();
+      const msg = $('farm-rot-msg');
+      if (msg) msg.innerHTML = which === 'full'
+        ? '<div style="margin-top:10px;padding:10px 12px;border:1px solid #e0b252;background:#fff4dc;border-radius:8px;color:#5d4300">Nuovo link creato: il vecchio non funziona più. Mandalo ora al titolare della Masseria con «Manda su WhatsApp».</div>'
+        : '<div style="margin-top:10px;padding:10px 12px;border:1px solid #e0b252;background:#fff4dc;border-radius:8px;color:#5d4300">Nuovo QR creato: il poster appeso non funziona più. Stampa il nuovo con «🖨 Stampa il poster» e sostituiscilo.</div>';
+      toast(which === 'full' ? 'Nuovo link della Masseria creato' : 'Nuovo QR spedizioni creato');
+    });
+    $('farm-people-save').onclick = async () => {
+      const v = $('farm-people').value.split(/[,;\n]/).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join(', ');
+      try { PERM.changed(await sb.from('settings').update({ value: v }).eq('key', 'milk.farm_people').select('key')); toast('Salvato'); loadFarmLinks(); }
+      catch (e) { toast(e.message || String(e), 'err'); }
+    };
+  }
+
   const openFermi = () => { const d = $('bd-fermi'); if (!d) return; d.open = true; setTimeout(() => d.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150); };
   // ---------- tabs + start ----------
   const SEC_IDS = SECTIONS.map(s => s[0]).concat('altro');
   const T = UI.tabs({
-    def: 'panoramica', alias: Object.assign({ account: 'utenti', telegram: 'utenti' }, Object.fromEntries(SEC_IDS.map(s => [s, 'parametri']))),
+    def: 'panoramica', alias: Object.assign({ account: 'utenti', telegram: 'utenti', masseria: 'utenti' }, Object.fromEntries(SEC_IDS.map(s => [s, 'parametri']))),
     loaders: { panoramica: loadOverview, parametri: loadParams, maint: loadMaint, prodotti: loadVariantMap, bots: loadBotFeed, utenti: loadUsers, registro: loadAudit },
-    onHash: p => { if ('fermi' in p) openFermi(); },   // v1.00 (E-20): admin.html#bots&fermi opens «Bot fermi: cosa fare»
+    onHash: p => { if ('fermi' in p) openFermi(); if ('masseria' in p) setTimeout(() => { const c = $('farm-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 400); },   // v1.00 (E-20): admin.html#bots&fermi opens «Bot fermi: cosa fare»; v1.03: #utenti&masseria the farm links
     onShow: n => { if (n === 'panoramica' && T.isLoaded('panoramica') && (ovStale || Date.now() - ovAt > 120000)) loadOverview().catch(err => toast(err.message || String(err), 'err')); }
   });
   // a link to a section (#vendite, #sistema…) opens Parametri on that section — from other pages and from the Panoramica cards

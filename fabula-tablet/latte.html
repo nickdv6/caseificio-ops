@@ -19,7 +19,11 @@
    dairy now checks it on the DDT or the tank when two loads are on the road.
    v0.95 (audit FARM-01): the weight is read the Italian way ("1.050" = 1050, "1050,5"), under 50 kg is refused, and a weight far
    (±30 %) from today's order and from the usual loads is spelled out big with «Sì, 105 kg» / «Correggi» before it is recorded.
-   The server does the same check (farm_milk_ship p_confirm) and answers needs_confirm if the page's data was old. */
+   The server does the same check (farm_milk_ship p_confirm) and answers needs_confirm if the page's data was old.
+   v1.03 (audit FARM-04): two links. The full link (the farm's owner) shows everything as before; the QR poster in the barn has its own
+   key (scope "qr"): record a shipment, see today's loads, correct a load it recorded in the last 2 hours — no orders, no history.
+   Every shipment says who sent it («Chi spedisce», names from the dairy's setting milk.farm_people, remembered on this phone).
+   The poster (?stampa=1) is printed only from the QR key; the full link refuses to become a poster. */
 :root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--ok:#1f6b3a;--warn:#b3261e;--amber:#8a5a00;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.5 var(--body)}
@@ -53,6 +57,8 @@ input.kgin{font-family:var(--display);font-size:2rem;font-weight:600;padding:10p
 .empty{color:var(--muted);padding:6px 2px}
 .err{color:var(--warn);margin-top:12px}.okmsg{color:var(--ok);font-weight:600}
 .tempwarn{margin-top:6px;font-weight:600;min-height:1.2em}.tempwarn.amber{color:#8a5a00}.tempwarn.red{color:var(--warn)}
+.whobox select{width:100%;padding:12px;border:1px solid var(--rule);border-radius:8px;font:inherit;background:#fff}
+.qrnote{background:#fff4dc;border:1px solid #f0d9a8;border-radius:10px;padding:10px 12px;font-size:.92rem;color:#5d4300;margin:0 0 12px}
 .lotbig{font-family:var(--display);font-size:1.6rem;font-weight:600;letter-spacing:.02em;margin-top:6px}
 .btn.warn{background:var(--warn)}.lnk{color:var(--accent);background:none;border:0;padding:0;font:inherit;font-size:.9rem;text-decoration:underline;cursor:pointer}
 #amend-form{border-color:var(--amber)}
@@ -78,6 +84,8 @@ body.print .box{display:none}body.print .poster{display:block}
     <div class="card" id="ship-form" hidden>
       <div class="day">Nuova spedizione al caseificio</div>
       <div class="meta">Il peso che scrivi qui è quello che vale: il caseificio conferma solo l'arrivo.</div>
+      <div class="whobox" id="who-box"><label for="who-sel" id="who-lbl">Chi spedisce</label><select id="who-sel" hidden></select>
+        <input id="who" type="text" maxlength="60" autocomplete="name" placeholder="Il tuo nome"></div>
       <label for="kg">Latte spedito (kg)</label><input id="kg" class="kgin" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 1050">
       <label for="temp">Temperatura del latte alla partenza (°C, se misurata)</label><input id="temp" type="text" inputmode="decimal" autocomplete="off" placeholder="es. 4,5">
       <div class="tempwarn" id="temp-warn"></div>
@@ -99,10 +107,10 @@ body.print .box{display:none}body.print .poster{display:block}
       <div class="err" id="am-err"></div>
     </div>
 
-    <h2>Ultima spedizione</h2><div id="latest"></div>
-    <h2>Questo mese</h2><div class="tot" id="totals"></div>
-    <h2>Ultimi 30 giorni</h2><div class="card" style="padding:4px 12px"><table class="hist" id="hist"></table></div>
-    <h2>Ordini del caseificio</h2><div id="orders"></div><div id="pending"></div>
+    <h2 id="h-latest">Ultima spedizione</h2><div id="latest"></div>
+    <div id="sec-month"><h2>Questo mese</h2><div class="tot" id="totals"></div></div>
+    <h2 id="h-hist">Ultimi 30 giorni</h2><div class="card" style="padding:4px 12px"><table class="hist" id="hist"></table></div>
+    <div id="sec-orders"><h2>Ordini del caseificio</h2><div id="orders"></div><div id="pending"></div></div>
     <footer id="foot"></footer>
   </div>
   <div class="err" id="err"></div>
@@ -137,18 +145,42 @@ body.print .box{display:none}body.print .poster{display:block}
     + (s.weight_note && s.entered_kg != null ? `<div class="meta" style="color:#b4472c">Pesato al caseificio: ${kg(s.entered_kg)} kg (vale questo peso) · ${esc(s.weight_note)}</div>` : '');
   const post = async body => { const r = await fetch(FN, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body: JSON.stringify({ t: token, ...body }) });
     const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'non salvato'); return d; };
+  // v1.03 (audit FARM-04): who is shipping — remembered on this phone (a shared phone: «Chi spedisce» stays visible to change it)
+  const store = { get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+  const WHO_KEY = 'farm_by';
+  const whoNow = () => { const sel = $('who-sel');
+    const v = sel.hidden || sel.value === '__altro' ? $('who').value : sel.value;   // the list shown with nothing chosen = nobody, whatever the hidden field holds
+    return String(v || '').replace(/\s+/g, ' ').trim(); };
+  const setupWho = people => {
+    const sel = $('who-sel'), inp = $('who'), last = store.get(WHO_KEY);
+    if (people && people.length) {
+      sel.innerHTML = ['<option value="">— scegli chi sei —</option>', ...people.map(p => `<option>${esc(p)}</option>`), '<option value="__altro">Un altro (scrivo il nome)</option>'].join('');
+      sel.hidden = false;
+      if (last && people.includes(last)) { sel.value = last; inp.hidden = true; inp.value = ''; }
+      else if (last) { sel.value = '__altro'; inp.hidden = false; inp.value = last; }
+      else { sel.value = ''; inp.hidden = true; }
+      sel.onchange = () => { inp.hidden = sel.value !== '__altro'; if (!inp.hidden) inp.focus(); };
+    } else { sel.hidden = true; inp.hidden = false; if (!inp.value) inp.value = last; }
+  };
 
   if (!/^[0-9a-f]{16,64}$/i.test(token)) { $('sub').textContent = ''; $('err').textContent = 'Link non valido: chiedi al caseificio il link aggiornato.'; return; }
   const shipUrl = location.origin + location.pathname + '?t=' + encodeURIComponent(token) + '&azione=spedizione';
 
   if (q.get('stampa')) {                                   // QR poster for the farm
-    document.body.classList.add('print'); $('purl').textContent = 'oppure apri il link salvato sul telefono';
-    try { new QRCode($('qr'), { text: shipUrl, width: 280, height: 280, correctLevel: QRCode.CorrectLevel.M }); } catch { $('qr').textContent = shipUrl; }
+    document.body.classList.add('print'); $('purl').textContent = 'Controllo il link…';
+    // v1.03 (audit FARM-04): only the QR key (record shipments only) goes on the wall; the full link stays on the owner's phone
+    fetch(FN + '?t=' + encodeURIComponent(token), { headers: { apikey: KEY } }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+      if (!ok) { $('purl').textContent = 'Link non valido o vecchio: stampa il poster da Configurazione → Utenti e accessi → Link della Masseria.'; return; }
+      if (d.scope === 'full') { $('purl').textContent = 'Questo è il link completo della Masseria: non va appeso. Stampa il poster da Configurazione → Utenti e accessi → Link della Masseria («Stampa il poster»).'; return; }
+      $('purl').textContent = 'Solo per registrare le spedizioni · oppure apri il link salvato sul telefono';
+      try { new QRCode($('qr'), { text: shipUrl, width: 280, height: 280, correctLevel: QRCode.CorrectLevel.M }); } catch { $('qr').textContent = shipUrl; }
+    }).catch(() => { $('purl').textContent = 'Nessuna connessione: il poster si stampa con la rete.'; });
     return;
   }
 
   // ---- shipment form ----
-  const openForm = () => { $('ship-form').hidden = false; $('ship-open').hidden = true; $('ship-ok').hidden = true; $('ship-err').textContent = ''; setTimeout(() => $('kg').focus(), 50); };
+  const openForm = () => { $('ship-form').hidden = false; $('ship-open').hidden = true; $('ship-ok').hidden = true; $('ship-err').textContent = '';
+    setTimeout(() => (whoNow() ? $('kg') : (!$('who-sel').hidden ? $('who-sel') : $('who'))).focus(), 50); };
   $('ship-open').onclick = openForm;
   $('ship-cancel').onclick = () => { $('ship-form').hidden = true; $('ship-open').hidden = false; };
   // v0.95 (audit FARM-01): Italian numbers — "1.050" is one thousand and fifty, "1050,5" has a decimal; anything else is refused, never guessed
@@ -165,7 +197,7 @@ body.print .box{display:none}body.print .poster{display:block}
     const live = (D.shipments || []).filter(x => x.status !== 'cancelled');
     const left = order != null ? order - live.filter(x => x.ship_date === D.today).reduce((a, x) => a + Number(x.kg), 0) : null;
     const last = live.slice(0, 10).map(x => Number(x.kg)).sort((a, b) => a - b), n = last.length;
-    const med = n >= 3 ? (n % 2 ? last[(n - 1) / 2] : (last[n / 2 - 1] + last[n / 2]) / 2) : null;
+    const med = D.usual_kg != null ? Number(D.usual_kg) : n >= 3 ? (n % 2 ? last[(n - 1) / 2] : (last[n / 2 - 1] + last[n / 2]) / 2) : null;   // v1.03: the server's median
     const near = ref => ref > 0 && k >= ref * 0.7 && k <= ref * 1.3;
     if ((order == null && med == null) || near(order) || near(left) || near(med)) return null;
     return order != null ? `Hai scritto ${kg(k)} kg ma l'ordine di oggi è ${kg(order)} kg${left > 0 && left < order ? ` (ne mancano ${kg(left)})` : ''}. È giusto?`
@@ -193,6 +225,8 @@ body.print .box{display:none}body.print .poster{display:block}
     const tt = parseT($('temp').value);
     if (tt !== null && (Number.isNaN(tt) || tt < -2 || tt > 40)) { $('ship-err').textContent = 'Temperatura: scrivi solo il numero dei gradi, con la virgola (es. 4,5), oppure lascia vuoto.'; $('temp').focus(); return; }
     if (tt !== null && tt > tLim().max && !confirm(`Latte a ${kg(tt)} °C: oltre ${kg(tLim().max)} °C il caseificio lo deve respingere all'arrivo. Spedirlo lo stesso?`)) return;
+    const by = whoNow();
+    if (by.length < 2) { $('ship-err').textContent = !$('who-sel').hidden && !$('who-sel').value ? 'Scegli chi spedisce.' : 'Scrivi il tuo nome in «Chi spedisce».'; ((!$('who-sel').hidden && $('who').hidden) ? $('who-sel') : $('who')).focus(); return; }
     const k = parseKg($('kg').value);
     if (!Number.isFinite(k)) { $('ship-err').textContent = 'Scrivi i kg di latte spediti, solo il numero (es. 1050).'; return; }
     if (k < 50 || k > 5000) { $('ship-err').textContent = `${kg(k)} kg? Scrivi i kg di latte spediti: tra 50 e 5.000 (es. 1050).`; return; }
@@ -204,14 +238,15 @@ body.print .box{display:none}body.print .poster{display:block}
     $('ship-go').disabled = true; $('ship-warn-yes').disabled = true;
     try {
       const tv = parseT($('temp').value);
-      const d = await post({ action: 'ship', kg: k, confirm: confirmed, temp: tv === null || Number.isNaN(tv) ? null : tv, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null });
+      const by = whoNow(); store.set(WHO_KEY, by);
+      const d = await post({ action: 'ship', kg: k, confirm: confirmed, temp: tv === null || Number.isNaN(tv) ? null : tv, ddt: $('ddt').value.trim() || null, note: $('note').value.trim() || null, by });
       if (d.needs_confirm) { showWarn(k, d.message || `Hai scritto ${kg(k)} kg. È giusto?`); return; }   // the server's numbers were newer than the page's
       hideWarn();
       $('ship-form').hidden = true; $('ship-open').hidden = false;
       try { history.replaceState(null, '', location.pathname + '?t=' + encodeURIComponent(token)); } catch {}   // a reload doesn't reopen the form
       ['kg', 'temp', 'ddt', 'note'].forEach(i => $(i).value = ''); tempNote();
       $('ship-ok').hidden = false;
-      $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="lotbig">Lotto ${esc(d.shipment.milk_lot)}</div><div class="meta"><b>Scrivi il lotto sul DDT e sulla cisterna</b>: all'arrivo il caseificio lo controlla per sapere quale cisterna è. Sbagliato qualcosa? «Correggi o annulla» qui sotto.</div>`;
+      $('ship-ok').innerHTML = `<div class="okmsg">✓ Spedizione registrata${d.shipment.recorded_by ? ' da ' + esc(d.shipment.recorded_by) : ''}</div><div class="kg">${kg(d.shipment.kg)} <small>kg</small></div><div class="lotbig">Lotto ${esc(d.shipment.milk_lot)}</div><div class="meta"><b>Scrivi il lotto sul DDT e sulla cisterna</b>: all'arrivo il caseificio lo controlla per sapere quale cisterna è. Sbagliato qualcosa? «Correggi o annulla» qui sotto${D && D.scope === 'qr' ? ' (dal QR entro 2 ore)' : ''}.</div>`;
       load();
     } catch (e) { $('ship-err').textContent = 'Non registrata: ' + e.message + '. Riprova.'; }
     finally { $('ship-go').disabled = false; $('ship-warn-yes').disabled = false; $('ship-go').textContent = 'Registra spedizione'; confirmKg = null; }
@@ -240,7 +275,7 @@ body.print .box{display:none}body.print .poster{display:block}
       btn.textContent = cancel ? `Confermo: annulla ${amendLot}` : `Confermo ${kg(k)} kg (prima ${kg(amendKg)})`; return; }
     btn.disabled = true;
     try {
-      await post({ action: 'amend', lot: amendLot, kg: cancel ? null : k, cancel, reason: why });
+      await post({ action: 'amend', lot: amendLot, kg: cancel ? null : k, cancel, reason: why, by: whoNow() || store.get(WHO_KEY) || null });
       const lot = amendLot; closeAmend();
       $('ship-ok').hidden = false;
       $('ship-ok').innerHTML = cancel ? `<div class="okmsg">✓ Spedizione ${esc(lot)} annullata</div><div class="meta">Il caseificio lo vede subito; sul tablet non compare più.</div>`
@@ -262,25 +297,30 @@ body.print .box{display:none}body.print .poster{display:block}
       const r = await fetch(FN + '?t=' + encodeURIComponent(token), { headers: { apikey: KEY } });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'errore');
-      D = d;
+      D = d; const qr = d.scope === 'qr';
+      setupWho(d.people || []);
       $('co').textContent = 'Latte per ' + (d.company || 'il caseificio'); document.title = 'Latte · ' + (d.company || '');
       $('sub').textContent = 'Aggiornato ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ' · la pagina si aggiorna da sola';
       const sh = d.shipments || [];
+      // v1.03: the QR in the barn sees today's loads only
+      $('sec-month').hidden = qr; $('sec-orders').hidden = qr;
+      $('h-latest').textContent = qr ? 'Ultima spedizione di oggi' : 'Ultima spedizione'; $('h-hist').textContent = qr ? 'Spedizioni di oggi' : 'Ultimi 30 giorni';
+      const byTxt = s => s.recorded_by ? ' · ' + esc(s.recorded_by) : '';
       // latest shipment
       const L = sh[0];
-      $('latest').innerHTML = !L ? '<div class="empty">Nessuna spedizione registrata negli ultimi 30 giorni.</div>' :
+      $('latest').innerHTML = !L ? `<div class="empty">${qr ? 'Nessuna spedizione registrata oggi.' : 'Nessuna spedizione registrata negli ultimi 30 giorni.'}</div>` :
         `<div class="card"><div class="row"><div class="grow"><div class="day">${esc(dd(L.ship_date, d.today))} · partito alle ${tm(L.shipped_at)}</div>
           <div class="kg">${kg(L.kg)} <small>kg</small></div>
-          <div class="meta">Lotto ${esc(L.milk_lot)}${L.temperature_c != null ? ' · ' + kg(L.temperature_c) + ' °C alla partenza' : ''}${L.ddt_number ? ' · DDT ' + esc(L.ddt_number) : ''}</div>
+          <div class="meta">Lotto ${esc(L.milk_lot)}${L.temperature_c != null ? ' · ' + kg(L.temperature_c) + ' °C alla partenza' : ''}${L.ddt_number ? ' · DDT ' + esc(L.ddt_number) : ''}${byTxt(L)}</div>
           ${L.status === 'received' && L.arrival_temp_c != null ? `<div class="meta">All'arrivo: ${kg(L.arrival_temp_c)} °C</div>` : ''}
           ${L.status === 'rejected' ? `<div class="err" style="margin-top:4px">Respinto: ${esc(L.rejection_reason || 'non conforme')}</div>` : ''}
           ${changes(L)}
-          ${L.status === 'shipped' ? '<button class="btn sec" style="margin-top:10px" data-amend="0">Correggi o annulla</button>' : ''}
+          ${L.status === 'shipped' && L.can_amend !== false ? '<button class="btn sec" style="margin-top:10px" data-amend="0">Correggi o annulla</button>' : ''}
           </div>${pill(L)}</div></div>`;
       const m = d.month || {};
       $('totals').innerHTML = `<div class="card"><div class="meta">Ricevuto dal caseificio</div><div class="kg">${kg(m.received_kg || 0)} <small>kg</small></div><div class="meta">${m.shipments || 0} ${m.shipments === 1 ? 'spedizione' : 'spedizioni'}</div></div>
         <div class="card"><div class="meta">Mese scorso</div><div class="kg">${kg(m.prev_received_kg || 0)} <small>kg</small></div></div>`;
-      $('hist').innerHTML = sh.length ? sh.map((s, i) => `<tr><td>${esc(dd(s.ship_date, d.today))} ${tm(s.shipped_at)}<div class="meta">${esc(s.milk_lot)}</div>${changes(s)}</td><td class="n">${kg(s.kg)} kg</td><td class="n">${pill(s)}${s.status === 'shipped' ? `<div><button class="lnk" data-amend="${i}">correggi</button></div>` : ''}</td></tr>`).join('')
+      $('hist').innerHTML = sh.length ? sh.map((s, i) => `<tr><td>${esc(dd(s.ship_date, d.today))} ${tm(s.shipped_at)}<div class="meta">${esc(s.milk_lot)}${byTxt(s)}</div>${changes(s)}</td><td class="n">${kg(s.kg)} kg</td><td class="n">${pill(s)}${s.status === 'shipped' && s.can_amend !== false ? `<div><button class="lnk" data-amend="${i}">correggi</button></div>` : ''}</td></tr>`).join('')
         : '<tr><td class="empty">Ancora niente.</td></tr>';
       document.querySelectorAll('[data-amend]').forEach(b => { b.onclick = () => openAmend(sh[Number(b.dataset.amend)]); });
       // orders from the dairy
@@ -298,7 +338,8 @@ body.print .box{display:none}body.print .poster{display:block}
         p.insertAdjacentHTML('beforeend', `<div class="card pending"><div class="day">${esc(dd(x.plan_date, d.today))}</div><div class="kg">≈ ${kg(x.milk_kg)} <small>kg previsti</small></div><div class="meta">Non ancora confermato${esc(by)}</div></div>`);
       });
       if (!(d.orders || []).length && !(d.pending || []).length) o.innerHTML = '<div class="empty">Nessun ordine per i prossimi giorni.</div>';
-      $('foot').textContent = d.receiving_hours ? 'Orari di ricevimento latte al caseificio: ' + d.receiving_hours : '';
+      $('foot').textContent = (d.receiving_hours ? 'Orari di ricevimento latte al caseificio: ' + d.receiving_hours + '. ' : '')
+        + (qr ? 'Questo è il QR delle spedizioni: ordini e storico sono sul link del titolare della Masseria.' : '');
       $('main').hidden = false; $('err').textContent = '';
     } catch (e) { $('err').textContent = 'Pagina non disponibile: ' + e.message + '.'; }
   }

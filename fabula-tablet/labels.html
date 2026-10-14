@@ -1,6 +1,9 @@
 <!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Etichette QR</title>
-<style>body{font-family:system-ui,sans-serif;padding:16px;margin:0}h1{font-size:1.2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.l{border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}.l b{display:block;font-size:1.2rem;margin-top:8px}.l small{display:block;color:#333}.l .c{color:#555;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}textarea{width:100%;height:110px;font-family:monospace;box-sizing:border-box}.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 16px}button{font:600 1rem system-ui;padding:8px 14px}@media print{h1,textarea,.bar{display:none}body{padding:0}}</style>
-<script src="vendor/qrcode.min.js"></script></head><body>
+<style>body{font-family:system-ui,sans-serif;padding:16px;margin:0}h1{font-size:1.2rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.l{border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}.l b{display:block;font-size:1.2rem;margin-top:8px}.l small{display:block;color:#333}.l .c{color:#555;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}textarea{width:100%;height:110px;font-family:monospace;box-sizing:border-box}.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 16px}button{font:600 1rem system-ui;padding:8px 14px}.chk{font-size:.8rem;margin-top:6px;font-weight:600}.chk.ok{color:#1f6b3a}.chk.amb{color:#8a5a00}.chk.ko{color:#b3261e}.l.ko{border:2px solid #b3261e;background:#fbe9e7}
+.st{padding:8px 12px;border-radius:8px;margin:0 0 12px;font-weight:600}.st.ok{background:#e6f2ea;color:#1f6b3a}.st.amb{background:#fff4dc;color:#5d4300}.st.ko{background:#fbe9e7;color:#b3261e}
+textarea[readonly]{background:#f3f1ec;color:#555}.lnk{background:none;border:0;padding:0;color:#1e3a5f;text-decoration:underline;font:inherit;cursor:pointer}
+@media print{h1,textarea,.bar,.noprint{display:none!important}body{padding:0}.l.ko{display:none}}</style>
+<script src="vendor/qrcode.min.js"></script><script src="vendor/supabase.js"></script><script src="config.js"></script></head><body>
 <h1>Etichette QR — una riga per etichetta: <code>CODICE | Nome | Nota</code></h1>
 <textarea id="src">EQ:CF-01 | Cella frigo 1
 EQ:CF-02 | Cella frigo 2
@@ -18,38 +21,104 @@ COUNT | Conta magazzino
 SHIP | Da spedire
 EFFL | Reflui
 HACCP: | Menu HACCP</textarea>
-<div class="bar"><button type="button" id="gen">Genera</button><button type="button" id="prt">Stampa</button><span>su carta adesiva · badge: <code>STAFF:CODICE | Nome</code> (il codice non si stampa) · lotto: <code>LOT:L20261005-A | Mozzarella | scad. 10/10/2026</code></span></div>
+<div class="bar"><button type="button" id="gen">Genera</button><button type="button" id="prt">Stampa</button><button type="button" class="lnk" id="edit" hidden>Modifica a mano</button><span>su carta adesiva · badge: <code>STAFF:CODICE | Nome</code> (il codice non si stampa) · lotto: <code>LOT:L20261005-A</code> (nome e scadenza li mette il database)</span></div>
+<div class="st noprint" id="st" hidden></div>
 <div class="grid" id="g"></div>
 <script>
 // v0.52: ?code=LOT:…&name=…&sub=…&n=6 prints n copies of one label (tablet: milk intake, batch close, lab sample).
 // v0.53: ?l=CODE|Nome|Nota&l=… prints several different labels (Configurazione: badges).
 // Text is set with textContent only: values come from the URL.
+// v1.03 (audit PRINT-08): every LOT: line is checked against the database (fabula.lot_label_info) — name and expiry or arrival
+// come from the database, whatever was written; a lot that does not exist is shown in red and never printed, unless the tablet has
+// it among the records it saved without network (its queue, same browser): then it prints with an amber note. A batch the database
+// still has open while the link carries its expiry (the close is in that queue) prints as the tablet wrote it, in amber. Without
+// network or login the page says the lots were not checked. Lot lines from the tablet are read-only («Modifica a mano» unlocks them,
+// and then they count as typed).
 (function () {
+  const $ = id => document.getElementById(id), src = $('src');
   const P = new URLSearchParams(location.search);
+  let typed = !(P.getAll('l').length || P.get('code'));   // a page opened without a label in the link: whatever is there is typed
   if (P.getAll('l').length) {
-    document.getElementById('src').value = P.getAll('l').slice(0, 120).map(s => s.replace(/\n/g, ' ')).join('\n');
+    src.value = P.getAll('l').slice(0, 120).map(s => s.replace(/\n/g, ' ')).join('\n');
   } else if (P.get('code')) {
     const n = Math.max(1, Math.min(60, parseInt(P.get('n') || '1', 10) || 1));
     const line = [P.get('code'), P.get('name') || '', P.get('sub') || ''].map(s => s.replace(/[|\n]/g, ' ')).join(' | ');
-    document.getElementById('src').value = Array(n).fill(line).join('\n');
+    src.value = Array(n).fill(line).join('\n');
   }
-  function render() {
-    const g = document.getElementById('g'); g.textContent = '';
-    document.getElementById('src').value.split('\n').map(s => s.trim()).filter(Boolean).forEach(line => {
-      const [code, name, sub] = line.split('|').map(s => (s || '').trim());
-      const d = document.createElement('div'); d.className = 'l';
-      const q = document.createElement('div'); d.append(q);
-      new QRCode(q, { text: code, width: 140, height: 140 });
-      const b = document.createElement('b'); b.textContent = name || ''; d.append(b);
-      if (sub) { const s = document.createElement('small'); s.textContent = sub; d.append(s); }
-      // 13/10/2026 (audit PRINT-13): a badge never prints its code in clear, so nobody can read a colleague's
-      // card and type the code on the tablet; only the QR carries it. Lot and machine labels keep the code.
-      if (!/^STAFF:/i.test(code)) { const c = document.createElement('small'); c.className = 'c'; c.textContent = code; d.append(c); }
-      g.append(d);
+  const lines = () => src.value.split('\n').map(s => s.trim()).filter(Boolean).map(line => { const [code, name, sub] = line.split('|').map(s => (s || '').trim()); return { code, name, sub }; });
+  const isLot = c => /^LOT:/i.test(c || '');
+  // the tablet's records waiting to be sent (saved without network): a lot named there is real even if the database has no row yet
+  const queued = lot => { try { const q = String(localStorage.getItem('fabula_queue') || '').toUpperCase(), l = String(lot || '').toUpperCase().replace(/^LOT:/, '');
+    return !!l && new RegExp('(^|[^A-Z0-9-])' + l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^A-Z0-9-]|$)').test(q); } catch { return false; } };
+  if (!typed && lines().some(x => isLot(x.code))) { src.readOnly = true; $('edit').hidden = false; }
+  $('edit').onclick = () => { src.readOnly = false; typed = true; $('edit').hidden = true; src.focus(); };
+  src.addEventListener('input', () => { typed = true; });
+
+  // the database's view of the lots on the page: { code: {found, name, sub, …} }, or a reason why it could not be read
+  let sb = null;
+  try { if (window.supabase && window.FABULA_CONFIG) sb = supabase.createClient(FABULA_CONFIG.supabaseUrl, FABULA_CONFIG.supabaseKey, { db: { schema: 'fabula' }, auth: { autoRefreshToken: false } }); } catch { sb = null; }
+  async function check(codes) {
+    if (!codes.length) return { info: {} };
+    if (!sb || !navigator.onLine) return { why: 'senza rete' };
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return { why: 'non sei collegato: apri le etichette dal tablet' };
+      const timeout = new Promise(res => setTimeout(() => res({ error: { message: 'timeout' } }), 8000));
+      const r = await Promise.race([sb.rpc('lot_label_info', { p_codes: codes }), timeout]);
+      if (r.error) return { why: /timeout|fetch|network/i.test(r.error.message || '') ? 'senza rete' : r.error.message };
+      return { info: r.data || {} };
+    } catch (e) { return { why: 'senza rete' }; }
+  }
+  function cell(code, name, sub, note) {
+    const d = document.createElement('div'); d.className = 'l';
+    const q = document.createElement('div'); d.append(q);
+    new QRCode(q, { text: code, width: 140, height: 140 });
+    const b = document.createElement('b'); b.textContent = name || ''; d.append(b);
+    if (sub) { const s = document.createElement('small'); s.textContent = sub; d.append(s); }
+    // 13/10/2026 (audit PRINT-13): a badge never prints its code in clear, so nobody can read a colleague's
+    // card and type the code on the tablet; only the QR carries it. Lot and machine labels keep the code.
+    if (!/^STAFF:/i.test(code)) { const c = document.createElement('small'); c.className = 'c'; c.textContent = code; d.append(c); }
+    if (note) { const n = document.createElement('div'); n.className = 'chk noprint ' + note[0]; n.textContent = note[1]; d.append(n); }
+    return d;
+  }
+  let busy = null;
+  async function render() {
+    const g = $('g'), st = $('st'), L = lines();
+    const codes = [...new Set(L.filter(x => isLot(x.code)).map(x => x.code))];
+    st.hidden = true; st.className = 'st noprint';
+    if (codes.length) { st.hidden = false; st.classList.add('amb'); st.textContent = 'Controllo i lotti sul database…'; }
+    const res = await check(codes);
+    g.textContent = '';
+    let ok = 0, fixed = 0, pending = 0, bad = 0;
+    L.forEach(x => {
+      if (!isLot(x.code)) { g.append(cell(x.code, x.name, x.sub)); return; }
+      const i = res.info ? res.info[x.code] : null;
+      if (i && i.found && i.open && !typed && /^scad\./i.test(x.sub || '')) {   // closed on the tablet, the close not yet in the database
+        pending++; g.append(cell(x.code, x.name, x.sub, ['amb', 'Chiusura del lotto non ancora nel database (registrata senza rete?): stampata come dal tablet']));
+      } else if (i && i.found) {
+        const changed = (x.name && x.name !== i.name) || (x.sub && x.sub !== i.sub);
+        ok++; if (changed) fixed++;
+        const code = 'LOT:' + i.lot;
+        g.append(cell(code, i.name, i.sub, changed ? ['ok', '✓ dal database (corretto quello scritto)'] : ['ok', '✓ controllato sul database'] ));
+        if (i.on_hold) g.lastChild.append(Object.assign(document.createElement('div'), { className: 'chk noprint ko', textContent: '⚠ lotto BLOCCATO: non si vende' }));
+      } else if (i && !i.found && (typed || !queued(x.code))) {
+        bad++;
+        const d = cell(x.code, x.name, x.sub, ['ko', 'Lotto sconosciuto (non è nel database né tra le registrazioni in attesa del tablet): non si stampa. Ristampa dal tablet («🖨 Ristampa etichette lotto»).']);
+        d.classList.add('ko'); d.querySelector('div').style.visibility = 'hidden'; g.append(d);
+      } else if (i && !i.found) {
+        pending++; g.append(cell(x.code, x.name, x.sub, ['amb', 'In attesa di invio dal tablet (registrato senza rete): non ancora nel database']));
+      } else g.append(cell(x.code, x.name, x.sub, ['amb', 'Non controllato']));
     });
+    if (!codes.length) return;
+    st.className = 'st noprint ' + (bad ? 'ko' : res.why || pending ? 'amb' : 'ok');
+    st.textContent = res.why ? `Lotti NON controllati (${res.why}): stampa solo se nome, lotto e scadenza sono giusti.`
+      : [bad ? `${bad} lott${bad === 1 ? 'o sconosciuto non verrà stampato' : 'i sconosciuti non verranno stampati'}` : '',
+         `${ok} etichett${ok === 1 ? 'a' : 'e'} di lotto controllat${ok === 1 ? 'a' : 'e'} sul database${fixed ? ` (${fixed} corrett${fixed === 1 ? 'a' : 'e'})` : ''}`,
+         pending ? `${pending} non ancora nel database` : ''].filter(Boolean).join(' · ');
   }
-  document.getElementById('gen').onclick = render;
-  document.getElementById('prt').onclick = () => { render(); setTimeout(() => window.print(), 300); };
-  render();
+  const go = () => (busy = render().catch(e => { $('st').hidden = false; $('st').className = 'st noprint ko'; $('st').textContent = 'Errore: ' + (e.message || e); }));
+  $('gen').onclick = go;
+  $('prt').onclick = async () => { await go(); setTimeout(() => window.print(), 300); };
+  go();
 })();
 </script></body></html>

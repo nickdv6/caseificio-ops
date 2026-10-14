@@ -155,3 +155,18 @@ operator_e2e (the «badge di uscita» item is in a floor notice).
 Last run 14/10/2026 (v1.02), same setup with the 184 migrations, all 20 suites in a row (the 18 above in the same order, then
 shopify_sync_fn_e2e, sync_e2e, alerts_e2e last): `FAILURES: none`. shopify_sync_fn_e2e sets the stock push itself, since the
 suites before it post a stock count (which switches the push on).
+
+25. `python3 v103_e2e.py` (v1.03, audit C-05 / FARM-04 / PRINT-08; port 8782, browser in it-IT) — the real edge function `farm-order`
+    run with Deno (DENO=…/deno) behind a proxy to PostgREST. The QR key: «Chi spedisce» from the names (a name typed under «Un altro»
+    and then «scegli» counts as nobody), no month or orders, the load saved with the name and «farm_qr», remembered on the phone, its
+    own load corrected within 2 hours with the office told who; the full link: month, orders, the name; it refuses to become a poster,
+    the QR key prints it. Configurazione «Link della Masseria» (owner): links, WhatsApp text, «Genera nuovo QR» asks and switches the
+    old QR off, «Chi spedisce» saved; the office profile sees no links; Console → Oggi: the poster from the QR key for the owner,
+    nothing for production; a Console save on a customer still works (`UI.upd`). Tablet «🖨 Ristampa etichette lotto»: search, the
+    lot's copies, «Prepara l'etichetta», the link from the database, the reprint counted; labels.html: checked lots, a wrong expiry
+    corrected, an unknown lot red and not printed unless it waits in the tablet's queue, a close still in the queue printed as the
+    tablet wrote it, no login «NON controllati». Expect `FAILURES: none`.
+
+Last run 14/10/2026 (v1.03), same setup with the 187 migrations, all 21 suites in a row (the 20 above, with v103_e2e after sync_e2e
+and alerts_e2e last): `FAILURES: none` in each, v103_e2e 30/30. farm_amend_e2e, farm_test and s_items_e2e now set «Chi spedisce» on the farm page, and
+farm_test prints the poster with the QR key.
