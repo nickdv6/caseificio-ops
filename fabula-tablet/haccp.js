@@ -9,7 +9,7 @@
   const sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
   document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
-  let staff = null, isManager = false, FORMS = {}, SAMPLES = [];
+  let staff = null, isManager = false, FORMS = {}, SAMPLES = [], REG_DUE = 0, REJ_OPEN = 0;
   const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
   // MOD-xx chip → printable register of that form (Manuale di Autocontrollo §11). '§8.2' chips point to the manual itself.
   const modChip = code => { const f = FORMS[code]; if (!f) return ''; return `<a class="modref" href="registro.html?mod=${esc(code)}" target="_blank" rel="noopener" title="${esc(f.title_it)} · registro stampabile">${esc(code)} · ${esc(f.manual_section)}</a>`; };
@@ -69,7 +69,7 @@
     staff = { ...(data || { id: P.staff_id, full_name: P.full_name }), app_role: P.role, role_name: P.role_name };
     isManager = PERM.can('haccp', 3);
     $('who').textContent = staff.full_name;
-    show('main'); showTab((location.hash || '#registri').slice(1) || 'registri'); load();   // v0.57b: the Manuale's home opens on Registri
+    show('main'); showTab((location.hash || '#registri').slice(1).split(/[&=]/)[0].replace(/[^a-z]/g, '') || 'registri'); load();   // v0.57b: the Manuale's home opens on Registri (v1.00: #registri&… from a message link)
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
@@ -105,6 +105,7 @@
       sb.from('settings').select('key, value').like('key', 'food.manuale_%')
     ]);
     [plan, holds, ncs, ncsClosed, logs, lab, samples, stations, insp, matrix, courses, people, instr, checks, forms, manual].forEach((r, i) => { if (r.error) toast('Lettura dati: ' + r.error.message, 'err'); });
+    loadRejects().catch(e => toast('Registrazioni rifiutate: ' + (e.message || e), 'err'));
     SAMPLES = samples.data || [];
     FORMS = Object.fromEntries((forms.data || []).map(f => [f.code, f]));
     renderManual(Object.fromEntries((manual.data || []).map(r => [r.key, r.value])));
@@ -127,12 +128,39 @@
     $('manual').innerHTML = `Manuale di Autocontrollo rev. ${esc(m['food.manuale_rev'] || '?')}${m['food.manuale_data'] ? ' del ' + fmtD(m['food.manuale_data']) : ''}`
       + (draft ? ' · <span class="draft">bozza, da firmare</span>' : ' · firmato') + (MANUAL_URL ? ` · <a href="${esc(MANUAL_URL)}" target="_blank" rel="noopener">apri il manuale</a>` : '');
   }
+  // ---------- v1.00 (audit E-21): the saves the database refused (offline records that came back with an error) ----------
+  // Each one is redone (tablet → 🛡 → Ricopia da foglio di carta, with the real time) or marked not needed, always with a note.
+  async function loadRejects() {
+    const card = $('c-rej'); if (!card) return;
+    const { data, error } = await sb.rpc('tablet_rejects_list', { p_days: 30 });
+    if (error) { card.hidden = true; if (error.code !== '42501') throw error; return; }
+    const rows = data || [], open = rows.filter(r => !r.resolved_at), done = rows.filter(r => r.resolved_at);
+    REJ_OPEN = open.length; badge('n-registri', REG_DUE + REJ_OPEN); badge('n-rej', open.length);
+    if (!rows.length) { card.hidden = true; return; }
+    card.hidden = false;
+    const canFix = PERM.can('haccp', 2) || PERM.can('sistema', 2);
+    const row = r => `<div class="rej${r.resolved_at ? ' done' : r.haccp ? ' ko' : ''}" data-q="${esc(r.qid)}">
+        <div class="hd"><b>${esc(r.what)}</b>${r.haccp && !r.resolved_at ? ` ${pill('HACCP: da rifare oggi', 'ko')}` : ''}<span class="status">${esc(fmtDT(r.failed_at || r.reported_at))}${r.device ? ' · ' + esc(r.device) : ''}${r.staff ? ' · ' + esc(r.staff) : ''}</span></div>
+        ${r.values_it ? `<div class="vals">${esc(r.values_it)}</div>` : ''}
+        <div class="status">Motivo del database: ${esc(r.error || 'non indicato')}</div>
+        ${r.resolved_at ? `<div class="ok">✓ ${esc(r.resolved_by || '')} · ${esc(fmtDT(r.resolved_at))}${r.resolution ? ' · ' + esc(r.resolution) : ''}</div>`
+          : canFix ? `<div class="row nodirty"><input type="text" maxlength="300" placeholder="Cosa è stato fatto? (es. «rifatta dal tablet alle 10:40», «dato sbagliato, non serve»)" aria-label="Cosa è stato fatto"><button class="btn sm" type="button" data-rej>Segna come rifatta</button></div>` : ''}</div>`;
+    $('rejects').innerHTML = (open.length ? open.map(row).join('') : '<div class="empty">Nessuna registrazione da rifare.</div>')
+      + (done.length ? `<details style="margin-top:8px"><summary>Chiuse negli ultimi 30 giorni (${done.length})</summary>${done.map(row).join('')}</details>` : '');
+    $('rejects').querySelectorAll('[data-rej]').forEach(b => b.onclick = async () => {
+      const box = b.closest('.rej'), note = box.querySelector('input').value.trim();
+      if (note.length < 3) return toast('Scrivi cosa è stato fatto (almeno qualche parola)', 'err');
+      b.disabled = true;
+      try { fail(await sb.rpc('resolve_tablet_reject', { p_qid: box.dataset.q, p_resolution: note }), 'Registrazione rifiutata'); toast('Segnata come rifatta'); await loadRejects(); }
+      catch (e) { /* toast already shown */ } finally { b.disabled = false; }
+    });
+  }
   const ST = { attivo: '', parziale: pill('parziale', 'warn'), cartaceo: pill('cartaceo'), da_attivare: pill('da attivare', 'ko') };
   const KIND_REVIEW = new Set(['milk', 'ccp', 'batch', 'pest', 'calibration', 'lab', 'nc', 'hold', 'receipt', 'effluent']);   // registers the responsible checks every week
   function needsReview(f) { return f.status !== 'da_attivare' && KIND_REVIEW.has(f.register_kind) && f.last_at && (!f.last_review_to || f.last_review_to < addDays(todayRome(), -7)); }
   function renderForms(rows) {
     if (!$('rg-to').value) { $('rg-to').value = todayRome(); $('rg-from').value = addDays(todayRome(), -6); }
-    const due = rows.filter(needsReview).length; badge('n-registri', due);
+    const due = rows.filter(needsReview).length; REG_DUE = due; badge('n-registri', REG_DUE + REJ_OPEN);
     if (!rows.length) { $('forms').innerHTML = '<div class="empty">Moduli non disponibili.</div>'; return; }
     $('forms').innerHTML = `<table><tr><th>Modulo</th><th>Registro</th><th>Frequenza · chi</th><th class="num">30 gg</th><th>Ultima registrazione</th><th>Ultima verifica</th><th></th></tr>${rows.map(f => `
       <tr data-form="${esc(f.code)}"><td class="nw"><b>${esc(f.code)}</b><br><small>Manuale ${esc(f.manual_section)}</small></td>

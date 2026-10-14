@@ -1,0 +1,85 @@
+<title>Bot fermi: cosa fare</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* v1.00 (audit E-20): one A4 card for the office when the bots (Claude scheduled tasks) stop. The same text is in the app:
+   Configurazione → Bot → «Bot fermi: cosa fare» (admin.html#bots&fermi). Keep the two in step. */
+:root{
+  --bg:#f7f5f0; --paper:#ffffff; --fg:#1d1f1a; --muted:#5d6158; --rule:#d9d5cb;
+  --accent:#0f6b4f; --warn:#b4472c; --tile:#eef3ef;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#4fbf93; --warn:#f08a6a; --tile:#232a27; color-scheme:dark } }
+:root[data-theme="dark"]{ --bg:#15171a; --paper:#1d2024; --fg:#ecebe6; --muted:#a3a79e; --rule:#33373d; --accent:#4fbf93; --warn:#f08a6a; --tile:#232a27; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--body);padding-block:24px;padding-inline:16px;margin:0;line-height:1.38}
+.sheet{max-width:1040px;margin:0 auto;background:var(--paper);border:1px solid var(--rule);padding:28px 32px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;border-bottom:3px solid var(--warn);padding-bottom:12px;margin-bottom:18px}
+h1{font-family:var(--display);font-size:2.7rem;font-weight:700;margin:0;line-height:1}
+.sub{color:var(--muted);font-size:.98rem;margin-top:4px}
+.meta{font-family:var(--display);font-size:1rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:right}
+.meta b{color:var(--fg);display:block;font-size:1.3rem}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.grid{grid-template-columns:1fr}}
+.box{border:1px solid var(--rule);background:var(--tile);padding:12px 16px;min-width:0}
+.box.stop{border:3px solid var(--warn);background:var(--paper)}
+.box.wide{grid-column:1/-1}
+h2{font-family:var(--display);font-size:1.45rem;margin:0 0 6px;line-height:1.05;display:flex;gap:10px;align-items:baseline}
+h2 .n{font-size:2rem;color:var(--accent)}
+.stop h2,.stop h2 .n{color:var(--warn)}
+ul{margin:0;padding-left:18px}li{margin:3px 0}
+.line{display:inline-block;min-width:170px;border-bottom:1px solid var(--fg);height:1em}
+footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--rule);font-size:.85rem;color:var(--muted)}
+@media print{body{background:#fff;padding:0;zoom:.84}.sheet{border:0;padding:4mm 6mm}li{margin:2px 0}footer{margin-top:8px;padding-top:6px}}
+@page{size:A4;margin:8mm}
+</style>
+
+<div class="sheet">
+<header>
+  <div>
+    <h1>Bot fermi: cosa fare</h1>
+    <div class="sub">Quando arriva «Allarme bot» · per l'ufficio e per i soci · la stessa scheda è in Configurazione → Bot</div>
+  </div>
+  <div class="meta">SOP-14 · rev. 1 · 14/10/2026<b>La produzione non si ferma</b></div>
+</header>
+
+<div class="grid">
+  <div class="box"><h2><span class="n">1</span>Come te ne accorgi</h2>
+    <ul>
+      <li>Su Telegram arriva <b>«Allarme bot»</b> con il nome del bot: un messaggio per ogni bot fermo, non uno all'ora.</li>
+      <li>In <b>Console → Oggi</b>, riquadro «Avvisi aperti»: «N bot da controllare».</li>
+      <li>In <b>Configurazione → Bot</b> il bot è fra quelli «Da sistemare».</li>
+    </ul></div>
+
+  <div class="box"><h2><span class="n">2</span>Il lavoro non si ferma</h2>
+    <ul>
+      <li>Tablet, Autocontrollo, etichette e consegne <b>funzionano senza bot</b>.</li>
+      <li>Se un bot non parte o dà errore, poco dopo l'orario il database fa da solo il lavoro essenziale: piano latte, ordini ai fornitori, ordini fissi ingrosso, elenco HACCP della sera, controllo serale, promozione «vendere prima», backup della notte. Compare come <b>«Sostituito dal database»</b>.</li>
+      <li>Per farlo subito: Configurazione → Bot → tocca il bot → <b>«Esegui ora (versione del database)»</b>.</li>
+    </ul></div>
+
+  <div class="box"><h2><span class="n">3</span>Cosa manca finché non ripartono</h2>
+    <ul>
+      <li><b>Ordini e giacenze Shopify</b>: guarda gli ordini online direttamente su Shopify e non lasciare in vendita online un prodotto finito al banco.</li>
+      <li><b>Brief del mattino</b>: guarda Console → Oggi.</li>
+      <li>Clienti Shopify, Vendite, Marketing, scadenze e revisione mensile possono aspettare un giorno.</li>
+    </ul></div>
+
+  <div class="box"><h2><span class="n">4</span>Farli ripartire</h2>
+    <ul>
+      <li>I bot sono attività programmate di Claude sull'account di <b>Nick</b>: li fa ripartire solo chi ha quell'account (di solito c'è da ricollegare Supabase o Shopify).</li>
+      <li>Scrivi a Nick <b>quale bot, da quando, cosa dice l'allarme</b>. Per lui è notte fino alle 13 italiane: intanto vale il punto 2.</li>
+      <li>Quando il bot riparte, il suo allarme <b>si chiude da solo</b>.</li>
+      <li>Nick · WhatsApp <span class="line"></span></li>
+    </ul></div>
+
+  <div class="box stop wide"><h2><span class="n">✋</span>«Le automazioni del database sono ferme»</h2>
+    <ul>
+      <li>È più grave: senza le automazioni non partono il backup, i controlli e i bot di riserva. Il tablet continua a registrare.</li>
+      <li>Avvisa subito Nick; chi ha l'accesso a Supabase apre <b>Integrations → Cron</b> o scrive al supporto Supabase.</li>
+      <li><b>Non incollare comandi</b> nell'editor SQL di Supabase e non ripristinare backup: vedi «Sistema giù: cosa fare».</li>
+    </ul></div>
+</div>
+
+<footer>Per lo sviluppatore: il controllo gira ogni ora dal database (pg_cron <code>fabula_bot_heartbeat</code> → <code>bot_watchdog()</code>), apre un allarme per bot fermo in <code>bot_alerts</code> e lo chiude quando il bot riparte. I bot che il database sa sostituire sono in <code>bot_fallback_agents()</code>.</footer>
+</div>

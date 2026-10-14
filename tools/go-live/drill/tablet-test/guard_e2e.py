@@ -134,7 +134,7 @@ try:
         pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(800)
     time.sleep(1)
     check('fully recorded batch closed: no CCP alert from Zio Ciro', sql(f"select output_kg from fabula.production_batches where batch_lot = '{lot1}'") == '75.000'
-          and sql(f"select count(*) from fabula.bot_messages where agent = 'produzione' and title like 'Lotto {lot1} chiuso senza%'") == '0')
+          and sql(f"select count(*) from fabula.bot_messages where agent in ('produzione', 'sicurezza') and title like 'Lotto {lot1} chiuso senza%'") == '0')
 
     # 3 — a batch whose CCP 3 is missing: asked at close, saved with the close
     lot2 = 'LQ' + RUN
@@ -158,7 +158,7 @@ try:
     time.sleep(1)
     check('saved with the close: CCP 3 = 66 °C on the lot, no alert',
           sql(f"select l.measured_value from fabula.haccp_log l join fabula.haccp_control_points cp on cp.id = l.control_point_id join fabula.production_batches b on b.id = l.batch_id where cp.code = 'CCP-STRETCH' and b.batch_lot = '{lot2}'") == '66.00'
-          and sql(f"select count(*) from fabula.bot_messages where agent = 'produzione' and title like 'Lotto {lot2} chiuso senza%'") == '0')
+          and sql(f"select count(*) from fabula.bot_messages where agent in ('produzione', 'sicurezza') and title like 'Lotto {lot2} chiuso senza%'") == '0')
     check('no page errors', not logs, ' | '.join(logs)[:300])
     b.close()
 finally:

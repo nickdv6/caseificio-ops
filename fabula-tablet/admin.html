@@ -130,7 +130,19 @@ details.tech .hint{margin-top:4px}
 .msg .b strong{font-weight:700}
 .msg .b blockquote{margin:4px 0 6px;padding:4px 10px;border-left:3px solid var(--rule);background:var(--bg);border-radius:0 6px 6px 0;font-size:.88rem}
 .msg .b.cut:not(.open)::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2.4em;background:linear-gradient(rgba(255,255,255,0),var(--paper))}
-.msg .ac{display:flex;gap:16px;align-items:center;margin-top:2px}
+.msg .ac{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;margin-top:2px}
+/* v1.00: a link to act, «Risolto» with a note, who has seen it */
+.msg .go{font:700 .88rem var(--body);color:var(--accent);text-decoration:none;padding:4px 0}.msg .go:hover{text-decoration:underline}
+.msg .rs{font-size:.86rem;color:var(--good);margin:2px 0 4px;overflow-wrap:anywhere}
+.msg .seen{font-size:.78rem;color:var(--muted);margin-left:auto;overflow-wrap:anywhere}
+.msg .rd.fx{color:var(--warn)}
+.msg .fixf{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}.msg .fixf[hidden]{display:none}.msg .fixf input{flex:1 1 220px;min-width:0}
+.bd-run{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 14px;margin-bottom:12px;border:1px solid var(--accent);border-radius:8px;background:var(--tile)}
+.bd-run[hidden]{display:none}.bd-run>div{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 260px}.bd-run span{font-size:.88rem;color:var(--muted)}
+#bd-fermi{scroll-margin-top:64px}
+#bd-fermi .fermi{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:10px}
+#bd-fermi .box{border:1px solid var(--rule);border-radius:8px;padding:10px 14px;background:var(--bg);min-width:0}#bd-fermi .box.stop{border:2px solid var(--warn)}
+#bd-fermi h4{margin:0 0 6px;font-size:1rem}#bd-fermi ul{margin:0;padding-left:18px}#bd-fermi li{margin:3px 0;font-size:.92rem;overflow-wrap:anywhere}
 .msg .more,.msg .rd{appearance:none;border:0;background:none;padding:4px 0;font:600 .85rem var(--body);cursor:pointer;color:var(--accent)}
 .msg .rd{color:var(--muted)}.msg .rd:hover{color:var(--accent)}
 @media (max-width:520px){.msg{gap:10px;padding:10px 12px}.msg .bav{flex-basis:32px;width:32px;height:32px}.msg .hd{flex-wrap:wrap}}
@@ -214,9 +226,35 @@ details.tech .hint{margin-top:4px}
   </div>
 
   <div class="pane" id="p-bots">
-    <div class="card" style="margin-bottom:16px"><h3>Bot</h3><div class="hint">Prima quelli da sistemare, poi quelli da controllare. Tocca un bot per leggere solo le sue notifiche e le sue esecuzioni. Orari in ora italiana (Agropoli); per cambiarli serve l'editor delle attività programmate.</div><div id="bd-sum" class="bd-sum"></div><div id="bd-bots"></div></div>
-    <div class="card" id="bd-feed-card" style="margin-bottom:16px"><h3>Notifiche dei bot</h3><div class="hint">Il resoconto di ogni esecuzione, gli allarmi e gli avvisi della console. Le notifiche sul telefono restano come prima.</div>
-        <div class="bd-bar"><button class="chip" data-f="unread" aria-pressed="true">Da leggere</button><button class="chip" data-f="alert" aria-pressed="false">Allarmi</button><button class="chip" data-f="all" aria-pressed="false">Tutte</button>
+    <div class="card" style="margin-bottom:16px"><h3>Bot</h3><div class="hint">Prima quelli da sistemare, poi quelli da controllare. Tocca un bot per leggere solo le sue notifiche e le sue esecuzioni (e, per quelli che il database sa sostituire, «Esegui ora»). Orari in ora italiana (Agropoli); per cambiarli serve l'editor delle attività programmate. Se si fermano: <a class="lnk" href="#bots&amp;fermi">Bot fermi: cosa fare</a>.</div><div id="bd-sum" class="bd-sum"></div><div id="bd-bots"></div></div>
+    <details class="card" id="bd-fermi" style="margin-bottom:16px"><summary><h3 style="display:inline">Bot fermi: cosa fare</h3></summary>
+      <div class="fermi">
+        <div class="box"><h4>1 · Come te ne accorgi</h4><ul>
+          <li>Su Telegram arriva «Allarme bot» con il nome del bot: un messaggio per bot fermo, non uno all'ora.</li>
+          <li>In Console → Oggi, «Avvisi aperti»: «N bot da controllare».</li>
+          <li>Qui sopra il bot è fra quelli «Da sistemare».</li></ul></div>
+        <div class="box"><h4>2 · Il lavoro non si ferma</h4><ul>
+          <li>Tablet, Autocontrollo, etichette e consegne funzionano senza bot.</li>
+          <li>Se un bot non parte o dà errore, poco dopo l'orario il database fa da solo il lavoro essenziale: piano latte, ordini ai fornitori, ordini fissi ingrosso, elenco HACCP della sera, controllo serale, promozione «vendere prima», backup della notte. Lo trovi come «Sostituito dal database».</li>
+          <li>Per farlo subito: tocca il bot qui sopra → «Esegui ora (versione del database)».</li></ul></div>
+        <div class="box"><h4>3 · Cosa manca finché non ripartono</h4><ul>
+          <li>Ordini e giacenze Shopify: controlla gli ordini online direttamente su Shopify e non lasciare in vendita online un prodotto finito al banco.</li>
+          <li>Brief del mattino: guarda Console → Oggi.</li>
+          <li>Clienti Shopify, Vendite, Marketing, scadenze e revisione mensile possono aspettare un giorno.</li></ul></div>
+        <div class="box"><h4>4 · Farli ripartire</h4><ul>
+          <li>I bot sono attività programmate di Claude sull'account di Nick: li fa ripartire solo chi ha quell'account (di solito c'è da ricollegare Supabase o Shopify).</li>
+          <li>Scrivi a Nick quale bot, da quando e cosa dice l'allarme. Per lui è notte fino alle 13 italiane: intanto vale il punto 2.</li>
+          <li>Quando il bot riparte, il suo allarme si chiude da solo.</li></ul></div>
+        <div class="box stop"><h4>✋ «Le automazioni del database sono ferme»</h4><ul>
+          <li>È più grave: senza le automazioni non partono il backup, i controlli e i bot di riserva.</li>
+          <li>Avvisa subito Nick; chi ha l'accesso a Supabase apre Integrations → Cron o scrive al supporto Supabase.</li>
+          <li>Non incollare comandi nell'editor SQL di Supabase.</li></ul></div>
+      </div>
+      <div class="hint" style="margin-top:10px">Versione da stampare: <code>sop/bot_fermi.pdf</code> (cartella dei documenti, accanto a «Sistema giù: cosa fare»).</div>
+    </details>
+    <div class="card" id="bd-feed-card" style="margin-bottom:16px"><h3>Notifiche dei bot</h3><div class="hint">Il resoconto di ogni esecuzione, gli allarmi e gli avvisi della console. Ognuno ha le sue da leggere: «Segna come letta» vale solo per te. Un allarme resta aperto per tutti finché chi gestisce il sistema lo segna «Risolto» scrivendo cosa è stato fatto, oppure finché rientra da solo.</div>
+        <div id="bd-run" class="bd-run" hidden></div>
+        <div class="bd-bar"><button class="chip" data-f="unread" aria-pressed="true">Da leggere</button><button class="chip" data-f="alert" aria-pressed="false">Allarmi aperti</button><button class="chip" data-f="all" aria-pressed="false">Tutte</button>
           <button class="chip" id="bd-en" aria-pressed="false" title="Mostra anche la traduzione inglese dei messaggi">Mostra inglese</button><span id="bd-bot" class="status"></span><span style="flex:1"></span><button class="btn sm sec" id="bd-readall">Segna tutto come letto</button></div>
         <div id="bd-feed"></div><div class="row"><button class="btn sm sec" id="bd-more" hidden>Mostra altre</button></div></div>
     <details class="card" id="runs-card"><summary><h3>Registro esecuzioni <span class="status" id="runs-who" style="text-transform:none;letter-spacing:0"></span></h3></summary><div class="body" id="runs" style="overflow-x:auto"></div></details>

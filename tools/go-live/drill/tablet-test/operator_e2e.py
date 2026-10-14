@@ -150,7 +150,7 @@ try:
 
     # 8b. the evening notice «badge di uscita non passato» closes that person's shift; it does not make them the one recording
     sql(f"select fabula.badge_in('{BADGE}')")
-    sql(f"insert into fabula.notices (key, severity, title_it, items, expires_at) values ('e2e_badge_out_{RUN}', 'warn', 'Badge di uscita non passati', "
+    sql(f"insert into fabula.notices (key, severity, title_it, items, expires_at) values ('haccp_evening_e2e_{RUN}', 'warn', 'Badge di uscita non passati', "
         f"jsonb_build_array(jsonb_build_object('label_it', 'Aiuto E2E {RUN}: badge di uscita non passato', 'scan', '{BADGE}')), now() + interval '1 hour')")
     pg.reload(); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(2500)
     who_before = who()
@@ -159,7 +159,7 @@ try:
     pg.locator('#form button', has_text='Chiudi il turno').click(); pg.wait_for_timeout(1500)
     check('A-01 …which closes the shift and leaves who is recording as it was', sql1(f"select count(*) from fabula.shifts where staff_id = '{AIUTO}' and clock_out is null") == '0'
           and who() == who_before and f'Aiuto E2E {RUN}' not in who(), who_before + ' → ' + who())
-    sql(f"delete from fabula.notices where key = 'e2e_badge_out_{RUN}'")
+    sql(f"delete from fabula.notices where key = 'haccp_evening_e2e_{RUN}'")
     pg.wait_for_timeout(1500); ctx.close()
 
     # 8c. a form left open 15 minutes: whoever touches it says who they are first (fake clock)

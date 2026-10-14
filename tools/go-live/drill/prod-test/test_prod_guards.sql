@@ -15,9 +15,9 @@ select pg_temp.ck('v_process_steps returns ccp_code (pasteurisation and stretchi
 -- a mozzarella batch closed with no CCP records
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LG-1', :'moz', 500, 'milk', now(), 'tablet');
 update fabula.production_batches set output_kg = 150, finished_at = now() where batch_lot = 'LG-1';
-select pg_temp.ck('closed without CCP 2 and CCP 3: alert from Zio Ciro naming both',
-  exists (select 1 from fabula.bot_messages where agent = 'produzione' and severity = 'alert' and title = 'Lotto LG-1 chiuso senza pastorizzazione (CCP 2) e temperatura di filatura (CCP 3)'),
-  (select string_agg(title, ' | ') from fabula.bot_messages where agent = 'produzione'));
+select pg_temp.ck('closed without CCP 2 and CCP 3: alert from «Sicurezza alimentare» naming both',
+  exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and title = 'Lotto LG-1 chiuso senza pastorizzazione (CCP 2) e temperatura di filatura (CCP 3)'),
+  (select string_agg(agent || ': ' || title, ' | ') from fabula.bot_messages));
 
 -- a batch with both records, closed in the same transaction as the stretching record (deferred check)
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LG-2', :'moz', 500, 'milk', now(), 'tablet');
@@ -27,12 +27,12 @@ update fabula.production_batches set output_kg = 150, finished_at = now() where 
 select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value => 65, p_staff_id => '10000000-0000-4000-a000-0000000000b1', p_batch_lot => 'LG-2') \gset
 commit;
 select pg_temp.ck('records present (stretching logged after the close, same save): no alert',
-  not exists (select 1 from fabula.bot_messages where agent = 'produzione' and title like 'Lotto LG-2 %'));
+  not exists (select 1 from fabula.bot_messages where agent in ('produzione', 'sicurezza') and title like 'Lotto LG-2 %'));
 
 -- ricotta without CCP 4
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'RG-1', :'ric', 300, 'whey', now(), 'tablet');
 update fabula.production_batches set output_kg = 20, finished_at = now() where batch_lot = 'RG-1';
-select pg_temp.ck('ricotta closed without CCP 4: alert', exists (select 1 from fabula.bot_messages where agent = 'produzione' and title = 'Lotto RG-1 chiuso senza temperatura di affioramento (CCP 4)'));
+select pg_temp.ck('ricotta closed without CCP 4: alert', exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and title = 'Lotto RG-1 chiuso senza temperatura di affioramento (CCP 4)'));
 select pg_temp.ck('editing a closed batch again does not re-alert',
   (select count(*) from fabula.bot_messages where title like 'Lotto LG-1 %') = 1);
 update fabula.production_batches set output_kg = 151 where batch_lot = 'LG-1';
@@ -49,7 +49,7 @@ values (((:'t_watch'::timestamptz - interval '50 hours') at time zone 'Europe/Ro
 select fabula.prod_watch(:'t_watch'::timestamptz) w1 \gset
 select pg_temp.ck('19:45 Rome: open batch and old milk reported once',
   (:'w1'::jsonb->>'open_batches')::int >= 1 and (:'w1'::jsonb->>'old_milk')::int = 1
-  and exists (select 1 from fabula.bot_messages where agent = 'produzione' and severity = 'warn' and body like '%LG-3%' and body like '%MG-OLD: 300 kg%'), :'w1');
+  and exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'warn' and body like '%LG-3%' and body like '%MG-OLD: 300 kg%'), :'w1');   -- v1.00: old milk → «Sicurezza alimentare»
 select pg_temp.ck('same evening: not posted twice', fabula.prod_watch(:'t_watch2'::timestamptz)->>'skipped' = 'already posted');
 select pg_temp.ck('other DST slot (18:45 Rome) skips', fabula.prod_watch(:'t_watch_dst'::timestamptz)->>'skipped' = 'not 19:xx in Rome');
 select pg_temp.ck('job scheduled; app users cannot run it',

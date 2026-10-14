@@ -20,8 +20,8 @@ select pg_temp.ck('a record at 00:30 Rome on the 13th (22:30 UTC on the 12th) co
   and (select x->>'detail' from jsonb_array_elements(fabula.trial_check('2026-10-13')->'steps') x where x->>'step' like 'Pastorizzazione%') = '1 registrazioni');
 select fabula.trial_report('2026-10-12 18:35+00') r1 \gset
 select fabula.trial_report('2026-10-12 18:36+00') r2 \gset
-select pg_temp.ck('report at 20:35 Rome posts once as Zia Carmela', (:'r1'::jsonb->>'total')::int = 14 and :'r2'::jsonb->>'skipped' = 'already posted'
-   and (select count(*) from fabula.bot_messages where agent = 'prova') = 1 and fabula.bot_display_name('prova') = 'Zia Carmela · Settimana di prova');
+select pg_temp.ck('report at 20:35 Rome posts once as «Settimana di prova»', (:'r1'::jsonb->>'total')::int = 14 and :'r2'::jsonb->>'skipped' = 'already posted'
+   and (select count(*) from fabula.bot_messages where agent = 'prova') = 1 and fabula.bot_display_name('prova') = 'Settimana di prova');   -- v1.00 (E-13): the database's own messages carry no nickname
 select pg_temp.ck('19:35 Rome (other DST slot) skips', fabula.trial_report('2026-10-12 17:35+00')->>'skipped' = 'not 20:xx in Rome');
 select pg_temp.ck('after the 5 days: skips', fabula.trial_report('2026-10-17 18:35+00')->>'skipped' = 'no trial today');
 select pg_temp.ck('job scheduled; signed-in users can read the check but not post', exists (select 1 from cron.job where jobname = 'fabula_trial_report')

@@ -65,7 +65,7 @@ select pg_temp.ck('rule switched off before the time: not approved, timer remove
   and (select status::text from fabula.purchase_orders where po_number = 'PO-OK') = 'pending_approval');
 select pg_temp.ck('one message per automatic approval from Zia Rosa',
   (select count(*) from fabula.bot_messages where agent = 'auto_approve' and title like 'Approvato da solo%') = 2
-  and fabula.bot_display_name('auto_approve') = 'Zia Rosa · Approvazioni automatiche');
+  and fabula.bot_display_name('auto_approve') = 'Approvazioni automatiche · Zia Rosa');   -- v1.00 (E-13): what it does first
 select pg_temp.ck('nothing pending is approved before its time', (fabula.auto_approve_due(now())->'results') = '[]'::jsonb);
 
 -- rota
@@ -76,7 +76,7 @@ from generate_series(0, 6) g;
 select fabula.rota_autocopy(:'d') rr \gset
 select pg_temp.ck('Saturday: next week empty → this week copied (7 entries) and noted',
   (:'rr'::jsonb->>'copied')::int = 7 and (select count(*) from fabula.rota_entries where work_date >= date_trunc('week', :'d'::date)::date + 7) = 7
-  and exists (select 1 from fabula.bot_messages where agent = 'auto_approve' and title like 'Turni della settimana%'), :'rr');
+  and exists (select 1 from fabula.bot_messages where agent = 'turni' and title like 'Turni della settimana%'), :'rr');   -- v1.00: «Turni»
 select pg_temp.ck('next week already has a rota → nothing copied', (fabula.rota_autocopy(:'d')->>'copied')::int = 0);
 select pg_temp.ck('jobs scheduled; signed-in users cannot run the approver',
   exists (select 1 from cron.job where jobname = 'fabula_auto_approve' and schedule = '*/10 * * * *') and exists (select 1 from cron.job where jobname = 'fabula_rota_autocopy')

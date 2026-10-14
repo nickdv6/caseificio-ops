@@ -142,3 +142,17 @@ messages and pushes), automatic approvals said and logged, promo posts in review
 removed row), lot release (open or decided recall, conforming analysis), NC closing, B2B tiers (one kind, never € 0), the TRADE-06
 dashboard line, and nothing new in the evening security check. 13/10/2026: 70/70 PASS on a fresh copy and on the database built by
 the SQL Editor script (live-identical functions).
+
+`test_audit_alerts.sql` (v1.00, audit alerts and operations) — names say what the bot does (nickname after, none for the database's
+own senders), links only to the app's pages (an outside link replaced by the bot's page), the milk plan message opens its request and
+closes when it is decided (and its Telegram stops reminding), the reminder keeps the link, read per person («Segna tutto» never an
+alarm; another person still has it), «Risolto» (level 3 in Sistema, a note, signer from the login; nobody can PATCH a message; a
+notice's copy is not closed by hand), a notice's copy closes with the notice, a failed run says what happens next and is not pushed
+twice, notice audiences (floor / office) and links, the lot guard in Italian with a scan, trade requests without e-mails, the
+incidents (missed, failed, never finished, scheduler stopped once per stoppage, a database job failing every minute = one incident
+and one Telegram, a blip that recovered is not news, failing again reopens without a second Telegram, an incident that cleared
+before it was sent is never sent, closed by itself saying how, older than a day), one open copy of the bots notice, the hourly job
+runs the watchdog, the evening check's «già segnalato», a bot that failed is stood in for and its alarm closes, «Esegui ora»
+(profile, only the stand-in bots, asks again the second time), refused saves (profiles, values without ids, HACCP flag, «Segna come
+rifatta» with a note, the alarm closes when nothing is left for that tablet), the waiting-records date, grants and the security
+check. 14/10/2026: 71/71 PASS on a fresh copy and on the database built by the SQL Editor script (live-identical functions).

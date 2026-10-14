@@ -31,6 +31,7 @@ insert into fabula.bot_messages (agent, severity, title, body, created_at) value
  ('daily_brief', 'info', 'T-old-info', 'x', now() - interval '2 days'), ('daily_brief', 'warn', 'T-old-warn', 'x', now() - interval '2 days'),
  ('daily_brief', 'alert', 'T-old-alert', 'x', now() - interval '3 days'), ('daily_brief', 'info', 'T-new-info', 'x', now() - interval '1 hour');
 select fabula.bot_messages_autoread() n \gset
-select pg_temp.ck('only info messages older than 24 h are marked read', (select string_agg(title, ',' order by title) from fabula.bot_messages where title like 'T-%' and read_at is null) = 'T-new-info,T-old-alert,T-old-warn', 'marked ' || :'n');
+select pg_temp.ck('info older than 24 h and a warn superseded by a newer message are marked read; the alarm stays (v1.00 E-05)',
+  (select string_agg(title, ',' order by title) from fabula.bot_messages where title like 'T-%' and read_at is null) = 'T-new-info,T-old-alert', 'marked ' || :'n');
 select pg_temp.ck('hourly job scheduled; signed-in users cannot run the cleanups', exists (select 1 from cron.job where jobname = 'fabula_bot_messages_autoread' and schedule = '17 * * * *')
   and not has_function_privilege('authenticated', 'fabula.cancel_placeholder_orders()', 'execute') and not has_function_privilege('authenticated', 'fabula.bot_messages_autoread(timestamptz)', 'execute'));

@@ -41,6 +41,11 @@ th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mu
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 td.nw{white-space:nowrap}
 .empty{color:var(--muted);font-style:italic;padding:8px 0}
+/* v1.00: refused saves (Registri) */
+#c-rej{border-left:4px solid var(--warn)}#c-rej h3 .n{display:none;min-width:20px;height:20px;border-radius:10px;background:var(--warn);color:#fff;font-size:.75rem;line-height:20px;text-align:center;padding:0 6px;vertical-align:2px}#c-rej h3 .n.on{display:inline-block}
+.rej{border:1px solid var(--rule);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--paper);min-width:0}.rej.ko{border-color:var(--warn)}.rej.done{opacity:.75}
+.rej .hd{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}.rej .vals{margin:4px 0;font-size:.92rem;overflow-wrap:anywhere}.rej .status{overflow-wrap:anywhere}
+.rej .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}.rej .row input{flex:1 1 240px;min-width:0}.rej .ok{color:var(--good);font-size:.9rem;margin-top:4px;overflow-wrap:anywhere}
 .pill{display:inline-block;font-size:.75rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:10px;border:1.5px solid var(--rule);color:var(--muted);white-space:nowrap}
 .pill.ok{border-color:var(--good);color:var(--good)}.pill.ko{border-color:var(--warn);color:var(--warn);background:#fbefeb}.pill.warn{border-color:var(--gold);color:#8a6a24}.pill.ccp{border-color:var(--accent);color:var(--accent)}
 .ok{color:var(--good)}.ko{color:var(--warn);font-weight:600}
@@ -110,6 +115,7 @@ dialog.dlg .row{justify-content:flex-end;margin-top:14px}
   </div>
 
   <div class="pane active" id="p-registri">
+    <div class="card" id="c-rej" hidden><h3>Registrazioni rifiutate <span class="n" id="n-rej"></span></h3><div class="hint">Registrazioni fatte sul tablet senza rete che il database non ha accettato quando è tornata la rete: non sono nel registro. Rifalle dal tablet (🛡 → <b>Ricopia da foglio di carta</b>, con la data e l'ora vere) oppure, se il dato era sbagliato, scrivi perché non serve. Quelle HACCP vanno rifatte oggi.</div><div id="rejects"></div></div>
     <div class="card"><h3>Moduli del Manuale di Autocontrollo</h3>
       <div class="hint">Ogni registrazione finisce in uno di questi moduli (Manuale §11). <b>Stampa</b> apre il registro del periodo con l'intestazione del manuale: si firma o si mostra all'ASL. <b>Modulo vuoto</b> serve quando il tablet non c'è. <b>Verificato</b> registra la verifica settimanale del responsabile (Manuale §12).</div>
       <div class="form" style="max-width:560px;margin-bottom:10px"><div><label>Dal</label><input id="rg-from" type="date"></div><div><label>Al</label><input id="rg-to" type="date"></div></div>

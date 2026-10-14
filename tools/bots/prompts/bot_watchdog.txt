@@ -4,7 +4,7 @@ Run exactly ONE SQL call with the Supabase connector's execute_sql tool, ONCE â€
 
   select fabula.bot_watchdog();
 
-It returns JSON {checked_at, alerts: [...], message_it}. The database also posts the same alert to the dashboard by itself, so you never call post_bot_message.
+It returns JSON {checked_at, alerts: [...], open: [...], message_it}. Since v1.00 the database runs this same check by itself every hour at :25 and sends each new problem to Telegram once, so "alerts" lists only problems nobody has been told about yet (usually none; typically when the database's own automations are stopped) and "open" lists everything still open, for information only. The database also posts to the dashboard by itself, so you never call post_bot_message.
 
 - If "alerts" is an empty array: finish immediately with the single line "Nessun problema con i bot." Nothing is noteworthy; do not call SendUserMessage.
 - If "alerts" is not empty: call SendUserMessage once with:

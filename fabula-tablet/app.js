@@ -589,7 +589,9 @@
   };
   async function loadNotices() {           // red banner: what is still missing tonight — tap an item to go straight to its scan
     const wrap = $('notice-wrap'); if (!wrap) return;
-    const { data, error } = await sb.from('v_active_notices').select('*');
+    // v1.00 (audit E-03): only the floor's notices (evening HACCP list, lot guard, unknown lab lots); git, cron, bots, Incassi
+    // and trade notices stay in the office (Console → Oggi «Avvisi aperti»)
+    const { data, error } = await sb.from('v_active_notices').select('*').eq('audience', 'floor');
     if (error || !data || !data.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = ''; wrap.innerHTML = '';
     data.forEach(n => {

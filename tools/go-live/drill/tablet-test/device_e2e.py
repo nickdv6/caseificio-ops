@@ -46,7 +46,8 @@ try:
     row = sql(f"select label || '|' || app_version || '|' || failed_len from fabula.devices where device_uid = '{uid}'")
     check('tablet checked in with its label and app version', row == f'tablet-1|{SW}|1', row)
     check('the refused save reached the database in full', sql(f"select what || '|' || code from fabula.tablet_rejects where qid = '{FAILED[0]['qid']}'") == 'haccp_log|23514')
-    check('and the bell (alert from Zio Tonino)', sql("select count(*) from fabula.bot_messages where agent = 'tablet' and severity = 'alert'") != '0')
+    check('and the bell (v1.00: an HACCP record refused is an alarm from «Sicurezza alimentare», with the way to redo it)',
+          sql("select count(*) from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and action_url like 'haccp.html#registri%'") != '0')
     banner = pg.evaluate("document.getElementById('rej-banner').innerText")
     check('v0.97 (A-11): a red banner on Home says a record was NOT saved', 'NON salvata' in banner, banner)
     pg.evaluate("document.querySelector('#rej-banner .nitem').click()"); pg.wait_for_timeout(500)

@@ -29,6 +29,8 @@
     const issues = complianceItems(b);
     renderFarm();
     const td = UI.romeISO(); renderTiles(b, issues); renderApprovals(td); renderHaccp(b, issues); renderStock(b.stock_finished, td);
+    apprShown = true; focusAppr();
+    loadAvvisi().catch(e => toast(e.message || String(e), 'err'));
     renderRecent().catch(e => toast(e.message || String(e), 'err'));   // v0.60: days left count from today, not from the brief date (yesterday)
   }
 
@@ -75,7 +77,55 @@
     const n = APPR.length; badge('n-oggi', n);
     const t = $('tile-appr'); if (t) { t.querySelector('.v').textContent = n; t.querySelector('.d').textContent = n ? 'richieste dei bot ↓' : 'niente in attesa'; t.classList.toggle('bad', n > 0); }
   };
-  const proposer = a => { const k = String(a.requested_by || '').replace(/^agent:/, ''), n = NICK[k]; return n ? `${n.nickname} · ${n.title_it}` : k.replace(/_/g, ' ') || 'sistema'; };
+  // v1.00 (E-13): what the bot does first, the nickname after (the database's own senders have none)
+  const proposer = a => { const k = String(a.requested_by || '').replace(/^agent:/, ''), n = NICK[k]; return n ? (n.nickname ? `${n.title_it} · ${n.nickname}` : n.title_it) : k.replace(/_/g, ' ') || 'sistema'; };
+  // a link in a message (console.html#oggi&appr=<id>) opens Oggi on that request, highlighted
+  let wantAppr = null, apprShown = false;
+  const focusAppr = () => {
+    if (!wantAppr || !apprShown) return; const id = wantAppr; wantAppr = null;
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+    const el = document.querySelector(`#approvals .appr[data-id="${id}"]`);
+    if (el) { el.classList.add('hl'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => el.classList.remove('hl'), 8000); return; }
+    toast('Questa richiesta non è più in attesa: la trovi in «Decise di recente»');
+    const r = $('c-recent'); if (r) { r.open = true; r.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  };
+
+  // ---------- Avvisi aperti (v1.00, audit E-03/E-09): the office's notices and the open alarms, each with where to go ----------
+  const LINK_OK = /^(index|console|haccp|admin|ingrosso|vendite|marketing|latte|consorzio|labels|registro)\.html(#[A-Za-z0-9=&:._-]{0,120})?$/;
+  const linkLabel = l => /#oggi&appr=/.test(l) ? 'Apri la richiesta' : /^console/.test(l) ? 'Apri la Console' : /^haccp/.test(l) ? 'Apri Autocontrollo' : /^admin\.html#bots/.test(l) ? 'Apri i bot'
+    : /^admin/.test(l) ? 'Apri Configurazione' : /^ingrosso/.test(l) ? 'Apri Ingrosso' : /^vendite/.test(l) ? 'Apri Vendite' : /^marketing/.test(l) ? 'Apri Marketing' : 'Apri';
+  const goLink = (url, label) => url && LINK_OK.test(url) ? `<a class="go" href="${esc(url)}">${esc(label || linkLabel(url))} →</a>` : '';
+  async function loadAvvisi() {
+    const card = $('c-avvisi'); if (!card) return;
+    const [nt, al] = await Promise.all([
+      sb.from('v_active_notices').select('key, severity, title_it, items, created_at, audience, link'),
+      PERM.can('sistema', 1) ? sb.from('v_bot_feed').select('id, agent, agent_title, created_at, title, action_url, action_label').eq('severity', 'alert').is('read_at', null).is('notice_key', null)
+        .order('created_at', { ascending: false }).limit(30) : Promise.resolve({ data: [] })]);
+    if (nt.error) throw nt.error;
+    const N = nt.data || [], A = al.data || [];
+    badge('n-avvisi', N.length + A.length);
+    if (!N.length && !A.length) { card.hidden = true; return; }
+    card.hidden = false;
+    const canFix = PERM.can('sistema', 3);
+    const lines = n => (Array.isArray(n.items) ? n.items : []).map(x => x && typeof x === 'object' ? (x.label_it || x.label || x.title_it || x.text) : typeof x === 'string' ? x : null).filter(Boolean);
+    $('avvisi').innerHTML = [
+      ...A.map(m => `<div class="av alert" data-id="${m.id}"><div class="t">${esc(m.title)}</div><div class="by">Allarme · ${esc(m.agent_title || m.agent)} · ${whenIt(m.created_at)}</div>
+        <div class="ac">${goLink(m.action_url, m.action_label)}${canFix ? '<button type="button" class="lnkbtn" data-x="fix">✓ Risolto…</button>' : ''}</div>
+        <div class="fixf nodirty" hidden><input type="text" maxlength="300" placeholder="Cosa è stato fatto?" aria-label="Cosa è stato fatto"><button class="btn sm" type="button" data-x="fixok">Risolto</button><button class="btn sm sec" type="button" data-x="fixno">Annulla</button></div></div>`),
+      ...N.map(n => { const it = lines(n); return `<div class="av ${esc(n.severity)}"><div class="t">${esc(n.title_it)}</div><div class="by">${n.audience === 'floor' ? 'Anche sul tablet · ' : ''}dal ${whenIt(n.created_at)}</div>
+        ${it.length ? `<ul>${it.slice(0, 5).map(x => `<li>${esc(x)}</li>`).join('')}${it.length > 5 ? `<li class="status">e ${it.length - 5} ${it.length - 5 === 1 ? 'altro' : 'altri'}</li>` : ''}</ul>` : ''}
+        <div class="ac">${goLink(n.link)}</div></div>`; })].join('');
+    const box = $('avvisi');
+    box.querySelectorAll('[data-x=fix]').forEach(b => b.onclick = () => { const f = b.closest('.av').querySelector('.fixf'); f.hidden = false; b.hidden = true; f.querySelector('input').focus(); });
+    box.querySelectorAll('[data-x=fixno]').forEach(b => b.onclick = () => { const c = b.closest('.av'); c.querySelector('.fixf').hidden = true; c.querySelector('[data-x=fix]').hidden = false; });
+    box.querySelectorAll('.fixf input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); i.closest('.fixf').querySelector('[data-x=fixok]').click(); } });
+    box.querySelectorAll('[data-x=fixok]').forEach(b => b.onclick = () => act(b, async () => {
+      const note = b.closest('.fixf').querySelector('input').value.trim();
+      if (note.length < 3) { toast('Scrivi cosa è stato fatto (almeno qualche parola)', 'err'); return false; }
+      const { error } = await sb.rpc('resolve_bot_messages', { p_ids: [Number(b.closest('.av').dataset.id)], p_note: note }); if (error) throw error;
+      UI.bellCount(); await loadAvvisi();
+    }, 'Allarme chiuso per tutti'));
+  }
 
   // ---------- approvals: one structured card per request; deciding one never reloads the others (notes typed elsewhere stay) ----------
   // v0.99 (audit B-12): most urgent first (recall, milk plan due within 24 h, DOP, promo, orders, posts); a request past its deadline
@@ -426,6 +476,7 @@
   // ---------- tabs ----------
   const T = UI.tabs({
     def: 'oggi', alias: { turni: 'personale' },
+    onHash: p => { if (p.appr) { wantAppr = p.appr; focusAppr(); } },   // v1.00 (E-08): console.html#oggi&appr=<id>
     loaders: {
       oggi: loadOggi,
       ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders()]); },

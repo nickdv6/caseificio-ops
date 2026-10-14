@@ -15,7 +15,7 @@ select pg_temp.ck('milk plan proposed with an approval',
 select pg_temp.ck('runs logged in agent_runs as db_fallback',
   (select count(*) from fabula.agent_runs where details->>'via' = 'db_fallback' and status = 'ok' and summary like 'Eseguito dal database%') = 2);
 select pg_temp.ck('dashboard messages posted for both bots',
-  (select count(*) from fabula.bot_messages where agent in ('milk_planning', 'wholesale_orders') and title like 'Sostituito dal database%' and body like 'Il bot "%non è partito alle%') = 2,
+  (select count(*) from fabula.bot_messages where agent in ('milk_planning', 'wholesale_orders') and title like 'Sostituito dal database%' and body like 'Il bot "% delle __:__ non ha fatto il suo lavoro (non è partito o ha dato errore)%') = 2,
   (select string_agg(title, ' | ') from fabula.bot_messages where title like 'Sostituito%'));
 
 -- 2. 19:50: milk/wholesale are not repeated, the evening HACCP banner is produced now

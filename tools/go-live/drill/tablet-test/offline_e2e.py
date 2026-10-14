@@ -62,7 +62,10 @@ try:
     rej0 = sql("select count(*) from fabula.tablet_rejects")
 
     # 0 — v0.79: two cold-room checks today; doing the morning one offline must leave the evening one on the list
-    sql("insert into fabula.task_instances (schedule_id, due_at, status) select id, ((now() at time zone 'Europe/Rome')::date + time '09:00') at time zone 'Europe/Rome', 'due'::fabula.task_status from fabula.task_schedules where code = 'T-CF1' union all select id, ((now() at time zone 'Europe/Rome')::date + time '17:00') at time zone 'Europe/Rome', 'due'::fabula.task_status from fabula.task_schedules where code = 'T-CF1'")
+    # v1.00: the morning one is already due whatever the hour the suite runs (A-05: only a check whose time has come is closed; at night
+    # a 09:00 check was not, and the test failed before 06:00); the evening one stays later the same day
+    sql("insert into fabula.task_instances (schedule_id, due_at, status) select id, greatest(((now() at time zone 'Europe/Rome')::date + time '00:01') at time zone 'Europe/Rome', least(((now() at time zone 'Europe/Rome')::date + time '09:00') at time zone 'Europe/Rome', now() - interval '5 minutes')), 'due'::fabula.task_status from fabula.task_schedules where code = 'T-CF1' "
+        "union all select id, least(((now() at time zone 'Europe/Rome')::date + time '23:59') at time zone 'Europe/Rome', greatest(((now() at time zone 'Europe/Rome')::date + time '17:00') at time zone 'Europe/Rome', now() + interval '4 hours')), 'due'::fabula.task_status from fabula.task_schedules where code = 'T-CF1'")
     pg.goto('http://localhost:8771/index.html'); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(3000)
     n_cf1 = lambda: pg.evaluate("[...document.querySelectorAll('#tasks .task')].filter(d => d.innerText.includes('cella 1')).length")
     before = n_cf1()

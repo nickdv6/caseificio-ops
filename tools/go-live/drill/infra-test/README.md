@@ -58,3 +58,8 @@ without a user id writes nothing, the owner still deletes. Scan: a new table wit
 delete» plus the always-true / missing WITH CHECK warnings and turns the board red; the new pattern (signed in + four role
 rules) is clean; a RESTRICTIVE `true` does not count as a role rule; the advisor cross-check compares `permissive_rls_policy`.
 14/10/2026: 24/24 PASS; on a replay without v1.01a the same suite fails 16 checks (the delete hole included).
+
+v1.00 (14/10/2026) changes two older suites on purpose: `test_devices_watchdog.sql` reports a database job when its *last* run
+failed (a failure already followed by a success is not news), and a refused HACCP record is an alarm from «Sicurezza alimentare»
+naming the record in Italian (15/15 PASS); `test_bot_fallback.sql` checks the stand-in's new wording «non ha fatto il suo lavoro (non
+è partito o ha dato errore)» (22/22 PASS). The incident rules themselves are in `prod-test/test_audit_alerts.sql`.

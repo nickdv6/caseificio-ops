@@ -31,7 +31,7 @@
     canWrite = PERM.can('vendite', 2); canManage = PERM.can('vendite', 3);
     $('who').textContent = P.full_name || ''; $('btn-logout').hidden = false; $('btn-refresh').hidden = false;
     $('btn-new').hidden = !canWrite;
-    show('main'); await loadAll(); showTab((location.hash || '#oggi').slice(1).replace(/[^a-z]/g, '') || 'oggi', false);
+    show('main'); await loadAll(); showTab((location.hash || '#oggi').slice(1).split(/[&=]/)[0].replace(/[^a-z]/g, '') || 'oggi', false);
   }
   $('btn-login').onclick = async () => { const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('pw').value }); if (error) return toast(error.message, 'err'); init(); };
   $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });

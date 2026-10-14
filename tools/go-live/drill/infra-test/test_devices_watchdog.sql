@@ -15,12 +15,13 @@ select fabula.device_checkin('dev-abc123', 'tablet-1', 'perla-v49', 3, now() - i
   '[{"qid":"q-1","ops":[{"table":"haccp_log","row":{"x":1}}],"error":"new row violates check constraint","code":"23514","failed_at":1759700000000}]', 'Mozilla') r1 \gset
 select pg_temp.ck('check-in saves the device and answers with the live version',
   (:'r1'::jsonb->>'live_version') = 'perla-v50' and (select app_version || '|' || queue_len || '|' || failed_len || '|' || label from fabula.devices where device_uid = 'dev-abc123') = 'perla-v49|3|1|tablet-1', :'r1');
-select pg_temp.ck('refused save stored in full and posted to the bell as an alert',
+select pg_temp.ck('refused save stored in full and posted to the bell as an alert (v1.00: an HACCP record speaks as «Sicurezza alimentare»)',
   (select what || '|' || code from fabula.tablet_rejects where qid = 'q-1') = 'haccp_log|23514'
-  and exists (select 1 from fabula.bot_messages where agent = 'tablet' and severity = 'alert' and title like '1 registrazione rifiutata%' and body like '%haccp_log: new row violates%'));
+  and exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and title like '1 registrazione rifiutata%' and body like '%Registro HACCP: new row violates%'
+              and body like '%Autocontrollo → Registri → «Registrazioni rifiutate»%' and action_url like 'haccp.html#registri%'));
 select fabula.device_checkin('dev-abc123', 'tablet-1', 'perla-v49', 3, now() - interval '3 hours', '[{"qid":"q-1","ops":[],"error":"x"}]') r2 \gset
 select pg_temp.ck('the same refused save sent again is not stored or posted twice',
-  (:'r2'::jsonb->>'reported')::int = 0 and (select count(*) from fabula.tablet_rejects) = 1 and (select count(*) from fabula.bot_messages where agent = 'tablet') = 1);
+  (:'r2'::jsonb->>'reported')::int = 0 and (select count(*) from fabula.tablet_rejects) = 1 and (select count(*) from fabula.bot_messages where agent = 'sicurezza') = 1);
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-0000000000ff","role":"authenticated"}', false);
 do $$ begin perform fabula.device_checkin('dev-xyz999', 'x', 'v', 0, null); raise notice 'R accepted'; exception when others then raise notice 'R refused'; end $$;
 select pg_temp.ck('a login that is not staff cannot check in', not exists (select 1 from fabula.devices where device_uid = 'dev-xyz999'));
@@ -40,10 +41,10 @@ select pg_temp.ck('queue sent and app updated: nothing to warn', jsonb_array_len
 select fabula.resolve_tablet_reject('q-1', 'rifatta a mano') rs \gset
 select pg_temp.ck('a refused save can be marked as dealt with', :'rs'::boolean and (select resolution from fabula.tablet_rejects where qid = 'q-1') = 'rifatta a mano');
 
--- 4. scheduler watchdog
+-- 4. scheduler watchdog (v1.00: a job is reported when its LAST run failed — a failure followed by a success is not news)
 insert into cron.job_run_details (jobid, status, return_message, start_time, end_time) values
- ((select jobid from cron.job where jobname = 'fabula_bot_fallback'), 'failed', 'ERROR: something broke', now() - interval '2 hours', now() - interval '2 hours'),
- ((select jobid from cron.job where jobname = 'fabula_bot_fallback'), 'succeeded', '', now() - interval '1 hour', now() - interval '1 hour');
+ ((select jobid from cron.job where jobname = 'fabula_bot_fallback'), 'succeeded', '', now() - interval '2 hours', now() - interval '2 hours'),
+ ((select jobid from cron.job where jobname = 'fabula_bot_fallback'), 'failed', 'ERROR: something broke', now() - interval '1 hour', now() - interval '1 hour');
 select fabula.bot_watchdog() b1 \gset
 select pg_temp.ck('a failed scheduled job is reported, with the job name', exists (select 1 from jsonb_array_elements(:'b1'::jsonb->'alerts') x where x->>'kind' = 'cron_failed' and x->>'name' = 'fabula_bot_fallback')
   and :'b1'::jsonb->>'message_it' ilike '%automazione del database%fabula_bot_fallback%', :'b1'::jsonb->>'message_it');

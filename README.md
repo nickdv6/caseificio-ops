@@ -12,10 +12,48 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
   (or via the Supabase MCP `apply_migration`, then save the same SQL here with the version it got).
 - `fabula-tablet/` — floor PWA, console, HACCP and marketing pages (see its README). Libraries are vendored in
   `fabula-tablet/vendor/` so the tablet starts without internet.
-- `sop/` — printable floor procedure sheet, and the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield, and for v0.99: the lot label at the start).
+- `sop/` — printable floor procedure sheet, the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield, and for v0.99: the lot label at the start), and «Bot fermi: cosa fare» (v1.00).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
+
+## Audit alerts and operations (v1.00)
+The «alerts and operations» items of the 12/10/2026 audit (project doc `claude/audit-fixes-v100-2026-10-14.md`). Migrations
+`v100b` (the feed: reads per person, «Risolto», links, names) and `v100c` (notices for the floor or the office, one incident per
+bot that stopped, «Esegui ora», refused saves); live apply: `tools/go-live/live-apply/2026-10-14_v100_sql-editor.sql` (built by
+`make_v100_script.py`; database first, then the site); tablet sw `perla-v68`. No edge function changes. Shopify sync (E-18) and the
+07:30 digest (E-07) are v1.01.
+- **E-04 / C-12 · who has read what:** `bot_messages.read_at` now means «closed for everyone». Each person's reads are in
+  `bot_message_reads` (written only by `mark_bot_messages_read`); «Segna tutto come letto» is for me and never touches an alarm.
+  An alarm stays open until someone with «gestisce» in Sistema marks it «Risolto» with what was done (`resolve_bot_messages`,
+  who and note kept, its Telegram counts as taken), or until it clears by itself. The feed shows «Visto da …». Browsers can no
+  longer write `bot_messages` at all. The bell (`bot_bell()`): open alarms first, then what I have not read.
+- **E-05 · routine messages close by themselves:** a scheduled bot's info/warn is closed by its next message; a milk plan or promo
+  message closes when its request is decided (`approval_id`); a notice's copy closes with the notice, and only the newest copy of a
+  notice is open. A message that closes stops its 30-minute Telegram reminder.
+- **E-08 · a link in every message:** `action_url` + `action_label`, only to the app's own pages (`safe_link()`, the same rule in
+  the browser), a default page per sender; the milk plan and promo messages open their request (`console.html#oggi&appr=<id>`,
+  highlighted). Telegram messages and their reminders carry the same link.
+- **E-13 · names:** what the bot does first, then the nickname («Piano latte · Zio Gennaro»); what the database writes by itself
+  has no nickname: «Sicurezza alimentare» (CCPs, milk, refused HACCP records — food-safety Telegram topic), «Turni», «Tablet»,
+  «Avvisi della console», «Masseria», «Configurazione».
+- **E-03 · notices:** `notices.audience` — the floor tablet shows only the evening HACCP list, the lot guard (items in Italian, a
+  tap opens the lot) and lab results for an unknown lot; the rest (git, cron, bots, Incassi, trade requests without e-mails) is in
+  Console → Oggi «Avvisi aperti», with the open alarms and their «Risolto…».
+- **E-33 / E-20 · bots that stop:** the hourly database job (`fabula_bot_heartbeat` :25) runs `bot_watchdog()`: one `bot_alerts`
+  incident per missed slot, failed run, run that never finished, scheduler stopped (one per stoppage) or database job whose last run
+  failed (one per job and day); one Telegram (system topic) when it opens, never for one that cleared first; it closes by itself
+  (bot ran, database stood in, run finished, job succeeded, older than a day) and so does the failed run's alarm in the feed. The
+  failed run's alarm is not pushed separately. One office notice «N bot da controllare» lists what is open. A bot that started
+  and failed is now stood in for by the database too. «Bot fermi: cosa fare»: Configurazione → Bot (`admin.html#bots&fermi`) and
+  `sop/bot_fermi.html` (+ PDF). The evening check marks missing bots already reported.
+- **E-21 · run now, refused saves:** «Esegui ora (versione del database)» on the bots the database can stand in for
+  (`run_bot_fallback`, «registra» in Sistema, asks naming the effect and again on a second run the same day, recorded with the
+  name). Autocontrollo → Registri «Registrazioni rifiutate» (`tablet_rejects_list`): what, the values in one line, who, HACCP
+  flagged; «Segna come rifatta» with a note (HACCP or Sistema «registra»), and the alarm closes when nothing is left for that tablet.
+- Small fixes: the tablet's waiting-records date («delle 06:06 del 13/10», not «4el»); refused records named in Italian.
+- Tests: `prod-test/test_audit_alerts.sql` 71/71, `tablet-test/alerts_e2e.py` 30/30; every other suite passes on a fresh database
+  (three browser suites no longer depend on the hour they run).
 
 ## Audit office decisions and undo (v0.99)
 The «office decisions and undo» items of the 12/10/2026 audit, plus A-02 (project doc `claude/audit-fixes-v099-2026-10-13.md`).

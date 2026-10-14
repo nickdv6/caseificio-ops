@@ -42,7 +42,7 @@ select pg_temp.ck('A-04 …the raw milk left is written off', (select coalesce(s
   (select string_agg(move_type || ' ' || qty, ', ') from fabula.stock_moves where product_id = :'raw' and lot_number = 'MC96-1'));
 select pg_temp.ck('A-04 …the check is linked to the delivery and the office gets an alert',
   exists (select 1 from fabula.haccp_log where milk_intake_id = '70000000-0000-4000-a000-0000000096d1' and measured_value = 1)
-  and exists (select 1 from fabula.bot_messages where agent = 'produzione' and severity = 'alert' and title like 'Latte MC96-1 respinto%' and body like '%LC96-A, RC96-A%'));
+  and exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and title like 'Latte MC96-1 respinto%' and body like '%LC96-A, RC96-A%'));   -- v1.00: «Sicurezza alimentare»
 select pg_temp.err($q$insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values ('80000000-0000-4000-a000-0000000096b9', current_date, 'LC96-Z', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 100, 'milk', now(), 'tablet');
   insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000096b9', '70000000-0000-4000-a000-0000000096d1', 100)$q$) e_vat \gset
 select pg_temp.ck('A-04 …and the rejected milk cannot start a new vat', :'e_vat' <> '', :'e_vat');
@@ -475,7 +475,10 @@ select pg_temp.ck('R5 topics: «haccp_nudge non è partito» and «backup blocca
   and fabula.notify_topic_for('notice', 'Sito non raggiungibile', 'infra_uptime') = 'infra'
   and fabula.notify_topic_for('tablet', '2 registrazioni rifiutate dal database') = 'food_safety'
   and fabula.notify_topic_for('procurement', 'Ordine fornitore bloccato in attesa di approvazione') = 'decisions'
-  and fabula.notify_topic_for('produzione', 'Lotto L1 bloccato: CCP mancante') = 'food_safety');
+  and fabula.notify_topic_for('produzione', 'Lotto L1 bloccato: CCP mancante') = 'food_safety'
+  and fabula.notify_topic_for('sicurezza', 'Riepilogo del giorno') = 'food_safety'          -- v1.00: who speaks for food safety, whatever the words
+  and fabula.notify_topic_for('ops_health', '⚠ 2 registrazioni HACCP mancanti') = 'food_safety'
+  and fabula.notify_topic_for('configurazione', 'Impostazione cambiata') = 'infra');
 
 -- R3/R10 · the first link wakes the sender (webhook registration); recipients rechecked at send time; stuck messages flagged
 delete from fabula.settings where key = 'notify.webhook_url';

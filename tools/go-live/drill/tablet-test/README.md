@@ -123,3 +123,18 @@ guard_e2e: all 17 suites `FAILURES: none`.
     approval, Ricette «Togli»/«Rimetti», a preset target «94,5», lot release with the analysis, NC «Riapri», Ingrosso exceptions,
     stop buttons asked, «da inviare» marks, the Shopify preview before sending, Marketing `#post=`, and the tablet's lot label at
     batch start. Expect `FAILURES: none` (42 checks). Run it before guard_e2e.
+
+22. `python3 alerts_e2e.py` (v1.00, audit alerts and operations; port 8780, browser in it-IT) — Configurazione → Bot: cards say what
+    the bot does with the nickname under it (none for the database's own senders), the bell shows the open alarms first, a message's
+    button (an outside link never reaches the page), «Segna come letta» only for me (another person still has it and sees «Visto
+    da»), «Risolto…» asks what was done and closes the alarm for everyone (not offered to a «vede» profile), «Segna tutto» leaves
+    the alarms open, «Esegui ora» names its effect, asks again the second time, is recorded with the name and is not offered to a
+    «vede» profile, `#bots&fermi` opens «Bot fermi: cosa fare»; Console: `#oggi&appr=<id>` highlights the request (a decided one
+    says so), «proposto da Piano latte · Zio Gennaro», «Avvisi aperti» with links and «Risolto…»; the tablet shows only the floor's
+    notices; Autocontrollo «Registrazioni rifiutate» and «Segna come rifatta». Expect `FAILURES: none` (30 checks). Run it last: it
+    closes the messages and notices the other suites left.
+
+Last run 14/10/2026 (v1.00), same setup with the 181 migrations (v1.01a included), all 18 suites in a row with alerts_e2e last:
+`FAILURES: none`. Three suites no longer depend on the hour they run (they failed before 06:00 Rome, also on v0.99): offline_e2e
+(the morning cold-room check is due already), office_e2e (tomorrow's milk plan is urgent only within 24 h of its deadline),
+operator_e2e (the «badge di uscita» item is in a floor notice).

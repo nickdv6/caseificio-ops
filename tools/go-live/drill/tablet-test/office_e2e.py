@@ -157,8 +157,13 @@ try:
     card = lambda i: f"document.querySelector('#approvals .appr[data-id=\"{i}\"]')"
     order = cp.evaluate("[...document.querySelectorAll('#approvals .appr')].map(c => c.dataset.id)")
     pos = lambda i: order.index(i) if i in order else 99
-    check('B-12 most urgent first: milk due tomorrow, then DOP, then promo, then the order, then the post',
-          pos(A1) < pos(DOP) < pos(AP) < pos(PO_BIG['approval_id']) < pos(MC and sql1(f"select approval_id from fabula.mkt_content where id = '{MC}'")), str([pos(A1), pos(DOP), pos(AP), pos(PO_BIG['approval_id'])]))
+    # v1.00: the milk plan goes before the DOP only when its deadline is within 24 hours — at night tomorrow's plan is not yet
+    # (the suite failed when run before ~06:00 Rome); the rest of the order does not depend on the hour
+    soon = sql1(f"select expires_at < now() + interval '24 hours' from fabula.approvals where id = '{A1}'") == 't'
+    first = pos(A1) < pos(DOP) if soon else pos(DOP) < pos(A1)
+    check('B-12 most urgent first: milk due within 24 h (else after the DOP), then DOP, then promo, then the order, then the post',
+          first and max(pos(A1), pos(DOP)) < pos(AP) < pos(PO_BIG['approval_id']) < pos(MC and sql1(f"select approval_id from fabula.mkt_content where id = '{MC}'")),
+          str([pos(A1), pos(DOP), pos(AP), pos(PO_BIG['approval_id'])]) + f' milk within 24 h: {soon}')
     g = cp.evaluate(f"(() => {{ const c = {card(A2)}; return c ? c.className + '|' + !!c.querySelector('[data-act]') + '|' + c.innerText : ''; }})()")
     check('E-12 a request past its deadline is greyed, says so, and has no «Approva»', 'gone' in g and '|false|' in g and 'Scaduta' in g, g[:160].replace('\n', ' '))
     m1 = cp.evaluate(f"{card(A1)}.innerText")

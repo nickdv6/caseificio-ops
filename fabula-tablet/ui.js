@@ -96,12 +96,15 @@
     document.addEventListener('click', e => { const m = $('me'); if (m && m.open && !m.contains(e.target)) m.open = false; });
     if (bell) { bellCount(); setInterval(() => { if (document.visibilityState === 'visible') bellCount(); }, 120000); }
   }
+  // v1.00 (E-04): the open alarms first (the same for everyone until someone marks them «Risolto»), then what *I* have not read
   async function bellCount() {
     const el = $('bell-n'); if (!el) return;
-    const { data } = await sb.from('bot_messages').select('severity').is('read_at', null).limit(1000);
-    const n = (data || []).length, al = (data || []).filter(x => x.severity === 'alert').length;
-    el.textContent = n ? (al ? `${n} · ${al} allarmi` : n) : ''; el.classList.toggle('on', n > 0); $('bell').classList.toggle('al', al > 0);
-    $('bell').title = n ? `${n} notifiche da leggere${al ? `, ${al} allarmi` : ''}` : 'Nessuna notifica da leggere';
+    const { data, error } = await sb.rpc('bot_bell');
+    if (error || !data) return;
+    const al = Number(data.alerts) || 0, n = Number(data.unread) || 0;
+    el.textContent = al ? `${al} ${al === 1 ? 'allarme' : 'allarmi'}${n ? ` · ${n}` : ''}` : n ? String(n) : '';
+    el.classList.toggle('on', al + n > 0); $('bell').classList.toggle('al', al > 0);
+    $('bell').title = [al ? `${al} ${al === 1 ? 'allarme aperto' : 'allarmi aperti'}` : '', n ? `${n} ${n === 1 ? 'notifica' : 'notifiche'} da leggere` : ''].filter(Boolean).join(', ') || 'Nessuna notifica da leggere';
   }
 
   // ---------- login + access ----------
@@ -130,7 +133,13 @@
   }
 
   // ---------- tabs: lazy (each pane loads the first time it is shown), #hash remembered, old hashes redirected ----------
-  function tabs({ def, loaders = {}, alias = {}, onShow }) {
+  // v1.00 (E-08): a hash can carry parameters after the tab, for the links in the bots' messages: #oggi&appr=<id>, #bots&fermi
+  const hashTab = (h = location.hash) => String(h || '').replace(/^#/, '').split(/[&=]/)[0].replace(/[^a-z]/g, '');
+  const hashParams = (h = location.hash) => { const o = {};
+    String(h || '').replace(/^#/, '').split('&').slice(1).forEach(x => { if (!x) return; const i = x.indexOf('=');
+      try { o[i < 0 ? x : x.slice(0, i)] = i < 0 ? '' : decodeURIComponent(x.slice(i + 1)); } catch { /* malformed: ignored */ } });
+    return o; };
+  function tabs({ def, loaders = {}, alias = {}, onShow, onHash }) {
     const loaded = {};
     const visible = n => { const t = document.querySelector(`.tab[data-tab="${n}"]`); return t && !t.hidden; };
     const api = {
@@ -149,13 +158,14 @@
       isLoaded: n => !!loaded[n],
       start() {
         $('tabs').onclick = e => { const t = e.target.closest('.tab'); if (t) api.show(t.dataset.tab); };
-        api.show((location.hash || '#' + def).slice(1).replace(/[^a-z]/g, '') || def, false);
-        // v0.60: links like admin.html#bots / #account clicked on the same page now switch the tab
-        window.addEventListener('hashchange', () => { const n = location.hash.slice(1).replace(/[^a-z]/g, ''); if (n && n !== api.current) api.show(n, false); });
+        api.show(hashTab() || def, false);
+        if (onHash) onHash(hashParams());
+        // v0.60: links like admin.html#bots / #account clicked on the same page now switch the tab (v1.00: and pass their parameters)
+        window.addEventListener('hashchange', () => { const n = hashTab(); if (n && n !== api.current) api.show(n, false); if (onHash) onHash(hashParams()); });
       }
     };
     return api;
   }
 
-  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, bellCount, get staff() { return staff; } };
+  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, hashTab, hashParams, bellCount, get staff() { return staff; } };
 })();

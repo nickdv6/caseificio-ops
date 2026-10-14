@@ -228,21 +228,39 @@
     renderEquipment(e.data || []); renderDeadlines(d.data || []);
     badge('n-maint', MAINT.late); $('n-maint').title = 'scadenze o tarature già passate';
   }
-  // ---------- Bot dashboard: every bot notification (bot_messages) ----------
+  // ---------- Bot dashboard: every bot notification (v1.00: v_bot_feed — read per person, «Risolto» with a note, a link to act) ----------
   let bdFilter = 'unread', bdAgent = null, bdLimit = 50, bdNames = {}, bdNick = {};
-  // v0.46 display-only nicknames (Zio/Zia) from bot_nicknames; agent keys never change
+  // v0.46 display-only nicknames (Zio/Zia) from bot_nicknames; agent keys never change. v1.00 (E-13): what the bot does comes first,
+  // the nickname after; what the database writes by itself (Sicurezza alimentare, Turni, Tablet…) has no nickname.
   async function loadNicknames() { const { data } = await sb.from('bot_nicknames').select('agent, nickname, title_it, avatar_url'); (data || []).forEach(n => { bdNick[n.agent] = n; }); }
   // avatar slot: image when bot_nicknames.avatar_url is set, otherwise a dashed circle with the initial
   const botAvatar = agent => { const n = bdNick[agent]; if (n && n.avatar_url) return `<div class="bav img" aria-hidden="true"><img src="${esc(n.avatar_url)}" alt="" loading="lazy"></div>`;
-    const w = String(n ? n.nickname : agent).replace(/^(zio|zia)\s+/i, '').trim(); return `<div class="bav" aria-hidden="true">${esc((w[0] || '?').toUpperCase())}</div>`; };
-  const botLabel = (agent, base) => { const n = bdNick[agent]; return n ? `${n.nickname} · ${base || n.title_it}` : (base || agent); };
+    const w = String(n ? (n.nickname || n.title_it || agent) : agent).replace(/^(zio|zia)\s+/i, '').trim(); return `<div class="bav" aria-hidden="true">${esc((w[0] || '?').toUpperCase())}</div>`; };
+  const botTitle = agent => (bdNick[agent] && bdNick[agent].title_it) || agent;
+  const botLabel = (agent, base) => { const n = bdNick[agent], t = base || botTitle(agent); return n && n.nickname ? `${t} · ${n.nickname}` : t; };
+  // v1.00 (E-21): the bots the database can stand in for (fabula.bot_fallback_agents()) — «Esegui ora» runs that version now
+  const RUN_NOW = {
+    milk_planning: 'Prepara la proposta del piano latte di domani (da approvare in Console → Oggi).',
+    procurement: 'Controlla le scorte e prepara gli ordini ai fornitori (sopra la soglia restano da approvare).',
+    wholesale_orders: 'Conferma gli ordini fissi dei clienti ingrosso per domani.',
+    haccp_nudge: 'Prepara l\'elenco serale delle registrazioni HACCP che mancano (compare anche sul tablet).',
+    ops_health: 'Fa il controllo serale del sistema e ne scrive il riepilogo.',
+    sell_down: 'Prepara la proposta di promozione dei prodotti da vendere prima (da approvare).',
+    backup_export: 'Avvia subito il backup completo del database (quello della notte).' };
+  // a message's button only opens a page of the app (the same rule as fabula.safe_link in the database)
+  const LINK_OK = /^(index|console|haccp|admin|ingrosso|vendite|marketing|latte|consorzio|labels|registro)\.html(#[A-Za-z0-9=&:._-]{0,120})?$/;
   // Bot dashboard redesign (03/10): status summary on top, bots grouped by status (da sistemare → da controllare → in ordine → disattivati),
-  // one card per bot (Zio Vito and Zio Nino are now two cards), plain-language times ("3 ore fa", "domani 06:05").
-  const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'avvisi'], role: 'Allarme bot', sched: 'ogni ora · :50, 06:50–21:50 lun–sab', times: Array.from({ length: 16 }, (_, i) => String(6 + i).padStart(2, '0') + ':50'), wd: [1, 2, 3, 4, 5, 6] },
-                bot_heartbeat: { agents: ['bot_heartbeat'], role: 'Battito bot', sched: 'ogni ora · :25', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7] },
-                produzione: { agents: ['produzione'], role: 'Resa produzione', sched: 'alla chiusura di ogni lotto', times: [], wd: [], okLine: 'Nessuna resa fuori norma' },   // v0.70
-                auto_approve: { agents: ['auto_approve'], role: 'Approvazioni automatiche', sched: 'ogni 10 minuti · turni il sabato', times: [], wd: [], okLine: 'Nessuna approvazione automatica da leggere' },   // v0.73
-                tablet: { agents: ['tablet'], role: 'Tablet e registrazioni rifiutate', sched: 'a ogni contatto del tablet · controllo ogni 15 minuti', times: [], wd: [], okLine: 'Nessuna registrazione rifiutata, tablet aggiornati' },   // v0.74
+  // one card per bot, plain-language times ("3 ore fa", "domani 06:05"). These cards are the senders that are not scheduled bots.
+  // v1.00 (E-33): the hourly check runs in the database at :25 (one alarm per bot that stopped); Claude's check at :50 is the spare
+  const SYS = { bot_watchdog: { agents: ['bot_watchdog', 'bot_heartbeat'], role: 'Allarme bot', sched: 'ogni ora · :25 dal database (e :50, controllo di Claude)', times: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':25'), wd: [1, 2, 3, 4, 5, 6, 7], okLine: 'Tutti i bot sono partiti' },
+                avvisi: { agents: ['avvisi'], role: 'Avvisi della console', sched: 'quando si apre un avviso', times: [], wd: [], okLine: 'Nessun avviso aperto' },
+                sicurezza: { agents: ['sicurezza'], role: 'Sicurezza alimentare', sched: 'quando un lotto, il latte o una registrazione HACCP non va', times: [], wd: [], okLine: 'Nessun allarme di sicurezza alimentare' },   // v1.00 (E-13)
+                produzione: { agents: ['produzione'], role: 'Resa e lotti aperti', sched: 'alla chiusura di ogni lotto · controllo serale 19:45', times: [], wd: [], okLine: 'Nessuna resa fuori norma' },   // v0.70
+                auto_approve: { agents: ['auto_approve'], role: 'Approvazioni automatiche', sched: 'ogni 10 minuti', times: [], wd: [], okLine: 'Nessuna approvazione automatica da leggere' },   // v0.73
+                turni: { agents: ['turni'], role: 'Turni', sched: 'il sabato mattina copia i turni della settimana dopo', times: [], wd: [], okLine: 'Turni a posto' },   // v1.00
+                tablet: { agents: ['tablet'], role: 'Tablet', sched: 'a ogni contatto del tablet · controllo ogni 15 minuti', times: [], wd: [], okLine: 'Tablet aggiornati, nessuna registrazione in attesa' },   // v0.74
+                masseria: { agents: ['masseria'], role: 'Masseria', sched: 'quando la masseria corregge un carico di latte', times: [], wd: [], okLine: 'Nessuna correzione dalla masseria' },
+                configurazione: { agents: ['configurazione'], role: 'Configurazione', sched: 'quando cambia un\'impostazione che pesa sul lavoro', times: [], wd: [], okLine: 'Nessuna impostazione cambiata di recente' },
                 prova: { agents: ['prova'], role: 'Settimana di prova', sched: 'ogni sera alle 20:35 durante la settimana di prova', times: [], wd: [], okLine: 'Nessuna prova in corso' } };   // v0.77
   const DOW = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
   const romeNow = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
@@ -302,31 +320,32 @@
   const hmRome = s => new Date(s).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
   const dayLabel = d => { if (d === romeDay(Date.now())) return 'Oggi'; if (d === romeDay(Date.now() - 864e5)) return 'Ieri';
     return new Date(d + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }); };
+  const whenIt = s => { const d = romeDay(s); return d === romeDay(Date.now()) ? `alle ${hmRome(s)}` : `il ${new Date(s).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Rome' })} alle ${hmRome(s)}`; };
   async function loadBotFeed() {
-    const [{ data: bots }, cnt, { data: sysMsgs }] = await Promise.all([
+    const [{ data: bots }, bell, { data: sysMsgs }] = await Promise.all([
       sb.from('v_bot_dashboard').select('*').order('name_it'),
-      sb.from('bot_messages').select('severity', { count: 'exact', head: false }).is('read_at', null).limit(1000),
-      sb.from('bot_messages').select('agent, title, severity, body, created_at, read_at').in('agent', Object.values(SYS).flatMap(x => x.agents)).order('created_at', { ascending: false }).limit(300),
+      sb.rpc('bot_bell'),
+      sb.from('v_bot_feed').select('agent, title, severity, created_at, read_at, for_me').in('agent', Object.values(SYS).flatMap(x => x.agents)).order('created_at', { ascending: false }).limit(300),
       loadNicknames()]);
-    const nU = (cnt.data || []).length;
-    UI.bellCount(); badge('n-bots', (cnt.data || []).filter(x => x.severity === 'alert').length);
-    (bots || []).forEach(b => { bdNames[b.agent] = b.display_name || botLabel(b.agent, b.name_it); bdRole[b.agent] = b.name_it; });
-    Object.entries(SYS).forEach(([a, x]) => { bdRole[a] = bdNick[a] ? bdNick[a].title_it : x.role; });
-    Object.keys(SYS).forEach(a => { bdNames[a] = botLabel(a, bdNick[a] ? bdNick[a].title_it : a); });
-    // one item per card
+    const B = bell.data || {}, nAl = Number(B.alerts) || 0, nU = Number(B.unread) || 0;
+    UI.bellCount(); badge('n-bots', nAl);
+    (bots || []).forEach(b => { bdRole[b.agent] = botTitle(b.agent) === b.agent ? b.name_it : botTitle(b.agent); bdNames[b.agent] = botLabel(b.agent, bdRole[b.agent]); });
+    Object.entries(SYS).forEach(([a, x]) => { bdRole[a] = bdNick[a] ? bdNick[a].title_it : x.role; bdNames[a] = botLabel(a, bdRole[a]); });
+    // one item per card: what it does first (E-13), the nickname under it
     const items = (bots || []).map(b => {
       const st = !b.active ? 'off' : (b.last_status === 'error' || b.unread_alerts > 0 || b.last_severity === 'alert') ? 'al' : b.last_severity === 'warn' ? 'wn' : !b.last_run_at ? 'new' : 'ok';
-      const raw = (b.last_title || '').trim(), generic = !raw || [b.name_it, b.display_name].some(x => x && (raw === x || raw.startsWith(x + ' · ')));
-      return { agent: b.agent, nick: bdNick[b.agent] ? bdNick[b.agent].nickname : b.name_it, role: b.name_it, st, err: b.active && b.last_status === 'error',
+      const raw = (b.last_title || '').trim(), generic = !raw || [b.name_it, b.display_name, bdRole[b.agent]].some(x => x && (raw === x || raw.startsWith(x + ' · ')));
+      return { agent: b.agent, nick: bdNick[b.agent] ? bdNick[b.agent].nickname || '' : '', role: bdRole[b.agent], st, err: b.active && b.last_status === 'error',
         sched: schedTxt(b.due_times, b.weekdays, b.month_day), next: b.active ? nextRun(b.due_times, b.weekdays, b.month_day) : null,
         last: b.last_run_at, line: cleanTxt(b.last_status === 'error' ? (b.last_summary || 'Ultima esecuzione fallita') : generic ? (b.last_summary || raw) : raw),
-        unread: b.unread || 0, unreadAl: b.unread_alerts || 0, active: b.active };
+        unread: b.unread || 0, unreadAl: b.unread_alerts || 0, active: b.active, run: !!RUN_NOW[b.agent] };
     });
     Object.entries(SYS).forEach(([a, s]) => {
-      const ms = (sysMsgs || []).filter(m => s.agents.includes(m.agent)), m = ms[0], un = ms.filter(x => !x.read_at);
-      const st = un.some(x => x.severity === 'alert') ? 'al' : un.some(x => x.severity === 'warn') ? 'wn' : 'ok';
-      items.push({ agent: a, nick: bdNick[a] ? bdNick[a].nickname : a, role: s.role, st, sched: s.sched, next: nextRun(s.times, s.wd), last: m ? m.created_at : null, sys: true,
-        line: un.length ? cleanTxt(un[0].title) : (s.okLine || 'Nessun allarme: tutti i bot sono regolari'), unread: un.length, unreadAl: un.filter(x => x.severity === 'alert').length, active: true });
+      const ms = (sysMsgs || []).filter(m => s.agents.includes(m.agent)), m = ms[0];
+      const open = ms.filter(x => x.severity === 'alert' ? !x.read_at : x.for_me);
+      const st = open.some(x => x.severity === 'alert') ? 'al' : open.some(x => x.severity === 'warn') ? 'wn' : 'ok';
+      items.push({ agent: a, nick: bdNick[a] ? bdNick[a].nickname || '' : '', role: bdRole[a], st, sched: s.sched, next: nextRun(s.times, s.wd), last: m ? m.created_at : null, sys: true,
+        line: open.length ? cleanTxt(open[0].title) : (s.okLine || 'Nessun allarme: tutti i bot sono regolari'), unread: open.length, unreadAl: open.filter(x => x.severity === 'alert').length, active: true });
     });
     // summary strip
     const c = k => items.filter(i => i.st === k).length;
@@ -335,44 +354,56 @@
       <div class="sm s-al${c('al') ? '' : ' zero'}"><b>${c('al')}</b><span>da sistemare</span></div>
       <div class="sm s-wn${c('wn') ? '' : ' zero'}"><b>${c('wn')}</b><span>da controllare</span></div>
       <div class="sm s-ok"><b>${c('ok')}</b><span>in ordine</span></div>
-      <div class="sm"><b>${nU}</b><span>notifiche da leggere</span></div>
-      ${nx ? `<div class="sm nx">${botAvatar(nx.agent)}<div><span>Prossimo bot</span><b>${esc(nx.nick)}</b><span>${esc(nx.role)} · ${esc(nx.next.label)}</span></div></div>` : ''}`;
+      <div class="sm${nAl ? ' s-al' : ' zero'}"><b>${nAl}</b><span>${nAl === 1 ? 'allarme aperto' : 'allarmi aperti'}</span></div>
+      <div class="sm"><b>${nU}</b><span>da leggere per te</span></div>
+      ${nx ? `<div class="sm nx">${botAvatar(nx.agent)}<div><span>Prossimo bot</span><b>${esc(nx.role)}</b><span>${nx.nick ? esc(nx.nick) + ' · ' : ''}${esc(nx.next.label)}</span></div></div>` : ''}`;
     // cards grouped by status, each group ordered by next run
-    // card: name, job, one-line latest news, then when it last ran and when it runs next. Group heading + coloured edge carry the status.
+    // card: what it does, the nickname, one-line latest news, then when it last ran and when it runs next. Group heading + coloured edge carry the status.
     const when = i => i.active ? [i.last ? `Ultima: ${ago(i.last)}` : i.sys ? 'Nessun avviso finora' : 'Non ha ancora girato', i.next ? `Prossima: ${i.next.label}` : '']
       : ['Disattivato' + (i.last ? ` · ha girato ${ago(i.last)}` : '')];
     const card = i => `<div class="botc s-${i.st}${bdAgent === i.agent ? ' sel' : ''}" data-a="${esc(i.agent)}" role="button" tabindex="0" aria-pressed="${bdAgent === i.agent}" title="${esc(i.role)} · ${esc(i.sched)}">${botAvatar(i.agent)}
-        <div class="bi"><div class="hd"><span class="nm">${esc(i.nick)}</span>${i.err ? '<span class="pill s-al">Errore</span>' : ''}</div>
-        <div class="ti">${esc(i.role)}</div>
+        <div class="bi"><div class="hd"><span class="nm">${esc(i.role)}</span>${i.err ? '<span class="pill s-al">Errore</span>' : ''}</div>
+        ${i.nick ? `<div class="ti">${esc(i.nick)}</div>` : ''}
         <div class="bl">${esc(i.line || (i.st === 'new' ? 'Nessuna notizia: parte alla prossima esecuzione' : '—'))}</div>
-        <div class="ft">${when(i).filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('')}${i.unread ? `<span class="u${i.unreadAl ? ' al' : ''}">${i.unread} ${i.unread === 1 ? 'nuova' : 'nuove'}</span>` : ''}</div></div></div>`;
+        <div class="ft">${when(i).filter(Boolean).map(t => `<span>${esc(t)}</span>`).join('')}${i.run && PERM.can('sistema', 2) ? '<span>«Esegui ora» disponibile</span>' : ''}${i.unread ? `<span class="u${i.unreadAl ? ' al' : ''}">${i.unread} ${i.unreadAl ? (i.unreadAl === 1 ? 'allarme' : 'allarmi') : i.unread === 1 ? 'nuova' : 'nuove'}</span>` : ''}</div></div></div>`;
     const bb = $('bd-bots');
     bb.innerHTML = ['al', 'wn', 'ok', 'new', 'off'].map(k => { const g = items.filter(i => i.st === k).sort((x, y) => (x.next ? x.next.key : 1e9) - (y.next ? y.next.key : 1e9));
       return g.length ? `<div class="bd-grp s-${k}"><h4>${ST[k][1]} <span>${g.length}</span></h4><div class="bd-bots">${g.map(card).join('')}</div></div>` : ''; }).join('');
     const pick = el => { bdAgent = bdAgent === el.dataset.a ? null : el.dataset.a; bdLimit = 50; loadBotFeed(); if ($('runs-card').open) loadRuns(); if (bdAgent) $('bd-feed-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
     bb.querySelectorAll('.botc').forEach(el => { el.onclick = () => pick(el); el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(el); } }; });
     $('bd-bot').textContent = bdAgent ? 'Solo: ' + (bdNames[bdAgent] || bdAgent) : '';
-    let q = sb.from('bot_messages').select('*').order('created_at', { ascending: false }).limit(bdLimit + 1);
-    if (bdFilter === 'unread') q = q.is('read_at', null);
-    if (bdFilter === 'alert') q = q.eq('severity', 'alert');
+    // «Esegui ora (versione del database)» for the selected bot, when the database can stand in for it (E-21)
+    const rn = $('bd-run');
+    if (bdAgent && RUN_NOW[bdAgent] && PERM.can('sistema', 2)) {
+      rn.hidden = false;
+      rn.innerHTML = `<div><b>${esc(bdRole[bdAgent] || bdAgent)} · Esegui ora (versione del database)</b><span>${esc(RUN_NOW[bdAgent])} Usa i numeri del database, senza il commento del bot, e resta registrato con il tuo nome.</span></div><button class="btn sm" id="bd-run-go" type="button">Esegui ora</button>`;
+      $('bd-run-go').onclick = () => runNow(bdAgent);
+    } else { rn.hidden = true; rn.innerHTML = ''; }
+    // the feed: for me / open alarms / everything
+    let q = sb.from('v_bot_feed').select('id, agent, created_at, severity, title, body, notice_key, read_at, resolved_at, resolution, resolved_by, action_url, action_label, read_by_me, seen_by, for_me')
+      .order('created_at', { ascending: false }).limit(bdLimit + 1);
+    if (bdFilter === 'unread') q = q.eq('for_me', true);
+    if (bdFilter === 'alert') q = q.eq('severity', 'alert').is('read_at', null);
     if (bdAgent) q = q.in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]);
     const { data: msgs, error } = await q;
     const feed = $('bd-feed');
     if (error) { feed.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     $('bd-more').hidden = (msgs || []).length <= bdLimit;
     const rows = (msgs || []).slice(0, bdLimit);
-    if (!rows.length) { feed.innerHTML = `<div class="empty">${bdFilter === 'unread' ? 'Nessuna notifica da leggere.' : 'Nessuna notifica.'}</div>`; return; }
+    if (!rows.length) { feed.innerHTML = `<div class="empty">${bdFilter === 'unread' ? 'Niente da leggere per te.' : bdFilter === 'alert' ? 'Nessun allarme aperto.' : 'Nessuna notifica.'}</div>`; return; }
     // grouped by day; same bot + same title on the same day = one entry ("3 volte"); Italian only unless "Mostra inglese"
     const items2 = [], byKey = {};
     rows.forEach(m => {
-      const day = romeDay(m.created_at), key = `${day}|${m.agent}|${m.title}`;
-      if (byKey[key]) { const it = byKey[key]; it.n++; if (!m.read_at) it.unreadIds.push(m.id); return; }
-      const it = byKey[key] = { m, day, n: 1, unreadIds: m.read_at ? [] : [m.id] }; items2.push(it);
+      const day = romeDay(m.created_at), key = `${day}|${m.agent}|${m.title}|${m.resolved_at ? 'r' : ''}`;
+      // mine: still to read for me (an open alarm stays «for me» until it closes: «Visto» goes once I have seen it); open: alarms still open
+      const add = it => { if (m.severity === 'alert' && !m.read_at ? !m.read_by_me : m.for_me) it.mine.push(m.id); if (m.severity === 'alert' && !m.read_at) it.open.push(m.id); };
+      if (byKey[key]) { const it = byKey[key]; it.n++; add(it); return; }
+      const it = byKey[key] = { m, day, n: 1, mine: [], open: [] }; add(it); items2.push(it);
     });
+    const canFix = PERM.can('sistema', 3);
     let lastDay = null;
-    feed.innerHTML = items2.map(({ m, day, n, unreadIds }) => {
-      const a = m.agent === 'avvisi' ? 'bot_watchdog' : m.agent, nk = bdNick[a];
-      const role = m.agent === 'avvisi' ? 'Avvisi console' : (bdRole[a] || (nk ? nk.title_it : a));
+    feed.innerHTML = items2.map(({ m, day, n, mine, open }) => {
+      const a = m.agent, nk = bdNick[a], role = bdRole[a] || botTitle(a), nick = nk && nk.nickname;
       const generic = !m.title || [role, nk && nk.title_it, bdNames[a]].some(x => x && (m.title === x || m.title.startsWith(x + ' · ')));
       let body = mdLite(bdEn ? (m.body || '') : dropEn(m.body || '')), title = m.title || '';
       if (!bdEn) title = dropEn(title);
@@ -380,24 +411,53 @@
         if (f) { title = plainTxt(f[2]); if (f[1] === 'p' && body.startsWith(f[0])) body = body.slice(f[0].length); } }
       title = title.replace(/^Oggi\s*[—–-]\s*/, '');
       const head = day !== lastDay ? `<div class="bd-day">${esc(dayLabel(day))}</div>` : ''; lastDay = day;
-      const sv = m.severity === 'alert' ? '<span class="sv">Allarme</span>' : m.severity === 'warn' ? '<span class="sv">Da controllare</span>' : '';
-      return `${head}<div class="msg ${esc(m.severity)}${unreadIds.length ? '' : ' read'}" data-ids="${unreadIds.join(',')}">${botAvatar(a)}<div class="mb">
-        <div class="hd"><span class="who"><b>${esc(nk ? nk.nickname : role)}</b><span class="role">${esc(role)}</span></span><span class="tm">${hmRome(m.created_at)}${n > 1 ? ` · ${n} volte` : ''}</span></div>
-        <div class="t">${sv}${esc(title)}</div>${body ? `<div class="b">${body}</div>` : ''}
-        <div class="ac"><button class="more" data-x="more" hidden>Mostra tutto</button>${unreadIds.length ? '<button class="rd" data-x="read">✓ Segna come letta</button>' : ''}</div></div></div>`;
+      const sv = m.severity === 'alert' ? `<span class="sv">${m.resolved_at ? 'Allarme risolto' : open.length ? 'Allarme aperto' : 'Allarme'}</span>` : m.severity === 'warn' ? '<span class="sv">Da controllare</span>' : '';
+      const go = m.action_url && LINK_OK.test(m.action_url) ? `<a class="go" href="${esc(m.action_url)}">${esc(m.action_label || 'Apri')} →</a>` : '';
+      const done = m.resolved_at ? `<div class="rs">✓ ${m.resolved_by ? `Risolto da ${esc(m.resolved_by)}` : 'Chiuso'} ${esc(whenIt(m.resolved_at))}${m.resolution ? ` · ${esc(m.resolution)}` : ''}</div>` : '';
+      const seen = m.seen_by ? `<span class="seen">Visto da ${esc(m.seen_by.split(' · ').map(x => x.replace(/ \d\d\/\d\d \d\d:\d\d$/, '')).join(', '))}</span>` : '';
+      const isOpenAl = open.length > 0, quiet = !mine.length && !isOpenAl;   // an open alarm never looks «read»
+      return `${head}<div class="msg ${esc(m.severity)}${quiet ? ' read' : ''}" data-ids="${mine.join(',')}" data-open="${open.join(',')}">${botAvatar(a)}<div class="mb">
+        <div class="hd"><span class="who"><b>${esc(role)}</b>${nick ? `<span class="role">${esc(nick)}</span>` : ''}</span><span class="tm">${hmRome(m.created_at)}${n > 1 ? ` · ${n} volte` : ''}</span></div>
+        <div class="t">${sv}${esc(title)}</div>${body ? `<div class="b">${body}</div>` : ''}${done}
+        <div class="ac">${go}<button class="more" data-x="more" hidden>Mostra tutto</button>${isOpenAl && canFix && !m.notice_key ? '<button class="rd fx" data-x="fix">✓ Risolto…</button>' : isOpenAl && m.notice_key ? '<span class="seen">Si chiude da solo quando è sistemato</span>' : ''}${mine.length ? `<button class="rd" data-x="read">${isOpenAl ? '👀 Visto' : '✓ Segna come letta'}</button>` : ''}${seen}</div>
+        <div class="fixf nodirty" hidden><input type="text" maxlength="300" placeholder="Cosa è stato fatto? (es. «ricopiato da carta», «bot rilanciato»)" aria-label="Cosa è stato fatto"><button class="btn sm" data-x="fixok" type="button">Risolto</button><button class="btn sm sec" data-x="fixno" type="button">Annulla</button></div></div></div>`;
     }).join('');
     feed.querySelectorAll('.msg .b').forEach(b => { if (b.scrollHeight > b.clientHeight + 4) { b.classList.add('cut'); b.closest('.mb').querySelector('[data-x=more]').hidden = false; } });
     feed.querySelectorAll('[data-x=more]').forEach(btn => btn.onclick = () => { const bd = btn.closest('.mb').querySelector('.b'); bd.classList.toggle('open'); btn.textContent = bd.classList.contains('open') ? 'Riduci' : 'Mostra tutto'; });
-    feed.querySelectorAll('[data-x=read]').forEach(btn => btn.onclick = async () => { const ids = btn.closest('.msg').dataset.ids.split(',').filter(Boolean).map(Number); const { error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids }); if (error) return toast(error.message, 'err'); loadBotFeed(); });
+    const ids = (el, k) => (el.closest('.msg').dataset[k] || '').split(',').filter(Boolean).map(Number);
+    feed.querySelectorAll('[data-x=read]').forEach(btn => btn.onclick = () => UI.act(btn, async () => { const { error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids(btn, 'ids') }); if (error) throw error; loadBotFeed(); }));
+    // «Risolto»: closes the alarm for everyone, with what was done (sistema «gestisce»; C-12)
+    feed.querySelectorAll('[data-x=fix]').forEach(btn => btn.onclick = () => { const f = btn.closest('.mb').querySelector('.fixf'); f.hidden = false; btn.hidden = true; f.querySelector('input').focus(); });
+    feed.querySelectorAll('[data-x=fixno]').forEach(btn => btn.onclick = () => { const mb = btn.closest('.mb'); mb.querySelector('.fixf').hidden = true; mb.querySelector('[data-x=fix]').hidden = false; });
+    feed.querySelectorAll('.fixf input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); i.closest('.fixf').querySelector('[data-x=fixok]').click(); } });
+    feed.querySelectorAll('[data-x=fixok]').forEach(btn => btn.onclick = () => UI.act(btn, async () => {
+      const note = btn.closest('.fixf').querySelector('input').value.trim();
+      if (note.length < 3) { toast('Scrivi cosa è stato fatto (almeno qualche parola)', 'err'); return false; }
+      const { data, error } = await sb.rpc('resolve_bot_messages', { p_ids: ids(btn, 'open'), p_note: note }); if (error) throw error;
+      loadBotFeed(); return data;
+    }, n => n === 1 ? 'Allarme chiuso per tutti' : `${n} allarmi chiusi per tutti`));
+  }
+  async function runNow(agent) {
+    const t = bdRole[agent] || botTitle(agent), b = $('bd-run-go');
+    if (!confirm(`${t}: eseguire adesso la versione del database?\n\n${RUN_NOW[agent]}`)) return;
+    await UI.act(b, async () => {
+      let r = await sb.rpc('run_bot_fallback', { p_agent: agent });
+      if (r.error && r.error.hint === 'confirm') { if (!confirm(r.error.message)) return false; r = await sb.rpc('run_bot_fallback', { p_agent: agent, p_confirm: true }); }
+      if (r.error) throw r.error;
+      loadBotFeed(); if ($('runs-card').open) loadRuns(); return r.data;
+    }, d => `Fatto · ${(d && (d.title || d.summary)) || t}`);
   }
   document.querySelectorAll('.bd-bar .chip[data-f]').forEach(c => c.onclick = () => { bdFilter = c.dataset.f; bdLimit = 50; document.querySelectorAll('.bd-bar .chip[data-f]').forEach(x => x.setAttribute('aria-pressed', x === c)); loadBotFeed(); });
   $('bd-en').onclick = () => { bdEn = !bdEn; $('bd-en').setAttribute('aria-pressed', bdEn); loadBotFeed(); };
   $('bd-more').onclick = () => { bdLimit += 50; loadBotFeed(); };
+  // «Segna tutto come letto»: only for me, and never the alarms (they stay until someone marks them «Risolto»)
   $('bd-readall').onclick = async () => {
-    const { data: ids } = await (bdAgent ? sb.from('bot_messages').select('id').is('read_at', null).in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]) : sb.from('bot_messages').select('id').is('read_at', null));
-    if (!ids || !ids.length) return toast('Niente da segnare');
-    if (!confirm(`Segnare come lette ${ids.length} notifiche?`)) return;
-    const { data, error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids.map(x => x.id) }); if (error) return toast(error.message, 'err');
+    let ids = null, n = 0;
+    if (bdAgent) { const { data } = await sb.from('v_bot_feed').select('id').eq('for_me', true).neq('severity', 'alert').in('agent', SYS[bdAgent] ? SYS[bdAgent].agents : [bdAgent]); ids = (data || []).map(x => x.id); n = ids.length; }
+    else { const { data } = await sb.rpc('bot_bell'); n = Number(data && data.unread) || 0; }
+    if (!n) return toast('Niente da segnare');
+    if (!confirm(`Segnare come lette ${n} notifiche, solo per te?\nGli allarmi restano aperti finché qualcuno li segna «Risolto».`)) return;
+    const { data, error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids }); if (error) return toast(error.message, 'err');
     toast(`${data} notifiche segnate come lette`); loadBotFeed();
   };
   setInterval(() => { if (document.visibilityState === 'visible' && T.current === 'bots' && !UI.unsaved()) loadBotFeed(); }, 60000);
@@ -672,7 +732,7 @@
       sb.from('compliance_deadlines').select('id, subject_it, due_on').is('done_on', null),
       sb.from('v_shopify_variant_map').select('label, product_sku, unmapped_lines'),
       sb.from('v_bot_dashboard').select('agent, name_it, active, last_status, last_severity, last_run_at, unread, unread_alerts, display_name, nickname'),
-      sb.from('bot_messages').select('severity').is('read_at', null).limit(1000),
+      sb.rpc('bot_bell'),
       sb.from('staff').select('id, full_name, email, active, auth_user_id'),
       admin ? sb.rpc('staff_logins') : Promise.resolve({ data: null }),
       sb.from('audit_log').select('at, actor, table_name, row_key, action, new_data, old_data').order('at', { ascending: false }).limit(6),
@@ -706,14 +766,14 @@
         items: wait.sort((a, b) => b.unmapped_lines - a.unmapped_lines).map(r => ({ st: 'al', txt: `${r.label}: ${plural(r.unmapped_lines, 'riga d\'ordine in attesa', 'righe d\'ordine in attesa')}` })), foot: 'Apri prodotti Shopify' }); }
     // Bot
     if (bots.error) cards.push({ id: 'bots', tab: 'bots', title: 'Bot', st: 'na', big: '—', items: [{ txt: bots.error.message }], foot: 'Apri i bot' });
-    else { const bs = (bots.data || []).filter(b => b.active), name = b => b.display_name || b.nickname || b.name_it;
+    else { const bs = (bots.data || []).filter(b => b.active), name = b => b.display_name || b.name_it;
       const al = bs.filter(b => b.last_status === 'error' || b.unread_alerts > 0 || b.last_severity === 'alert'), wn = bs.filter(b => !al.includes(b) && b.last_severity === 'warn');
-      const nU = (un.data || []).length, nA = (un.data || []).filter(x => x.severity === 'alert').length;
-      const items = [...al.map(b => ({ st: 'al', txt: `${name(b)}: ${b.last_status === 'error' ? 'ultima esecuzione fallita' : plural(b.unread_alerts || 1, 'allarme da leggere', 'allarmi da leggere')}` })), ...wn.map(b => ({ st: 'wn', txt: `${name(b)}: avviso da controllare` }))];
+      const bl = un.data || {}, nA = Number(bl.alerts) || 0, nU = nA + (Number(bl.unread) || 0);   // v1.00: open alarms + what I have not read
+      const items = [...al.map(b => ({ st: 'al', txt: `${name(b)}: ${b.last_status === 'error' ? 'ultima esecuzione fallita' : plural(b.unread_alerts || 1, 'allarme aperto', 'allarmi aperti')}` })), ...wn.map(b => ({ st: 'wn', txt: `${name(b)}: avviso da controllare` }))];
       cards.push({ id: 'bots', tab: 'bots', title: 'Bot', st: al.length ? 'al' : wn.length ? 'wn' : 'ok', big: al.length + wn.length || '✓',
         sub: al.length + wn.length ? `${al.length ? `${al.length} da sistemare` : ''}${al.length && wn.length ? ' · ' : ''}${wn.length ? `${wn.length} da controllare` : ''} · ${plural(nU, 'notifica da leggere', 'notifiche da leggere')}` : `${bs.length} attivi, in ordine · ${plural(nU, 'notifica da leggere', 'notifiche da leggere')}`,
         items, foot: 'Apri i bot' });
-      badge('n-bots', nA); $('n-bots').title = 'allarmi da leggere'; }
+      badge('n-bots', nA); $('n-bots').title = 'allarmi aperti'; }
     // Utenti e accessi
     if (people.error) cards.push({ id: 'usr', tab: 'utenti', title: 'Utenti e accessi', st: 'na', big: '—', items: [{ txt: people.error.message }], foot: 'Apri utenti e accessi' });
     else { const ps = (people.data || []).filter(p => p.active), L = {}; ((lg && lg.data) || []).forEach(r => { L[r.staff_id] = r; });
@@ -801,23 +861,25 @@
       <h4 style="margin:14px 0 4px">Ultimi allarmi</h4>${(ov.recent || []).length ? `<table><tr><th>Quando</th><th>Cosa</th><th>Inviati</th><th>Chi se ne occupa</th></tr>${ov.recent.map(r => `
       <tr><td class="nw">${esc(ntTime(r.created_at))}</td><td><small class="status">${esc(TL[r.topic] || r.topic)}</small> ${esc(r.title)}</td>
       <td>${r.sent}${r.waiting ? ` <small>(+${r.waiting} in attesa)</small>` : ''}${r.failed ? ` <small class="ko">${r.failed} non consegnati</small>` : ''}</td>
-      <td>${r.taken_by ? esc(r.taken_by) + ' · ' + esc(ntTime(r.acked_at)) : r.topic === 'infra' ? '—' : '<span class="ko">nessuno</span>'}</td></tr>`).join('')}</table>` : '<div class="empty">Nessun allarme inviato finora.</div>'}`;
+      <td>${r.taken_by ? esc(r.taken_by) + ' · ' + esc(ntTime(r.acked_at)) : r.acked_at ? 'chiuso da solo · ' + esc(ntTime(r.acked_at)) : r.topic === 'infra' ? '—' : '<span class="ko">nessuno</span>'}</td></tr>`).join('')}</table>` : '<div class="empty">Nessun allarme inviato finora.</div>'}`;
     allBox.querySelectorAll('[data-ntlink]').forEach(b => b.onclick = async () => {
       const { data, error } = await sb.rpc('notify_link_code', { p_staff_id: b.dataset.ntlink }); if (error) return toast(error.message, 'err');
       ntLinkBox($('nt-otherlink'), data, true);
     });
   }
 
+  const openFermi = () => { const d = $('bd-fermi'); if (!d) return; d.open = true; setTimeout(() => d.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150); };
   // ---------- tabs + start ----------
   const SEC_IDS = SECTIONS.map(s => s[0]).concat('altro');
   const T = UI.tabs({
     def: 'panoramica', alias: Object.assign({ account: 'utenti', telegram: 'utenti' }, Object.fromEntries(SEC_IDS.map(s => [s, 'parametri']))),
     loaders: { panoramica: loadOverview, parametri: loadParams, maint: loadMaint, prodotti: loadVariantMap, bots: loadBotFeed, utenti: loadUsers, registro: loadAudit },
+    onHash: p => { if ('fermi' in p) openFermi(); },   // v1.00 (E-20): admin.html#bots&fermi opens «Bot fermi: cosa fare»
     onShow: n => { if (n === 'panoramica' && T.isLoaded('panoramica') && (ovStale || Date.now() - ovAt > 120000)) loadOverview().catch(err => toast(err.message || String(err), 'err')); }
   });
   // a link to a section (#vendite, #sistema…) opens Parametri on that section — from other pages and from the Panoramica cards
   const openSection = h => { if (!SEC_IDS.includes(h)) return; if (PROWS.length) { curSec = h; $('p-q').value = ''; renderParams(); } else pendingSection = h; };
-  window.addEventListener('hashchange', () => openSection(location.hash.slice(1).replace(/[^a-z]/g, '')));
+  window.addEventListener('hashchange', () => openSection(UI.hashTab()));
   async function refresh() {
     if ((UI.unsaved() || PROWS.some(r => String(r.value) !== String(r.orig))) && !confirm('Ci sono modifiche non salvate: aggiornando le perdi. Continuare?')) return false;
     document.querySelectorAll('.dirty').forEach(e => e.classList.remove('dirty'));
