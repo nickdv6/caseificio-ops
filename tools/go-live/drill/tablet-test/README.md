@@ -170,3 +170,12 @@ suites before it post a stock count (which switches the push on).
 Last run 14/10/2026 (v1.03), same setup with the 187 migrations, all 21 suites in a row (the 20 above, with v103_e2e after sync_e2e
 and alerts_e2e last): `FAILURES: none` in each, v103_e2e 30/30. farm_amend_e2e, farm_test and s_items_e2e now set «Chi spedisce» on the farm page, and
 farm_test prints the poster with the QR key.
+
+26. `python3 v104_e2e.py` (v1.04, audit D-17 / D-22 + PRINT-04 / D-31; port 8783, browser in it-IT) — the pack form says the 30 %
+    limit; 50 kg weighed for 5 → the red card «Non si spedisce così» with the reason, after «Correggo» the form stays and nothing is
+    shipped; weighed right → a DDT of the yearly series (DDT-<year>-NNNN); a direct shipment from a lot → the toast carries the next
+    number; «Ricopia da foglio di carta» the same line twice → «già nel registro … già ricopiata», one row; «CAL:CF-01» (cold room display
+    check) saved without ticking «Temperatura cella 1». Expect `FAILURES: none`.
+
+Last run 15/10/2026 (v1.04), same setup with the 190 migrations, all 22 suites in a row (the 21 above, with v104_e2e after v103_e2e
+and alerts_e2e last): `FAILURES: none` in each, v104_e2e 12/12. pack_e2e reads the per-product reason («pesati 2 kg contro 4 ordinati (-50 %)»).

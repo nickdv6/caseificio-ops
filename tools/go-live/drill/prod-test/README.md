@@ -189,3 +189,26 @@ copies; a lot still being worked, a milk lot, an unknown lot, other codes ignore
 list is cut after sorting; marketing sees but does not print; a reprint counted with who; no label row for a lot being worked, so its
 close still inserts it; grants) and the security check. Run on a fresh replay. 14/10/2026: 28/28 PASS on a fresh copy and on the
 database built by the SQL Editor script.
+
+`test_v104_db_guards.sql` (v1.04, audit D-17 rest, D-22 + PRINT-04, D-26 rest, D-28, D-31, D-33) — paper copies (a sheet line copied
+twice refused with when and how it was recorded, a different value or a later time accepted, a tablet reading then copied too
+refused; a lot's check from the wrong day refused with the lot's times, within its time accepted, a ricotta lot started after the fact
+keeps its line; a milk line copied twice for the same delivery refused), packing (50 kg for 5 refused even confirmed; 3 kg mozzarella
+for 2 + 1 ricotta refused; a product not in the order refused; ricotta left out + 15 % asked with one reason per product; packed with a
+DDT of the yearly series; «già preparato»), DDT numbers (the tablet's direct shipment and an older tablet's «DDT-<date>-4821» get the
+next numbers; a job's own number kept; a new year starts at 0001; a login cannot renumber, delete, take a number, date a shipment in
+another year or change its date later; the Rome date default), NCs (a floor login cannot lower the severity, rewrite the description,
+change the lot once set or the opening date, but adds cause, action and a missing lot; the HACCP manager changes the severity, in the
+Registro, and closes; a closed NC frozen, closing date included, until reopened; a login's new NC opened now and open), arrival checks
+(«NON conforme» opens its NC linked to the receipt, cannot be re-checked «conforme», the same again opens nothing; dosing refuses the
+isolated lot and asks for the lot without one, another lot recorded; the NC closed, the lot free; «conforme» later found non-conforming
+opens an NC, the earlier check in the Registro), bank matching (an outgoing payment refused for a customer invoice, an order and a
+payout; a second match of an invoice or order refused with where it is; an incoming payment refused for a supplier invoice; an invoice
+paid otherwise refused; «importi diversi» after the typed note; after «Togli l'abbinamento» another movement can match), tasks (a cold
+room calibration without a reading closes nothing; the morning reading closes the morning task, not the evening one; the only valve
+check of the day counts from midnight; a task with no control point closes as before), permissions (an approval written approved or
+set to approve itself; a PO from a login created approved or moved to approved; jobs still write approved POs; negative PO price) and
+the security check. Run on a fresh replay. 15/10/2026: 50/50 PASS on a fresh replay and on the copy built by the SQL Editor script
+(live-identical functions). `test_packing.sql` raises `ship.max_variance_pct` to 100 for its older checks (it forces 9 kg for 5);
+`test_audit_floor.sql` writes each cold-room reading before closing its task (D-31) and takes the Rome day of a save made 25 minutes
+ago (it failed just after midnight).

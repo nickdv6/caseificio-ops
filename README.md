@@ -17,6 +17,34 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Database guard rails: paper copies, packing and DDT numbers, NCs, bank, tasks, permissions (v1.04)
+Medium and Low items of the 12/10/2026 audit, area D: D-17 (rest), D-22 with PRINT-04, D-26 (rest), D-28, D-31, D-33 (project doc
+`claude/audit-fixes-v104-2026-10-15.md`). Migrations `v104a` (paper, packing, DDT), `v104b` (NCs, arrival checks), `v104c` (bank,
+tasks, permissions); live apply: `tools/go-live/live-apply/2026-10-15_v104_sql-editor.sql` (built by `make_v104_script.py`); tablet
+sw `perla-v71`.
+- **D-17 · paper copies:** `log_ccp` (paper) refuses a line already in the register (same control point, value and lot within 2
+  minutes, from paper or tablet); `log_milk_check` the same per milk delivery. A lot's check must fall from 3 hours before the
+  earliest of the lot's day, its start and its parent vat's start, to 6 hours after its close.
+- **D-22 / PRINT-04 · packing and DDT:** `pack_order` compares each product with the order: more than `ship.max_variance_pct`
+  (30 %) over is refused even confirmed (hint `weight`, a red card on the tablet), a product not in the order is refused, less or
+  missing is asked (partial shipment); the order row is locked. DDT numbers: `fabula.next_ddt_number(date)` over
+  `fabula.ddt_counters` (one gap-free series per year, `DDT-2026-0001`), given by trigger `shipments_ddt_number` to every shipment
+  (packing sends none, the tablet's direct shipment sends none, anything a login sends and the old daily form are replaced; a login's
+  shipment is dated today, Rome). From a login a DDT's number, date, customer and order cannot change and a shipment cannot be
+  deleted (`shipments_ddt_guard`). `shipments.ship_date` defaults to the Rome date.
+- **D-26 · NCs and arrival checks:** `nc_edit_guard`: an NC's origin never changes from a login, severity/description only at
+  haccp 3, lot/batch/machine filled once below haccp 3, a closed NC frozen until reopened; `nc_insert_guard`: a login's NC is opened
+  now and open. `record_receipt_check`: «NON conforme» is never re-checked «conforme» (the NC decides), `goods_receipts.inspected_at`
+  and `inspection_nc_id`. While that NC is open the delivery's lots are isolated: `record_batch_consumable` refuses them
+  (`_lot_quarantine()`), and asks for the lot when the ingredient has one isolated.
+- **D-28 · bank:** `recon_set_bank` refuses a movement in the wrong direction (invoice, order, payout), an invoice or order already
+  matched elsewhere or an invoice already paid, and adds «importi diversi (…)» after the note when the amounts differ by > € 0,50.
+- **D-31 · tasks:** `close_open_task` closes a task tied to a control point only if a reading of it exists in the task's window (from
+  3 hours before it is due, or that day for a once-a-day task); the cold-room display check no longer closes a task on the tablet.
+- **D-33 · permissions:** `approvals_a0_insert_guard` (a login's request is «pending», auto-approval recomputed),
+  `purchase_orders_status_guard` (from a login: created draft / awaiting approval, never moved to approved / sent / received),
+  `purchase_order_lines_unit_price_check` (≥ 0).
+
 ## Secrets hidden, the Masseria's two links, lot labels from the database (v1.03)
 The security and print High items of the 12/10/2026 audit: C-05, FARM-04, PRINT-08 (project doc `claude/audit-fixes-v103-2026-10-14.md`).
 Migrations `v103a` (secrets), `v103b` (farm links), `v103c` (lot labels); live apply:

@@ -36,7 +36,7 @@ tr.tot td{border-bottom:0;font-weight:600}
 </style>
 </head>
 <body>
-<div class="ctl"><label for="id">Spedizione</label><input type="text" id="id" placeholder="DDT-20261002-01 o id" style="width:230px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
+<div class="ctl"><label for="id">Spedizione</label><input type="text" id="id" placeholder="DDT-2026-0001 o id" style="width:230px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
 <div class="incomplete" id="incomplete" hidden></div>
 <div class="sheet" id="sheet"><div class="empty">Accedi dalla console o dal tablet, poi indica il numero DDT.</div></div>
 <script src="vendor/supabase.js"></script>
@@ -63,7 +63,7 @@ tr.tot td{border-bottom:0;font-weight:600}
     $('incomplete').hidden = true; $('print').disabled = false; document.body.classList.remove('blockprint');
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
-    if (!ref) { sheet.innerHTML = '<div class="empty">Indica il numero DDT (es. DDT-20261002-01).</div>'; return; }
+    if (!ref) { sheet.innerHTML = '<div class="empty">Indica il numero DDT (es. DDT-2026-0001).</div>'; return; }
     const { data: cs } = await sb.from('settings').select('key, value').like('key', 'company.%');
     const C = Object.fromEntries((cs || []).map(r => [r.key.slice(8), (r.value || '').trim()])); BRAND.set(C, true);
     const q = sb.from('v_shipment_doc').select('*'); const isUuid = /^[0-9a-f-]{36}$/i.test(ref);

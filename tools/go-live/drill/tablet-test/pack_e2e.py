@@ -98,7 +98,7 @@ try:
     f = pg.evaluate("[...document.querySelectorAll('#form select[id^=lot]')].map(s => s.value + '=' + (document.getElementById('q' + s.id.slice(3)).placeholder || '').replace('previsti ', ''))")
     check('W2 opens with what is left: B 2 (2 kg short shown)', f == [f'B{R}=2'] and 'mancano 2 kg' in form_txt(), str(f)); weigh(); save()
     q = answer_ask(pg, wait=0)                 # v0.97 (A-17): the reasons in a question that stays, «Sì, spedisco così»
-    check('W2: weight off asks to confirm with the reason', 'pesati 2.00 kg contro 4.00 ordinati' in q, q or toast())
+    check('W2: weight off asks to confirm with the reason (per product since v1.04)', 'pesati 2 kg contro 4 ordinati (-50 %)' in q, q or toast())
     check('second Salva saves and shows what was confirmed', 'DDT-' in form_txt() and 'Confermato:' in form_txt(), form_txt()[:200].replace('\n', ' | '))
     check('stock after packing: A 0, B 0, C and X untouched',
           sql(f"select string_agg(lot_number || '=' || trim_scale(qty_on_hand), ',' order by lot_number) from fabula.v_stock_on_hand where lot_number like '%{R}'") == f'C{R}=10,X{R}=3')

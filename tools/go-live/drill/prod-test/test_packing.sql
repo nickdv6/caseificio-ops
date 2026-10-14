@@ -48,6 +48,9 @@ select pg_temp.ck('pick list for the cold room: A 5 kg (W1), B 8 kg (S1, W1, W2)
   (select string_agg((x->>'lot') || '=' || (x->>'kg') || (x->'orders')::text, ' ') from jsonb_array_elements(:'p'::jsonb->'pick') x));
 
 -- 2. pack_order guards
+-- (since v1.04 more than +30 % of a product is refused even when confirmed — test_v104_db_guards.sql; these older checks
+--  force 9 kg for 5, so the limit is raised here)
+update fabula.settings set value = '100' where key = 'ship.max_variance_pct';
 select id w1 from fabula.sales_orders where order_number = 'W1-TEST' \gset
 select id s1 from fabula.sales_orders where order_number = 'S1-TEST' \gset
 do $$ begin perform fabula.pack_order((select id from fabula.sales_orders where order_number = 'W1-TEST'),

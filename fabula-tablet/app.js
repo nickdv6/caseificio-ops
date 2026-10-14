@@ -421,7 +421,7 @@
     if ((o = r('start_byproduct_batch'))) return { what: `Avvio ricotta dal lotto ${o.args.p_parent_lot} · ${itNum(o.args.p_whey_kg)} kg di siero`, code: null };
     if ((o = f('haccp_log'))) return { what: 'Sanificazione di fine turno', code: 'CLEAN:' };
     if ((o = f('meter_readings'))) return { what: `Lettura contatore ${itNum(o.row.reading)}`, code: 'METER:' + o.row.meter, fill: { reading: o.row.reading } };
-    if ((o = f('shipments'))) return { what: `Spedizione ${o.row.ddt_number || ''}`, code: null };
+    if ((o = f('shipments'))) return { what: `Spedizione ${o.row.ddt_number || '(numero DDT dal database)'}`, code: null };
     if ((o = r('receive_purchase_order'))) return { what: `Arrivo merce ${o.args.p_po_number}`, code: 'PO:' + o.args.p_po_number };
     if ((o = r('badge_in') || r('badge_out'))) return { what: o.rpc === 'badge_in' ? 'Inizio turno' : 'Fine turno', code: null };
     if ((o = r('close_open_task'))) return { what: 'Attività del giorno segnata come fatta', code: null };
@@ -1720,12 +1720,14 @@
     openForm('Spedizione', 'lotto ' + b.batch_lot, async () => {
       const kg = val('kg');
       if (!val('cust')) { toast('Scegli il cliente', 'err'); throw new Error('cliente'); }
-      const ddt = 'DDT-' + today().replace(/-/g, '') + '-' + Date.now().toString().slice(-4);
-      await save([scanEvent(current.code, 'pick', { payload: { kg, mode: 'ship' } }),
-        { table: 'shipments', row: { ddt_number: ddt, customer_id: val('cust'), status: 'picked', driver_id: me().id } },
+      // v1.04 (audit D-22, PRINT-04): the DDT number comes from the database's yearly series (DDT-2026-0001…), also when sent later
+      const out = await save([scanEvent(current.code, 'pick', { payload: { kg, mode: 'ship' } }),
+        { table: 'shipments', row: { customer_id: val('cust'), status: 'picked', driver_id: me().id } },
         { table: 'shipment_lines', row: { shipment_id: '$1.id', product_id: prod.id, lot_number: b.batch_lot, qty: kg } },
         { table: 'stock_moves', row: { product_id: prod.id, lot_number: b.batch_lot, qty: -kg, move_type: 'sale', source: 'tablet' } }]);
-      toast(`Spedizione ${ddt} · ${kg} kg ✓`);
+      const sh = out && out[1] && typeof out[1] === 'object' ? out[1] : null;
+      if (out) toast(`Spedizione ${sh && sh.ddt_number ? sh.ddt_number + ' ' : ''}· ${kg} kg ✓`);
+      else toast(`Spedizione di ${kg} kg salvata senza rete: il numero DDT arriva quando torna la rete. Non far partire la merce senza il DDT.`, 'err', 8000);
     });
   }
   // 11 — goods receipt: approved PO arrives → stock goes up
@@ -1881,7 +1883,7 @@
   }
   async function stepPack(o) {
     $('form').innerHTML = ''; current = { code: 'SHIP:' + o.order_number, force: false };
-    const { data: cfg } = await sb.from('settings').select('key, value').in('key', ['ship.default_carrier', 'ship.wholesale_carrier', 'ship.tolerance_pct']);
+    const { data: cfg } = await sb.from('settings').select('key, value').in('key', ['ship.default_carrier', 'ship.wholesale_carrier', 'ship.tolerance_pct', 'ship.max_variance_pct']);
     const S = Object.fromEntries((cfg || []).map(r => [r.key, r.value]));
     if (!(o.lines || []).length) throw new Error('Ordine senza righe collegate al magazzino: collega i prodotti Shopify in Configurazione → Vendite');
     const rows = [];
@@ -1921,13 +1923,15 @@
     const carrier = field('carrier', 'Vettore', 'text', { required: false }); carrier.value = o.channel === 'wholesale' ? (S['ship.wholesale_carrier'] || 'Consegna diretta') : (S['ship.default_carrier'] || 'BRT');
     field('tracking', 'Tracking / n. lettera di vettura (se già stampata)', 'text', { required: false });
     field('note', 'Note', 'text', { required: false });
-    openForm(`Prepara ${o.order_number}`, `${o.customer || 'cliente online'} · ${o.lines.length} righe · tolleranza ±${S['ship.tolerance_pct'] || 5}%`, async () => {
+    openForm(`Prepara ${o.order_number}`, `${o.customer || 'cliente online'} · ${o.lines.length} righe · tolleranza ±${S['ship.tolerance_pct'] || 5}%, oltre +${S['ship.max_variance_pct'] || 30}% non si spedisce`, async () => {
       // v0.79: a row set to 0 (all the kg taken from the other lot of a split line) is left out instead of refusing the save
       const lines = rows.map(r => ({ product_id: r.l.product_id, lot_number: r.lot.value, qty: numOf(r.q) || 0, weighed: r.q.dataset.weighed === '1' })).filter(x => x.qty > 0);
       if (!lines.length) { toast('Nessuna quantità da spedire', 'err'); throw new Error('qty'); }
       if (lines.some(x => !x.lot_number)) { toast('Manca il lotto su una riga', 'err'); throw new Error('lot'); }
       // v0.97 (audit A-17): what needs confirming is a question with the reasons that stays until answered, then the same save with force
       let { data, error } = await sb.rpc('pack_order', { p_order_id: o.order_id, p_lines: lines, p_staff_id: me().id, p_gross_kg: val('gross'), p_carrier: val('carrier') || null, p_tracking: val('tracking') || null, p_notes: val('note') || null, p_force: false });
+      // v1.04 (audit D-22): too much of a product, or a product not in the order: a card that stays until read, then back to the weights
+      if (error && error.hint === 'weight') { await ask({ danger: true, title: 'Non si spedisce così', lines: [error.message], yes: 'Correggo', no: null }); throw stop(); }
       if (error) { toast(error.message, 'err'); throw error; }
       if (data && data.needs_confirm) {
         const ok = await ask({ title: 'Da confermare prima di spedire', lines: data.reasons && data.reasons.length ? data.reasons : [`Pesati ${fmtKg(data.packed_kg)} kg contro ${fmtKg(data.ordered_kg)} ordinati (${data.variance_pct > 0 ? '+' : ''}${itN(data.variance_pct)} %)`], yes: 'Sì, spedisco così', no: 'Correggo' });
@@ -2361,7 +2365,8 @@
       else if (isScale || isRoom) pts = [{ ref: val('ref'), reading: val('read') }];
       else pts = [{ ref: isHot ? 100 : 0, reading: val('p1') }, ...(val('ref') != null && val('read') != null ? [{ ref: val('ref'), reading: val('read') }] : [])];
       const r = await rpcNow('record_calibration_check', { p_code: eq.code, p_kind: 'verifica_interna', p_method: method, p_points: pts, p_staff_id: me().id });
-      await closeTask({ equipment_id: eq.id });
+      // v1.04 (audit D-31): the display check of a cold room is not its temperature reading: no task of the room is ticked
+      if (!isRoom) await closeTask({ equipment_id: eq.id });
       if (!r) return toast('Salvato offline');
       if (r.result === 'ko') toast(`${eq.code} FUORI TOLLERANZA (scarto ${r.max_deviation}): non usarlo, è fuori servizio. ${r.records_to_review} registrazioni da rivalutare.`, 'err');
       else toast(`${eq.code} ok · scarto ${r.max_deviation ?? 0} ✓`);

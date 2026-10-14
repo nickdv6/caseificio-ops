@@ -38,6 +38,15 @@ select pg_temp.ck('A-05 a task past its time + grace shows as overdue the same d
 select pg_temp.ck('A-05 the view says which tasks are today and which are from earlier days',
   (select bool_and(is_today = (due_day = pg_temp.today())) and bool_or(is_today) and bool_or(not is_today) from fabula.v_tasks_open));
 -- twice-daily cold room: a re-check at 10:00 must not close the evening task
+-- (since v1.04, audit D-31, a task tied to a control point closes only when its reading exists: on the tablet the reading is
+--  always saved first, so the readings are written here before each close, as if made online)
+select id cpcold1 from fabula.haccp_control_points where code = 'CCP-COLD-1' \gset
+insert into fabula.haccp_log (control_point_id, logged_at, created_at, measured_value, result, operator, source)
+select :'cpcold1'::uuid, t, t, 3.5, 'ok', 'Casaro F', 'tablet' from (values
+  (pg_temp.rome(pg_temp.today() - 1, '07:30')), (pg_temp.rome(pg_temp.today() - 1, '10:00')), (pg_temp.rome(pg_temp.today() - 1, '18:40')),
+  (pg_temp.rome(pg_temp.today() - 2, '19:00')), (pg_temp.rome(pg_temp.today() - 2, '14:30'))) v(t);
+insert into fabula.haccp_log (control_point_id, logged_at, created_at, measured_value, result, operator, source)
+values (:'cpclean', pg_temp.rome(pg_temp.today() - 2, '15:00'), pg_temp.rome(pg_temp.today() - 2, '15:00'), null, 'ok', 'Casaro F', 'tablet');
 select fabula.close_open_task(pg_temp.today() - 1, null, :'cf1', null, :CAS, null, pg_temp.rome(pg_temp.today() - 1, '07:30')) c1 \gset
 select coalesce(fabula.close_open_task(pg_temp.today() - 1, null, :'cf1', null, :CAS, null, pg_temp.rome(pg_temp.today() - 1, '10:00'))::text, '') c2 \gset
 select pg_temp.ck('A-05 cold room 07:30 closes the 08:00 task, with the time of the check',
@@ -53,7 +62,7 @@ select pg_temp.ck('A-05 with both open, a reading at 19:00 closes the evening ta
   and exists (select 1 from fabula.task_instances ti join fabula.task_schedules s on s.id = ti.schedule_id where s.code = 'T-CF1' and ti.due_at = pg_temp.rome(pg_temp.today() - 2, '08:00') and ti.status in ('due', 'overdue')));
 select fabula.close_open_task(pg_temp.today() - 2, null, :'cf1', null, :CAS, null, pg_temp.rome(pg_temp.today() - 2, '14:30')) c5 \gset
 select pg_temp.ck('A-05 a late morning reading (14:30) still closes the missed morning task', (select due_at = pg_temp.rome(pg_temp.today() - 2, '08:00') from fabula.task_instances where id = :'c5'));
-select fabula.close_open_task(pg_temp.today() - 1, null, null, :'cpclean', :CAS, null, pg_temp.rome(pg_temp.today() - 1, '15:00')) c6 \gset
+select fabula.close_open_task(pg_temp.today() - 2, null, null, :'cpclean', :CAS, null, pg_temp.rome(pg_temp.today() - 2, '15:00')) c6 \gset
 select pg_temp.ck('A-05 a once-a-day task (cleaning 18:30) closes at any time of its day (15:00)', :'c6' <> '');
 -- «Non fatta» with a reason
 select ti.id skip1 from fabula.task_instances ti join fabula.task_schedules s on s.id = ti.schedule_id where s.code = 'T-PH' and ti.due_at = pg_temp.rome(pg_temp.today() - 1, '07:00') \gset
@@ -178,14 +187,16 @@ select (fabula.haccp_register('MOD-05', pg_temp.today() - 1, pg_temp.today()) ->
 select pg_temp.ck('D-04 the register prints «inserito nel sistema alle …» on the offline checks only',
   (select count(*) = 2 from jsonb_array_elements(:'r05'::jsonb) r where r::text like '%inserito nel sistema alle%'), left(:'r05', 300));
 -- cleaning (direct insert), task closing and a process step, all queued offline 25 minutes ago
-select ti.id tclean from fabula.task_instances ti join fabula.task_schedules s on s.id = ti.schedule_id where s.code = 'T-CLEAN' and ti.due_at = pg_temp.rome(pg_temp.today(), '18:30') \gset
+-- (the day is the Rome day 25 minutes ago, as the tablet's queue records it: run just after midnight it is yesterday)
+select ((now() - interval '25 minutes') at time zone 'Europe/Rome')::date day25 \gset
+select ti.id tclean from fabula.task_instances ti join fabula.task_schedules s on s.id = ti.schedule_id where s.code = 'T-CLEAN' and ti.due_at = pg_temp.rome(:'day25', '18:30') \gset
 insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source, preset_id)
 select '80000000-0000-4000-a000-0000000097b2', current_date, 'LF97-B', :'moz', 300, 'milk', now() - interval '1 hour', 'tablet', :'preset_past';
 select pg_temp.as_user('00000000-0000-4000-a000-0000000097a2');
 set role authenticated;
 select fabula.save_ops(jsonb_build_array(
   jsonb_build_object('table', 'haccp_log', 'row', jsonb_build_object('control_point_id', :'cpclean', 'result', 'ok', 'operator', 'Casaro F', 'operator_id', :CAS, 'source', 'tablet')),
-  jsonb_build_object('rpc', 'close_open_task', 'args', jsonb_build_object('p_day', pg_temp.today(), 'p_control_point_id', :'cpclean', 'p_staff_id', :CAS)),
+  jsonb_build_object('rpc', 'close_open_task', 'args', jsonb_build_object('p_day', :'day25', 'p_control_point_id', :'cpclean', 'p_staff_id', :CAS)),
   jsonb_build_object('rpc', 'log_batch_step', 'args', jsonb_build_object('p_batch_lot', 'LF97-B', 'p_step_id', :'step_past', 'p_actual', 74, 'p_staff_id', :CAS))),
   '30000000-0000-4000-a000-0000000097e5', now() - interval '25 minutes') o5 \gset
 reset role;
