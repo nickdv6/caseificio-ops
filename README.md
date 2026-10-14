@@ -52,6 +52,7 @@ bot that stopped, «Esegui ora», refused saves); live apply: `tools/go-live/liv
   name). Autocontrollo → Registri «Registrazioni rifiutate» (`tablet_rejects_list`): what, the values in one line, who, HACCP
   flagged; «Segna come rifatta» with a note (HACCP or Sistema «registra»), and the alarm closes when nothing is left for that tablet.
 - Small fixes: the tablet's waiting-records date («delle 06:06 del 13/10», not «4el»); refused records named in Italian.
+- `v100d` (one-off, 14/10): closes the 16 alarms scheduled bots had left open before v1.00 (`2026-10-14_v100d_sql-editor.sql`).
 - Tests: `prod-test/test_audit_alerts.sql` 71/71, `tablet-test/alerts_e2e.py` 30/30; every other suite passes on a fresh database
   (three browser suites no longer depend on the hour they run).
 
