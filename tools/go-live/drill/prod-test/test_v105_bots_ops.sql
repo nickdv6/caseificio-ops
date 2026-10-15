@@ -157,8 +157,8 @@ select fabula.system_checks()::text sc_uff \gset
 select pg_temp.as_user(:'mkt');
 select pg_temp.err('select fabula.system_checks()') sc_mkt \gset
 select set_config('request.jwt.claims', '', false);
-select pg_temp.ck('E-28 Configurazione → Panoramica → Sistema: 10 checks in Italian, the missing job and the bots'' instructions among them',
-  jsonb_array_length(:'sc_uff'::jsonb) = 10 and :'sc_uff'::jsonb @> '[{"key":"cron_jobs","label_it":"Attività programmate del database","done":false},{"key":"bot_prompts"},{"key":"vault_secret"}]'::jsonb,
+select pg_temp.ck('E-28 Configurazione → Panoramica → Sistema: 11 checks in Italian (v1.06: «Numeri dei messaggi»), the missing job and the bots'' instructions among them',
+  jsonb_array_length(:'sc_uff'::jsonb) = 11 and :'sc_uff'::jsonb @> '[{"key":"cron_jobs","label_it":"Attività programmate del database","done":false},{"key":"bot_prompts"},{"key":"vault_secret"}]'::jsonb,
   :'sc_uff');
 select pg_temp.ck('E-28 …only with Sistema', :'sc_mkt' = 'Il tuo profilo non vede lo stato del sistema', :'sc_mkt');
 update cron.job set active = true where jobname = 'fabula_recon';

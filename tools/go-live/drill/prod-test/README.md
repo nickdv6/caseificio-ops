@@ -233,3 +233,15 @@ a fresh replay. 15/10/2026: 62/62 PASS on a fresh replay and on the copy built b
 generate tasks for today and the days before); `test_prod_guards.sql` expects the 48 h milk as an alarm; `test_audit_critical.sql` R5
 uses a notice that is an alarm by rule; `test_audit_alerts.sql` the 8-argument `post_bot_message`; `infra-test/test_infra.sql` and
 `test_outside_watch.sql` read the Italian details.
+
+`test_v106_perche.sql` (v1.06, «Perché?») — `keep_basis` hands back the same JSON, keeps one row, refuses logins (and nothing is kept
+for a wrong name); `post_bot_message` links the agent's fresh read once (not another bot's, not one older than an hour); a bot on the
+old prompt posts as before; the number check (Italian and database numbers, the EN line, times, codes, «CCP 3», list numbers,
+«(invariato …)», drafts and years left out; a rounded «12 kg» and a number inside the data's texts found); «Esegui ora» keeps the
+database's plan, with no number check; a bot rewriting the stand-in keeps only its own read; the database's own reads (a lot closed
+without CCP 3 with the CCP 2 value and the limits, milk near 60 hours, milk rejected, an auto-approval's rule); Telegram «perché» only
+with data; who sees what (marketing: not food safety, yes its sales message; the cheesemaker without raw data or check; the owner with
+both; the check for everyone with `bots.number_check_all`); every explainer on its function's real result, no raw keys, no phones,
+an unknown read only through its labels, a broken one never fails; the size cap; the clean-up; the Sistema line; the 9 prompt
+versions. Run on a fresh replay. 15/10/2026: 37/37 PASS on a fresh replay and on the copy built by the SQL Editor script. Updated on
+purpose: `test_v105_bots_ops.sql` expects 11 lines in Panoramica → Sistema (v1.06 adds «Numeri dei messaggi»).

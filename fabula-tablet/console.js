@@ -113,12 +113,15 @@
     const lines = n => (Array.isArray(n.items) ? n.items : []).map(x => x && typeof x === 'object' ? (x.label_it || x.label || x.title_it || x.text) : typeof x === 'string' ? x : null).filter(Boolean);
     $('avvisi').innerHTML = [
       ...A.map(m => `<div class="av alert" data-id="${m.id}"><div class="t">${esc(m.title)}</div><div class="by">Allarme · ${esc(m.agent_title || m.agent)} · ${whenIt(m.created_at)}</div>
-        <div class="ac">${goLink(m.action_url, m.action_label)}${canFix ? '<button type="button" class="lnkbtn" data-x="fix">✓ Risolto…</button>' : ''}</div>
+        ${m.has_basis ? '<div class="whyp" hidden></div>' : ''}
+        <div class="ac">${goLink(m.action_url, m.action_label)}${m.has_basis ? '<button type="button" class="whyb" data-x="why" aria-expanded="false">Perché?</button>' : ''}${canFix ? '<button type="button" class="lnkbtn" data-x="fix">✓ Risolto…</button>' : ''}</div>
         <div class="fixf nodirty" hidden><input type="text" maxlength="300" placeholder="Cosa è stato fatto?" aria-label="Cosa è stato fatto"><button class="btn sm" type="button" data-x="fixok">Risolto</button><button class="btn sm sec" type="button" data-x="fixno">Annulla</button></div></div>`),
       ...N.map(n => { const it = lines(n); return `<div class="av ${esc(n.severity)}"><div class="t">${esc(n.title_it)}</div><div class="by">${n.audience === 'floor' ? 'Anche sul tablet · ' : ''}dal ${whenIt(n.created_at)}</div>
         ${it.length ? `<ul>${it.slice(0, 5).map(x => `<li>${esc(x)}</li>`).join('')}${it.length > 5 ? `<li class="status">e ${it.length - 5} ${it.length - 5 === 1 ? 'altro' : 'altri'}</li>` : ''}</ul>` : ''}
         <div class="ac">${goLink(n.link)}</div></div>`; })].join('');
     const box = $('avvisi');
+    // v1.06 «Perché?»: what the alarm was based on (the database's own reads, or the bot's)
+    box.querySelectorAll('[data-x=why]').forEach(b => b.onclick = () => UI.why.toggle(b, b.closest('.av').querySelector('.whyp'), b.closest('.av').dataset.id));
     box.querySelectorAll('[data-x=fix]').forEach(b => b.onclick = () => { const f = b.closest('.av').querySelector('.fixf'); f.hidden = false; b.hidden = true; f.querySelector('input').focus(); });
     box.querySelectorAll('[data-x=fixno]').forEach(b => b.onclick = () => { const c = b.closest('.av'); c.querySelector('.fixf').hidden = true; c.querySelector('[data-x=fix]').hidden = false; });
     box.querySelectorAll('.fixf input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); i.closest('.fixf').querySelector('[data-x=fixok]').click(); } });
@@ -481,7 +484,8 @@
   // ---------- tabs ----------
   const T = UI.tabs({
     def: 'oggi', alias: { turni: 'personale' },
-    onHash: p => { if (p.appr) { wantAppr = p.appr; focusAppr(); } },   // v1.00 (E-08): console.html#oggi&appr=<id>
+    onHash: p => { if (p.appr) { wantAppr = p.appr; focusAppr(); }      // v1.00 (E-08): console.html#oggi&appr=<id>
+                   if (/^\d{1,12}$/.test(p.perche || '')) UI.why.open(p.perche); },   // v1.06: the «perché» link in Telegram, console.html#oggi&perche=<id>
     loaders: {
       oggi: loadOggi,
       ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders()]); },

@@ -190,3 +190,10 @@ and alerts_e2e last): `FAILURES: none` in each, v104_e2e 12/12. pack_e2e reads t
 
 Last run 15/10/2026 (v1.05), same setup with the 193 migrations, all 23 suites in a row (the 22 above, with v105_e2e after v104_e2e
 and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.
+
+28. `python3 v106_e2e.py` (v1.06, «Perché?»; port 8786, browser in it-IT) — Configurazione → Bot as the titolare: «Perché?» only under
+    the messages with data; the milk plan opens «Perché 900 kg di latte per ven 16/10» with its steps, the cost, the number check naming
+    the invented number («lo vede solo chi gestisce il sistema») and «Dati grezzi»; a second tap hides it; on a phone (390 px) nothing
+    scrolls sideways. Console → Oggi «Avvisi aperti» as the cheesemaker: the food-safety alarm's «Perché?» with the CCP values, no raw
+    data, no check. `console.html#oggi&perche=<id>` (the Telegram link) opens it as a sheet, Esc closes it and the address goes back to
+    #oggi; a marketing profile gets «Il tuo profilo non vede questo messaggio». Expect `FAILURES: none` (12 checks).

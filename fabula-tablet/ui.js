@@ -172,5 +172,76 @@
     return api;
   }
 
-  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, hashTab, hashParams, bellCount, get staff() { return staff; } };
+  // ---------- v1.06 «Perché?»: the data a bot's message was based on, written out by the database (fabula.message_why) ----------
+  // The page only draws what the database wrote: sections of label / value / note lines, who read the data and when, the number
+  // check (for whoever may see it) and the raw JSON (Sistema «gestisce» only).
+  const whyWhen = t => { try { return new Date(t).toLocaleString('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }); } catch { return ''; } };
+  function whyHtml(w) {
+    if (!w) return '';
+    if (!Array.isArray(w.parts) || !w.parts.length) return `<div class="why"><p class="why-none">${esc(w.none_it || 'Per questo messaggio non ci sono dati salvati.')}</p></div>`;
+    const miss = w.check && Array.isArray(w.check.missing) ? w.check.missing.length : 0;
+    const ck = w.check && w.check.line_it ? `<p class="why-ck${miss ? ' ko' : ''}">${esc(w.check.line_it)}${w.check.only_you ? ' <small>(per ora lo vede solo chi gestisce il sistema)</small>' : ''}</p>` : '';
+    const row = r => `<li class="${r.f === 'ko' ? 'ko' : r.f === 'b' ? 'b' : ''}"><span class="k">${esc(r.l)}</span>${r.v != null ? `<span class="v">${esc(r.v)}</span>` : ''}${r.n ? `<span class="n">${esc(r.n)}</span>` : ''}</li>`;
+    const parts = w.parts.map(p => `<section>${p.title ? `<h4>${esc(p.title)}</h4>` : ''}${(p.sections || []).map(s =>
+        `${s.t ? `<h5>${esc(s.t)}</h5>` : ''}${(s.rows || []).length ? `<ul class="why-l">${s.rows.map(row).join('')}</ul>` : ''}${s.note ? `<p class="why-n">${esc(s.note)}</p>` : ''}`).join('')}
+        <p class="why-f">${esc(p.read_it || '')}</p></section>`).join('');
+    const raw = Array.isArray(w.raw) && w.raw.length ? `<details class="why-raw"><summary>Dati grezzi</summary><pre>${esc(JSON.stringify(w.raw, null, 1))}</pre></details>` : '';
+    return `<div class="why">${ck}${parts}${raw}</div>`;
+  }
+  async function whyLoad(id) { const { data, error } = await sb.rpc('message_why', { p_id: Number(id) }); if (error) throw error; return data; }
+  // a «Perché?» button under a message: the first tap loads, the next ones show / hide
+  async function whyToggle(btn, box, id) {
+    if (!btn || !box) return;
+    if (box.dataset.loaded) { box.hidden = !box.hidden; btn.textContent = box.hidden ? 'Perché?' : 'Nascondi il perché'; btn.setAttribute('aria-expanded', String(!box.hidden)); return; }
+    const was = btn.textContent; btn.disabled = true; btn.textContent = 'Carico…';
+    try {
+      box.innerHTML = whyHtml(await whyLoad(id)); box.dataset.loaded = '1'; box.hidden = false;
+      btn.textContent = 'Nascondi il perché'; btn.setAttribute('aria-expanded', 'true');
+    } catch (e) { btn.textContent = was; toast(e.message || String(e), 'err'); }
+    finally { btn.disabled = false; }
+  }
+  // the same panel as a sheet over the page, for the link in Telegram (console.html#oggi&perche=<id>)
+  async function whyOpen(id) {
+    let el = document.getElementById('why-sheet');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'why-sheet'; el.className = 'why-sheet';
+      el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-labelledby', 'why-sheet-t');
+      document.body.append(el);
+    }
+    el.innerHTML = `<div class="why-card"><div class="why-top"><div><div class="why-k">Perché?</div><b id="why-sheet-t">Carico…</b><div class="why-by"></div></div>
+      <button type="button" class="btn sm sec" data-x="close">Chiudi</button></div><div class="why-b"></div></div>`;
+    el.hidden = false;
+    const back = document.activeElement, overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';                       // the page behind does not scroll
+    // Esc closes; Tab stays inside the sheet
+    const onKey = e => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key !== 'Tab') return;
+      const f = [...el.querySelectorAll('button, a[href], summary, [tabindex]:not([tabindex="-1"])')].filter(x => x.offsetParent !== null);
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    const close = () => {
+      el.hidden = true; document.removeEventListener('keydown', onKey); document.body.style.overflow = overflow;
+      try { const tab = String(location.hash || '').replace(/^#/, '').split('&')[0]; history.replaceState(null, '', location.pathname + location.search + (tab ? '#' + tab : '')); } catch { /* ok */ }
+      if (back && typeof back.focus === 'function') back.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    el.onclick = e => { if (e.target === el || e.target.closest('[data-x=close]')) close(); };
+    el.querySelector('[data-x=close]').focus();
+    try {
+      const w = await whyLoad(id);
+      el.querySelector('#why-sheet-t').textContent = w.title || 'Messaggio';
+      el.querySelector('.why-by').textContent = [w.agent_title, whyWhen(w.created_at)].filter(Boolean).join(' · ');
+      el.querySelector('.why-b').innerHTML = whyHtml(w);
+    } catch (e) {
+      el.querySelector('#why-sheet-t').textContent = 'Non disponibile';
+      el.querySelector('.why-b').innerHTML = `<p class="why-none">${esc(e.message || String(e))}</p>`;
+    }
+  }
+  const why = { html: whyHtml, toggle: whyToggle, open: whyOpen };
+
+  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, hashTab, hashParams, bellCount, why, get staff() { return staff; } };
 })();

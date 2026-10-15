@@ -388,7 +388,7 @@
       $('bd-run-go').onclick = () => runNow(bdAgent);
     } else { rn.hidden = true; rn.innerHTML = ''; }
     // the feed: for me / open alarms / everything
-    let q = sb.from('v_bot_feed').select('id, agent, created_at, severity, title, body, notice_key, read_at, resolved_at, resolution, resolved_by, action_url, action_label, read_by_me, seen_by, for_me')
+    let q = sb.from('v_bot_feed').select('id, agent, created_at, severity, title, body, notice_key, read_at, resolved_at, resolution, resolved_by, action_url, action_label, read_by_me, seen_by, for_me, has_basis')
       .order('created_at', { ascending: false }).limit(bdLimit + 1);
     if (bdFilter === 'unread') q = q.eq('for_me', true);
     if (bdFilter === 'alert') q = q.eq('severity', 'alert').is('read_at', null);
@@ -426,11 +426,13 @@
       const isOpenAl = open.length > 0, quiet = !mine.length && !isOpenAl;   // an open alarm never looks «read»
       return `${head}<div class="msg ${esc(m.severity)}${quiet ? ' read' : ''}" data-ids="${mine.join(',')}" data-open="${open.join(',')}">${botAvatar(a)}<div class="mb">
         <div class="hd"><span class="who"><b>${esc(role)}</b>${nick ? `<span class="role">${esc(nick)}</span>` : ''}</span><span class="tm">${hmRome(m.created_at)}${n > 1 ? ` · ${n} volte` : ''}</span></div>
-        <div class="t">${sv}${esc(title)}</div>${body ? `<div class="b">${body}</div>` : ''}${done}
-        <div class="ac">${go}<button class="more" data-x="more" hidden>Mostra tutto</button>${isOpenAl && canFix && !m.notice_key ? '<button class="rd fx" data-x="fix">✓ Risolto…</button>' : isOpenAl && m.notice_key ? '<span class="seen">Si chiude da solo quando è sistemato</span>' : ''}${mine.length ? `<button class="rd" data-x="read">${isOpenAl ? '👀 Visto' : '✓ Segna come letta'}</button>` : ''}${seen}</div>
+        <div class="t">${sv}${esc(title)}</div>${body ? `<div class="b">${body}</div>` : ''}${done}${m.has_basis ? '<div class="whyp" hidden></div>' : ''}
+        <div class="ac">${go}${m.has_basis ? `<button class="whyb" type="button" data-x="why" data-id="${m.id}" aria-expanded="false">Perché?</button>` : ''}<button class="more" data-x="more" hidden>Mostra tutto</button>${isOpenAl && canFix && !m.notice_key ? '<button class="rd fx" data-x="fix">✓ Risolto…</button>' : isOpenAl && m.notice_key ? '<span class="seen">Si chiude da solo quando è sistemato</span>' : ''}${mine.length ? `<button class="rd" data-x="read">${isOpenAl ? '👀 Visto' : '✓ Segna come letta'}</button>` : ''}${seen}</div>
         <div class="fixf nodirty" hidden><input type="text" maxlength="300" placeholder="Cosa è stato fatto? (es. «ricopiato da carta», «bot rilanciato»)" aria-label="Cosa è stato fatto"><button class="btn sm" data-x="fixok" type="button">Risolto</button><button class="btn sm sec" data-x="fixno" type="button">Annulla</button></div></div></div>`;
     }).join('');
     feed.querySelectorAll('.msg .b').forEach(b => { if (b.scrollHeight > b.clientHeight + 4) { b.classList.add('cut'); b.closest('.mb').querySelector('[data-x=more]').hidden = false; } });
+    // v1.06 «Perché?»: the numbers this message was based on, written out by the database
+    feed.querySelectorAll('[data-x=why]').forEach(btn => btn.onclick = () => UI.why.toggle(btn, btn.closest('.mb').querySelector('.whyp'), btn.dataset.id));
     feed.querySelectorAll('[data-x=more]').forEach(btn => btn.onclick = () => { const bd = btn.closest('.mb').querySelector('.b'); bd.classList.toggle('open'); btn.textContent = bd.classList.contains('open') ? 'Riduci' : 'Mostra tutto'; });
     const ids = (el, k) => (el.closest('.msg').dataset[k] || '').split(',').filter(Boolean).map(Number);
     feed.querySelectorAll('[data-x=read]').forEach(btn => btn.onclick = () => UI.act(btn, async () => { const { error } = await sb.rpc('mark_bot_messages_read', { p_ids: ids(btn, 'ids') }); if (error) throw error; loadBotFeed(); }));

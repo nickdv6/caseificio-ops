@@ -17,6 +17,39 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## «Perché?»: the data behind every bot message (v1.06)
+Spec and notes: project docs `claude/perche-spec-v106-2026-10-15.md` and `claude/audit-fixes-v106-2026-10-15.md`. Migrations `v106a`
+(where the data is kept, how it reaches the message, the number check) and `v106b` (the explanations in Italian, the prompts'
+versions); live apply: `tools/go-live/live-apply/2026-10-15_v106_sql-editor.sql` (built by `make_v106_script.py`); tablet sw `perla-v73`.
+- **Kept by the database, never copied by the bot:** each bot wraps its step-1 read, `select fabula.keep_basis('<agent>', '<function>',
+  fabula.<function>())`; `keep_basis` stores what the function returned in `fabula.message_basis`, without phone numbers and e-mails
+  (`_basis_strip`; RLS on, no access for logins; up to `bots.basis_max_kb` = 256 KB, else only «too big») and returns the same JSON. 9 prompts: milk_planning, procurement, sell_down,
+  wholesale_orders, haccp_nudge, daily_brief (+ weekly_brief on Monday), monthly_review, ops_health (+ infra_checks),
+  compliance_calendar. `tools/bots/sync_rules.py --check` (CI) fails when one of them calls its function without the wrapper.
+- **Linked to the message:** `post_bot_message` gives the message the agent's unused reads since its previous message (at most 60
+  minutes; `bot_messages.basis_at`), also when it rewrites the run's short «auto» message. When the database read (its stand-in, its
+  own alarms) only its reads go, so a read left by a bot run that stopped is never shown as the database's. The database keeps its own:
+  `bot_fallback_run` (the stand-in and «Esegui ora»; the evening check with the system checks), `auto_approve_due`, `trg_batch_ccp_check`
+  (the points, the values, the limits), `milk_reject`, `prod_watch`.
+- **The number check (E-19):** for a bot's own reads, `_basis_check` compares every number and date of the title and body (Italian
+  «1.200», «20,5 %», the database's «1530.40», a written sign; not the EN line, the drafts, «(invariato …)», phone numbers, times,
+  «alle 6», codes, lots, «cella frigo 1», list numbers, «4 settimane») with the data (also the numbers inside its texts, the digits of
+  its codes and the length of its lists), rounded to the precision written. Stored in `bot_messages.basis_check`; Panoramica → Sistema
+  «Numeri dei messaggi» (7 days; «da controllare» above one message in ten). In «Perché?» only for Sistema «gestisce» until
+  `bots.number_check_all` = 1.
+- **Written out:** `fabula.message_why(id)` (definer; Sistema, the feed's readers, or for an alarm or a Telegram decision the
+  message's area, never «comune» — the briefs carry sales, costs and people): one explainer per function
+  (`_why_plan_milk`, `_why_purchase`, `_why_sell_down`, `_why_wholesale`, `_why_evening`, `_why_daily_brief`, `_why_weekly_brief`,
+  `_why_ops_health`, `_why_infra`, `_why_compliance`, `_why_monthly`, `_why_auto_approve`, `_why_batch_ccp`, `_why_milk_reject`,
+  `_why_prod_watch`), any other read through `fabula.basis_labels` (a key without a label is not shown). Values only from the data,
+  never a phone or an e-mail; «Dati grezzi» for Sistema «gestisce». What the database adds for the explanation (the orders' approvals,
+  the promo's full price) is `message_basis.extra`, never seen by the bot nor used by the check.
+- **Pages:** `UI.why` (ui.js, ui.css): the «Perché?» button in Configurazione → Bot and Console → Oggi «Avvisi aperti»
+  (`v_bot_feed.has_basis`, `my_alarms()` has_basis); `console.html#oggi&perche=<id>` opens it as a sheet, and Telegram carries that
+  link («perché» next to «apri»; one text for every recipient, the Console then says who may open it).
+- **Clean-up:** `fabula.basis_trim()` nightly (`fabula_basis_trim`, 03:20 UTC; 24 expected jobs): unused reads after a day, the others
+  after `bots.basis_keep_days` (90).
+
 ## Bots, alerts and operations: rules, versions, evening list, go-live list (v1.05)
 Medium and Low items of the 12/10/2026 audit, area E: E-06, E-09 (rest), E-14 (rest), E-16, E-17 (rest), E-19, E-27, E-28, E-31,
 E-30, E-32 (project doc `claude/audit-fixes-v105-2026-10-15.md`). Migrations `v105a` (message rules, alarms by area, system checks),
