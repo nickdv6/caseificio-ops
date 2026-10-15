@@ -298,8 +298,11 @@ update fabula.settings set value = (:'d'::date + 1)::text where key = 'prod.task
 select pg_temp.as_user(:'cas');
 select fabula.haccp_open_list()::text hl2 \gset
 select set_config('request.jwt.claims', '', false);
-select pg_temp.ck('E-31 before the tasks start nothing is asked, except for a day when a lot was really made (yesterday''s CCP)',
-  (:'hl2'::jsonb ->> 'count')::int = 0 and :'hl2'::jsonb #> '{yesterday,items}' @> jsonb_build_array(jsonb_build_object('scan', 'PAPER:CCP-STRETCH@' || :'y' || '@LV105-Y')), :'hl2');
+-- v1.07: a lot really made yesterday is product in the cold room: before the tasks start, today's cold rooms are asked too (food
+-- safety first; with nothing real going on the list stays empty: test_v107_quiet.sql)
+select pg_temp.ck('E-31 before the tasks start: yesterday''s real lot keeps its CCP and (v1.07) today''s cold rooms are asked',
+  :'hl2'::jsonb #> '{yesterday,items}' @> jsonb_build_array(jsonb_build_object('scan', 'PAPER:CCP-STRETCH@' || :'y' || '@LV105-Y'))
+  and :'hl2'::jsonb -> 'items' @> '[{"code": "cold:CCP-COLD-1"}]'::jsonb, :'hl2');
 update fabula.settings set value = (:'d'::date - 30)::text where key = 'prod.tasks_from';
 select pg_temp.ck('E-31 the list is for signed-in staff only', not has_function_privilege('anon', 'fabula.haccp_open_list()', 'EXECUTE'));
 
