@@ -59,7 +59,7 @@ insert into fabula.bot_messages (agent, severity, title, body, source) values ('
 select pg_temp.ck('E-08 the tablet''s version message has no link (it is fixed on the tablet); its refused saves open Autocontrollo',
   (select action_url from fabula.bot_messages where title = 'T-tablet usa ancora la versione') is null
   and (select action_url || '|' || action_label from fabula.bot_messages where title = 'T-1 registrazione rifiutata dal database') = 'haccp.html#registri|Apri Autocontrollo');
-select pg_temp.ck('E-08 a non-staff browser cannot post messages', not has_function_privilege('authenticated', 'fabula.post_bot_message(text, text, text, text, uuid, text, text)', 'execute'));
+select pg_temp.ck('E-08 a non-staff browser cannot post messages', not has_function_privilege('authenticated', 'fabula.post_bot_message(text, text, text, text, uuid, text, text, text)', 'execute'));
 
 -- a milk plan message opens its own request and closes when the request is decided (E-05)
 update fabula.settings set value = '1200' where key = 'milk.capacity_kg';

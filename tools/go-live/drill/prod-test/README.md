@@ -212,3 +212,24 @@ the security check. Run on a fresh replay. 15/10/2026: 50/50 PASS on a fresh rep
 (live-identical functions). `test_packing.sql` raises `ship.max_variance_pct` to 100 for its older checks (it forces 9 kg for 5);
 `test_audit_floor.sql` writes each cold-room reading before closing its task (D-31) and takes the Rome day of a save made 25 minutes
 ago (it failed just after midnight).
+
+`test_v105_bots_ops.sql` (v1.05, audit E-06, E-09, E-14, E-16, E-17, E-19, E-27, E-28, E-30, E-31, E-32) — message rules (milk 48 h →
+alarm and food-safety topic; a ruled database message takes the rule's severity, a bot's own keeps it; a rule without severity leaves it
+to the function; a later update cannot lower it; notices too; the topic from the rule, and on title + body; every active staff member
+reads the rules), alarms by area (marketing sees the sales alarm, not food safety nor the system's; the office sees all; the casaro the
+food-safety one; a handled alarm leaves; an alarm notice counts in the bell of its area only), the system checks (drift in both
+directions with the right remedy, in the feed copy too; Italian details; notice items get a label; database jobs missing or off named;
+the Vault check; Panoramica → Sistema only with Sistema; the fingerprint), placeholders (one next step each, quoted by the evening check
+and the standing orders), prompt versions (the old 7-argument call works; the drift lists old or missing versions, not the up-to-date
+bot, a simulation or the database's own message under a bot's name; 11 versions, not the retired Shopify prompts), the briefs' changes,
+the «Da verificare» lead, daily tasks (nothing before the start; Sunday and a closure: only cold rooms; a working Monday: everything; a
+1st of the month on a Sunday → the monthly tasks on Monday the 2nd; a closed Monday → the weekly ones on Tuesday; a closed day's evening
+list: cold rooms only), the evening list (yesterday's gaps as PAPER codes on yesterday's date with the lot; the Rome day; food safety
+only; today's list live; a badge not passed from 19:00; the 19:02 notice; before the start only a day with production), the go-live
+list (Italian labels and hints, no working notes; the office sees it, cannot sign; a note required; who and when kept; data-driven items
+not tickable; no direct writes from a login; undo with a reason; the Registro; Nick's board still ticks) and the security check. Run on
+a fresh replay. 15/10/2026: 62/62 PASS on a fresh replay and on the copy built by the SQL Editor script. Updated on purpose:
+`test_audit_floor.sql`, `test_audit_s_items.sql` and `test_v104_db_guards.sql` set `prod.tasks_from` and no closing weekday (they
+generate tasks for today and the days before); `test_prod_guards.sql` expects the 48 h milk as an alarm; `test_audit_critical.sql` R5
+uses a notice that is an alarm by rule; `test_audit_alerts.sql` the 8-argument `post_bot_message`; `infra-test/test_infra.sql` and
+`test_outside_watch.sql` read the Italian details.

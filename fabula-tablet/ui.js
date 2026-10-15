@@ -85,7 +85,10 @@
     const nav = $('nav'); if (!nav) return;
     const links = PAGES.filter(([p]) => p === current || PERM.page(p)).map(([p, href, label]) =>
       `<a href="${href}" class="pg${p === current ? ' on' : ''}"${p === current ? ' aria-current="page"' : ''}>${label}</a>`).join('');
-    const bell = PERM.page('admin') ? `<a href="admin.html#bots" class="bell" id="bell" title="Notifiche dei bot">Bot <span class="n" id="bell-n"></span></a>` : '';
+    // v1.05 (audit E-09): every office profile has the bell — with Configurazione it opens the bots' feed, otherwise the open alarms of
+    // its own areas in Console → Oggi («Avvisi aperti»)
+    const bell = PERM.page('admin') ? `<a href="admin.html#bots" class="bell" id="bell" title="Notifiche dei bot">Bot <span class="n" id="bell-n"></span></a>`
+      : PERM.page('console') ? `<a href="console.html#oggi" class="bell" id="bell" title="Allarmi aperti delle tue aree">Avvisi <span class="n" id="bell-n"></span></a>` : '';
     nav.innerHTML = `<div class="pages">${links}</div><div class="tools">${bell}
       ${refreshFn ? '<button class="btn sec sm" id="ui-refresh" title="Ricarica i dati di questa scheda" aria-label="Aggiorna">⟳<span class="lbl"> Aggiorna</span></button>' : ''}
       <details class="me" id="me"><summary>${esc(staff.full_name)} <small>${esc(staff.role_name || '')}</small></summary><div class="menu">

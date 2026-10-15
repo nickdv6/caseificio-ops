@@ -209,7 +209,8 @@ try:
     rows = tp.evaluate("[...document.querySelectorAll('#form .task')].map(d => d.innerText.replace(/\\s+/g, ' '))")
     check('PRINT-08 search: the lot being worked first, then the closed one with its expiry', len(rows) == 2 and rows[0].startswith('LE103-B') and 'in lavorazione' in rows[0]
           and rows[1].startswith('LE103-A') and f'scad. {EXP}' in rows[1], ' || '.join(rows))
-    tp.click('#form .task:nth-of-type(3)' if False else 'text=LE103-A'); tp.wait_for_timeout(800)
+    # v1.05: the home's «Ieri non registrato» box can name the same lot (hidden behind the form): click the search result
+    tp.locator('#form .task', has_text='LE103-A').first.click(); tp.wait_for_timeout(800)
     check('PRINT-08 the closed lot: the copies printed at close, «Prepara l\'etichetta»', tp.evaluate("document.getElementById('rp-n').value") == '6'
           and tp.evaluate("document.getElementById('btn-form-save').textContent") == "Prepara l'etichetta", tp.evaluate("document.getElementById('rp-n').value"))
     tp.click('#btn-form-save'); tp.wait_for_timeout(2500)

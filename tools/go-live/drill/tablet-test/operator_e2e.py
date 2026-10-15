@@ -13,7 +13,7 @@ PostgREST on :3000, v096a/b applied). The tablet is logged in as Test Casaro all
 Expect "FAILURES: none"."""
 import json, subprocess, time, os, hmac, hashlib, base64
 from playwright.sync_api import sync_playwright
-from e2e_op import op_js
+from e2e_op import op_js, answer_ask
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../fabula-tablet'))
 REF = 'ojkquhzaeypsphncjqwy'; PORT = 8774
@@ -112,6 +112,7 @@ try:
           view() == 'v-form' and pg.locator('#form button', has_text='Fine turno').count() == 1
           and sql1(f"select count(*) from fabula.shifts where staff_id = '{AIUTO}' and clock_out is null") == '1')
     pg.locator('#form button', has_text='Fine turno').click(); pg.wait_for_timeout(1500)
+    answer_ask(pg, yes=True, wait=0)   # v1.05 (audit E-31): after 14:00 with food-safety records missing it asks first («Esco lo stesso»)
     check('A-01 «Fine turno» closes the shift and clears the operator',
           sql1(f"select count(*) from fabula.shifts where staff_id = '{AIUTO}' and clock_out is null") == '0' and 'Chi registra?' in who() and 'fine turno' in toast(), who() + ' / ' + toast())
 
@@ -154,7 +155,8 @@ try:
         f"jsonb_build_array(jsonb_build_object('label_it', 'Aiuto E2E {RUN}: badge di uscita non passato', 'scan', '{BADGE}')), now() + interval '1 hour')")
     pg.reload(); pg.wait_for_function("document.querySelector('#v-home.active')", timeout=20000); pg.wait_for_timeout(2500)
     who_before = who()
-    pg.locator('#notice-wrap .nitem', has_text=f'Aiuto E2E {RUN}: badge di uscita').click(); pg.wait_for_timeout(1200)
+    # v1.05 (audit E-31): after 14:00 the tablet's live evening list has the same item: either one opens the card
+    pg.locator('#notice-wrap .nitem', has_text=f'Aiuto E2E {RUN}: badge di uscita').first.click(); pg.wait_for_timeout(1200)
     check('A-01 the evening «badge di uscita» item opens a «Fine turno» card for that person', title() == 'Fine turno' and pg.locator('#form button', has_text=f'Chiudi il turno di Aiuto E2E {RUN}').count() == 1, title())
     pg.locator('#form button', has_text='Chiudi il turno').click(); pg.wait_for_timeout(1500)
     check('A-01 …which closes the shift and leaves who is recording as it was', sql1(f"select count(*) from fabula.shifts where staff_id = '{AIUTO}' and clock_out is null") == '0'

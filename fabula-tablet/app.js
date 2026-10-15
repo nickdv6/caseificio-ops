@@ -591,8 +591,16 @@
     const wrap = $('notice-wrap'); if (!wrap) return;
     // v1.00 (audit E-03): only the floor's notices (evening HACCP list, lot guard, unknown lab lots); git, cron, bots, Incassi
     // and trade notices stay in the office (Console → Oggi «Avvisi aperti»)
-    const { data, error } = await sb.from('v_active_notices').select('*').eq('audience', 'floor');
-    if (error || !data || !data.length) { wrap.style.display = 'none'; return; }
+    // v1.05 (audit E-31): the evening list is live from 14:00 (not only from the 19:02 bot); before 14:00 yesterday's food-safety gaps,
+    // each opening the paper copy on yesterday's date. The 19:02 notice is not shown twice.
+    const [nr, hl] = await Promise.all([sb.from('v_active_notices').select('*').eq('audience', 'floor'), navigator.onLine ? live(sb.rpc('haccp_open_list')) : Promise.resolve({ error: 'offline' })]);
+    const H = !hl.error && hl.data ? hl.data : null, hour = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Rome' }).format(new Date()));
+    if (H) lastHaccp = H;            // offline or slow: keep the last list read (eveningOk checks its day)
+    const boxes = [];
+    if (H && hour >= 14 && H.count > 0) boxes.push({ key: 'live_today', severity: hour >= 19 ? 'alert' : 'warn', title_it: `Prima di chiudere: ${H.count} ${H.count === 1 ? 'cosa' : 'cose'} da registrare`, items: H.items });
+    if (H && hour < 14 && H.yesterday && H.yesterday.count > 0) boxes.push({ key: 'live_yesterday', severity: 'alert', title_it: `Ieri non registrato: ${H.yesterday.count} · ricopia dal foglio di carta`, items: H.yesterday.items });
+    const data = [...boxes, ...((nr.data || []).filter(n => !(H && String(n.key).startsWith('haccp_evening:'))))];
+    if (!data.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = ''; wrap.innerHTML = '';
     data.forEach(n => {
       const d = document.createElement('div'); d.className = 'notice ' + n.severity;
@@ -936,12 +944,29 @@
     const c = document.createElement('div'); c.className = 'card';
     c.innerHTML = `<div class="scan">${esc(p.full_name)}</div><div>In turno${p.shift_since ? ' dalle ' + hhmm(p.shift_since) : ''} · stai registrando tu</div>`;
     const out = document.createElement('button'); out.type = 'button'; out.className = 'btn warn'; out.textContent = 'Fine turno: esco';
-    out.onclick = async () => { out.disabled = true; try { await clockOut(p, code); } catch (e) { toast(e.message, 'err'); out.disabled = false; } };
+    out.onclick = async () => { out.disabled = true; try { if (!(await eveningOk(p))) { out.disabled = false; return; } await clockOut(p, code); } catch (e) { toast(e.message, 'err'); out.disabled = false; } };
     const stay = document.createElement('button'); stay.type = 'button'; stay.className = 'btn secondary'; stay.textContent = 'Continuo a lavorare';
     stay.onclick = () => { show('home'); loadTasks(); };
     $('form').append(c, out, stay);
     $('f-title').textContent = 'Badge'; $('f-sub').textContent = ''; $('btn-form-save').style.display = 'none'; show('form');
     return 'stay';
+  }
+  // v1.05 (audit E-31): leaving after 14:00 with food-safety records still missing today asks first. The last one on shift is asked
+  // everything (evening cold rooms, cleaning, the lots' CCP, milk tests); with others still at work only the lots' CCP and milk tests
+  // (the evening checks are theirs to do), so nobody learns to tap «Esco lo stesso» every day
+  let lastHaccp = null;
+  async function eveningOk(p) {
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Rome' }).format(new Date()));
+    if (hour < 14) return true;
+    let H = lastHaccp;
+    if (navigator.onLine) { const r = await live(sb.rpc('haccp_open_list')); if (!r.error && r.data) H = lastHaccp = r.data; }
+    if (!H || H.date !== today()) return true;      // no list of today (offline since yesterday): nothing to ask
+    const others = opList().filter(x => x.on_shift && x.id !== p.id).map(x => x.full_name);
+    const fs = (H.items || []).filter(i => (others.length ? /^(ccp:|abx$)/ : /^(cold:|ccp:|clean$|abx$)/).test(i.code || ''));
+    if (!fs.length) return true;
+    return !!(await ask({ danger: true, title: `Prima di uscire: ${fs.length} ${fs.length === 1 ? 'controllo' : 'controlli'} di sicurezza alimentare da registrare`,
+      lines: [...fs.slice(0, 5).map(i => '• ' + i.label_it), fs.length > 5 ? `e altri ${fs.length - 5}` : '', others.length ? `In turno restano: ${others.join(', ')}.` : 'Sei l\'ultimo in turno.'],
+      yes: 'Esco lo stesso', no: 'Li registro adesso' }));
   }
   async function shiftOutCard(code) {
     let p = opList().find(x => x.badge_code === code);
@@ -1059,7 +1084,8 @@
       if (kind === 'PEST') return await stepPest();
       if (kind === 'SAMPLE') return await stepSample(ref);
       if (kind === 'HACCP') return stepHaccpMenu();
-      if (kind === 'PAPER') return ref ? await stepPaper(ref) : stepPaperMenu();
+      // v1.05 (audit E-31): PAPER:<control point>[@<day>[@<lot>]] — «Ieri non registrato» opens the copy on yesterday's date
+      if (kind === 'PAPER') { const [pcp, pday, plot] = String(ref || '').split('@'); return ref ? await stepPaper(pcp, pday, plot) : stepPaperMenu(); }
       if (kind === 'STAFF') return await badgeScan(code);   // v0.96 (A-01/A-25): the badge says who records; clocks in if needed, never out by mistake
       if (!rest.length && /^[LR]\d{8}-[A-Z]$/.test(kind)) return await stepLot(kind);   // v0.54: a lot number typed by hand (L20261005-A) without LOT:
       toast('Codice non riconosciuto: ' + code, 'err'); show('home');
@@ -2301,15 +2327,16 @@
   const redoTab = () => !!(current && current.redo && current.redo.src && current.redo.src !== 'paper');
   const redoSrc = () => redoTab() ? 'tablet' : 'paper';
   const redoNote = a => redoTab() ? [a, `Registrata sul tablet e rifiutata dal database: inserita di nuovo da ${me().full_name}`].filter(Boolean).join(' · ') : a;
-  async function stepPaper(cpCode) {
+  async function stepPaper(cpCode, pDay, pLot) {
     const { data: cp } = await cached('cp_' + cpCode, () => sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).maybeSingle());
     if (!cp) throw new Error('Punto di controllo sconosciuto: ' + cpCode);
     const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
-    const d = field('pday', 'Data scritta sul foglio', 'date'); d.value = today(); d.max = today(); d.min = addDays(today(), -7);
+    const d = field('pday', 'Data scritta sul foglio', 'date'); d.max = today(); d.min = addDays(today(), -7);
+    d.value = pDay && /^\d{4}-\d{2}-\d{2}$/.test(pDay) && pDay <= today() && pDay >= addDays(today(), -7) ? pDay : today();
     field('ptime', 'Ora scritta sul foglio', 'time');
     // v0.96 (audit A-19): who signed the sheet is chosen from the list, never prefilled with whoever is copying it
     field('pwho', 'Chi l\'ha scritto (firma sul foglio)', 'select', { options: [['', '— scegli chi ha firmato —'], ...opList().map(p => [p.full_name, p.full_name]), ['firma non leggibile', 'Non si legge / non firmato']] });
-    if (needsLot) field('lot', 'Lotto (come sul foglio, es. L20261012-A)', 'text');
+    if (needsLot) { const lf = field('lot', 'Lotto (come sul foglio, es. L20261012-A)', 'text'); if (pLot) lf.value = pLot; }
     if (MILK_CPS.has(cp.code)) await milkPicker();
     if (cp.code === 'CCP-MILK-ABX') field('v', 'Esito test rapido', 'select', { options: [['', '— scegli —'], ['0', 'Negativo'], ['1', 'POSITIVO']] });
     else if (cp.unit === 'esito') field('v', 'Esito della verifica', 'select', { options: [['', '— scegli —'], ['0', 'Ok'], ['1', 'NON ok']] });

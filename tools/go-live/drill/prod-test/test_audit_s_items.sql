@@ -24,6 +24,11 @@ insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_i
 insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
 values (current_date, '07:00', '50000000-0000-4000-a000-0000000095f1', 'M95-1', 1000, true, 4, 'tablet');
 
+-- v1.05 (audit E-32): the daily tasks start from prod.tasks_from (the replay's opening date is in 2027) and Sunday is closed: the test
+-- generates tasks for today and the days before, whatever the weekday
+update fabula.settings set value = '2026-01-01' where key = 'prod.tasks_from';
+update fabula.settings set value = '' where key = 'prod.closed_weekdays';
+
 -- A-12 · a queued check closes its task in the name of who did it, even when another login sends it
 select fabula.generate_daily_tasks(:'today') g \gset
 select pg_temp.as_user('00000000-0000-4000-a000-0000000095a1');

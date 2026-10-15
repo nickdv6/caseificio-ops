@@ -17,6 +17,46 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## Bots, alerts and operations: rules, versions, evening list, go-live list (v1.05)
+Medium and Low items of the 12/10/2026 audit, area E: E-06, E-09 (rest), E-14 (rest), E-16, E-17 (rest), E-19, E-27, E-28, E-31,
+E-30, E-32 (project doc `claude/audit-fixes-v105-2026-10-15.md`). Migrations `v105a` (message rules, alarms by area, system checks),
+`v105b` (placeholders, prompt versions, briefs, daily tasks), `v105c` (evening list, go-live list); live apply:
+`tools/go-live/live-apply/2026-10-15_v105_sql-editor.sql` (built by `make_v105_script.py`); tablet sw `perla-v72`.
+- **E-06 · one rule per database message:** `fabula.message_rules` (kind, messaggio/avviso, agent or notice key prefix, title regex,
+  severity, Telegram topic, area, meaning in Italian). Triggers `bot_messages_rule` / `notices_rule` set the severity from the rule
+  (null = the function decides); `notify_topic_for` takes the topic from it, the old words-based guess only without a rule. Milk
+  accepted and not worked for 48 h is now an alarm for food safety.
+- **E-09 · alarms by area:** `bot_nicknames.area`, `message_area()`, `fabula.my_alarms()` (open bot alarms of the caller's areas, all
+  with Sistema); `v_active_notices.area` (from the rule); `bot_bell()` counts both for a profile without Sistema, whose bell
+  «Avvisi» opens Console → Oggi; «Avvisi aperti» there lists the alarms and notices of its areas.
+- **E-14 · Italian:** `infra_checks()` details in Italian (`_it_infra_detail`, `_infra_name`); notice items without a label get one
+  (trigger `notices_items`); `fabula.system_checks()` feeds Configurazione → Panoramica → Sistema.
+- **E-27 · drift:** the repo_sync / code_pushed detail says which way to fix it («git push» dal Mac, or the version's SQL Editor
+  script), in the notice, its feed copy and the evening check. `fabula.schema_fingerprint()` + `tools/ci/compare_live.py` compare
+  every live function and view with a fresh replay (code vs comments only). `confirm_standing_orders` on live lacked one inert line
+  since v0.83: aligned.
+- **E-28 · one-time set-ups:** `fabula.cron_jobs_expected` (23 jobs) and `cron_jobs_check()`, `vault_secret_check()`; the
+  save-ledger trim job is created by the migration (`save_ledger_trim()`).
+- **E-16 · placeholder names:** `fabula.placeholder_status()` (one next step each, Console → Anagrafiche, never Shopify), quoted by
+  the evening check, `confirm_standing_orders` (→ the wholesale bot), the database's own wholesale run and the Shopify customer sync.
+- **E-17 · prompt versions:** `tools/bots/sync_rules.py` stamps each prompt with a version (`--versions`, `--check`; CI compares them
+  with `fabula.bot_prompt_versions`); bots pass it as `post_bot_message(…, p_prompt => …)` (`bot_messages.prompt_version`);
+  `fabula.prompt_drift()` lists scheduled tasks running an older copy (evening check, Panoramica → Sistema). The retired Shopify
+  prompts have no version. Prompts stay in the scheduled tasks (a prompt read from the database would be instructions from data).
+- **E-19 · only the data:** MESSAGE-RULES rule 12 in every prompt; `daily_brief()->'changes'` and `weekly_brief()->'changes'`
+  (`pct_change`), so the bot never computes; `sales_add_lead` marks a lead from the sales bot «Da verificare». Not done: a database
+  role per bot (the connector has one role).
+- **E-32 · tasks:** settings `prod.tasks_from` (empty = trial week, else opening date) and `prod.closed_weekdays` (default 7) +
+  `trade_closures`: `generate_daily_tasks` creates nothing before the start, only the cold rooms on a closed day, and a weekly/monthly
+  task on the first open day of its week/month. The nightly job `fabula_daily_tasks` is on again.
+- **E-31 · evening list:** `fabula.haccp_open_list()` (today's list, yesterday's food-safety gaps as `PAPER:<cp>@<day>[@<lot>]`);
+  the tablet shows it live from 14:00 («Prima di chiudere», red from 19:00), «Ieri non registrato» before 14:00, and asks at
+  «Fine turno: esco» (the last one on shift: everything; otherwise the lots' CCP and milk tests). `_haccp_evening_items()` counts the
+  Rome day; nothing before the tasks start (unless something was produced), only cold rooms on a closed day, badges from 19:00.
+- **E-30 · go-live list:** `dash_checks.label_it/hint_it/done_by_id/done_at/sign_note`; `fabula.golive_checklist()` and
+  Configurazione → Panoramica «Verso l'apertura»; `dash_set_check` from a login needs Sistema 3 and a note, records who and when
+  (`sign_note`; Nick's board keeps `note`); trigger `dash_checks_guard` blocks direct writes from a login; `dash_checks_audit`.
+
 ## Database guard rails: paper copies, packing and DDT numbers, NCs, bank, tasks, permissions (v1.04)
 Medium and Low items of the 12/10/2026 audit, area D: D-17 (rest), D-22 with PRINT-04, D-26 (rest), D-28, D-31, D-33 (project doc
 `claude/audit-fixes-v104-2026-10-15.md`). Migrations `v104a` (paper, packing, DDT), `v104b` (NCs, arrival checks), `v104c` (bank,

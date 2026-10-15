@@ -732,10 +732,34 @@
       <div class="big">${c.big}${c.sub ? `<small>${esc(c.sub)}</small>` : ''}</div>
       ${c.items && c.items.length ? `<ul>${c.items.slice(0, 3).map(i => `<li class="${i.st || ''}"><span>${esc(i.txt)}</span></li>`).join('')}${c.items.length > 3 ? `<li><span class="status">e ${plural(c.items.length - 3, 'altra', 'altre')}</span></li>` : ''}</ul>` : ''}
       <div class="ft">${esc(c.foot)}</div></a>`;
+  // v1.05 (audit E-30): the go-live list in Italian. Automatic items close by themselves (each says how); a manual gate is ticked by
+  // the titolare or a socio with a note and a confirmation, and shows who and when; undoing it asks why. Every change is in the Registro.
+  async function loadGolive() {
+    const card = $('golive-card'); if (!card || !PERM.can('sistema', 1)) return;
+    const { data, error } = await sb.rpc('golive_checklist'); if (error) throw error;
+    const items = data.items || [], open = items.filter(i => !i.done), done = items.filter(i => i.done), sign = !!data.can_sign;
+    card.hidden = false; $('golive-n').textContent = `${done.length} di ${items.length} fatti`;
+    const row = i => `<li class="gl ${i.done ? 'ok' : 'todo'}" data-k="${esc(i.key)}"><span class="ic">${i.done ? '✓' : '○'}</span><div>
+        <b>${esc(i.label)}</b>${i.kind === 'manual' ? ' <small class="status">a mano</small>' : ''}
+        ${i.done && i.done_by ? `<div class="status">fatto da ${esc(i.done_by)} il ${esc(new Date(i.done_at).toLocaleString('it-IT', { timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</div>` : ''}
+        ${!i.done && i.hint ? `<div class="status">${esc(i.hint)}</div>` : ''}${i.note ? `<div class="status">Nota: ${esc(i.note)}</div>` : ''}
+        ${i.kind === 'manual' && sign ? `<button type="button" class="lnkbtn" data-gl="${i.done ? 'undo' : 'do'}">${i.done ? 'Annulla…' : 'Segna fatto…'}</button>
+          <div class="glf nodirty" hidden><input type="text" maxlength="400" aria-label="Nota" placeholder="${i.done ? 'Perché si annulla?' : 'Cosa è stato fatto, dove sta il documento'}">
+          <button type="button" class="btn sm" data-gl="ok">${i.done ? 'Annulla' : 'Segna fatto'}</button></div>` : ''}</div></li>`;
+    $('golive').innerHTML = `<ul class="gll">${open.map(row).join('')}</ul>${done.length ? `<details><summary>Fatti (${done.length})</summary><ul class="gll">${done.map(row).join('')}</ul></details>` : ''}`;
+    $('golive').querySelectorAll('[data-gl=do],[data-gl=undo]').forEach(b => b.onclick = () => { const f = b.parentElement.querySelector('.glf'); f.hidden = false; b.hidden = true; f.querySelector('input').focus(); });
+    $('golive').querySelectorAll('[data-gl=ok]').forEach(b => b.onclick = () => UI.act(b, async () => {
+      const li = b.closest('li'), it = items.find(x => x.key === li.dataset.k), note = li.querySelector('.glf input').value.trim();
+      if (note.length < 3) { toast(it.done ? 'Scrivi perché si annulla' : 'Scrivi cosa è stato fatto e dove sta il documento', 'err'); return false; }
+      if (!confirm(it.done ? `Annullare «${it.label}»? Torna da fare.` : `Segnare come fatto «${it.label}»?\n\nResta nel Registro con il tuo nome e la nota.`)) return false;
+      const { error: e } = await sb.rpc('dash_set_check', { p_key: it.key, p_done: !it.done, p_note: note }); if (e) throw e;
+      await loadGolive();
+    }, it => 'Lista aggiornata'));
+  }
   async function loadOverview() {
     ovAt = Date.now(); ovStale = false;
     const admin = PERM.isAdmin();
-    const [st, eq, dl, vm, bots, un, people, lg, aud, hl] = await Promise.all([
+    const [st, eq, dl, vm, bots, un, people, lg, aud, hl, sc] = await Promise.all([
       PROWS.length ? { data: PROWS } : sb.from('settings').select('key, value, data_type, kind, description, sort'),
       sb.from('v_equipment_schedule').select('id, name, active, next_calibration_on, next_maintenance_on'),
       sb.from('compliance_deadlines').select('id, subject_it, due_on').is('done_on', null),
@@ -746,6 +770,7 @@
       admin ? sb.rpc('staff_logins') : Promise.resolve({ data: null }),
       sb.from('audit_log').select('at, actor, table_name, row_key, action, new_data, old_data').order('at', { ascending: false }).limit(6),
       Promise.resolve().then(() => sb.schema('public').rpc('fabula_health')).catch(e => ({ error: e })),
+      PERM.can('sistema', 1) ? sb.rpc('system_checks') : Promise.resolve({ data: null }),   // v1.05 (audit E-14/E-28)
     ]);
     (st.data || []).forEach(r => { SETNAME[r.key] = r.description || r.key; });
     const cards = [];
@@ -801,11 +826,16 @@
       const h = hl && !hl.error && hl.data ? hl.data : null, items = [];
       if (h) { if (!h.cron_ok) items.push({ st: 'al', txt: 'Attività programmate (pg_cron) ferme da oltre 20 minuti' }); if (!h.backup_ok) items.push({ st: 'al', txt: 'Nessun backup riuscito nelle ultime 26 ore' }); }
       else items.push({ st: 'wn', txt: 'Stato del database non letto' + (hl && hl.error ? `: ${hl.error.message || hl.error}` : '') });
+      // v1.05 (audit E-28): the one-time set-ups and the other system checks, in Italian, with what to do
+      const URGENT = new Set(['uptime', 'cron_jobs', 'vault_secret']);
+      ((sc && !sc.error && sc.data) || []).filter(c => !c.done).forEach(c => items.push({ st: URGENT.has(c.key) ? 'al' : 'wn', txt: `${c.label_it}: ${c.detail || 'da controllare'}` }));
+      const RK = { al: 0, wn: 1 }; items.sort((x, y) => (RK[x.st] ?? 2) - (RK[y.st] ?? 2));   // the card shows three: the urgent ones first
       if (ver) items.push({ st: 'ok', txt: `App in linea ${ver}${since ? ' dal ' + fmtD(since.slice(0, 10)) : ''}` });
-      const nAl = items.filter(i => i.st === 'al').length;
-      cards.push({ id: 'sys', tab: 'sistema', title: 'Sistema', st: h ? (nAl ? 'al' : 'ok') : 'wn', big: h ? (nAl || '✓') : '?',
-        sub: h ? (nAl ? 'da sistemare' : 'database, attività programmate e backup in ordine') : 'stato non disponibile', items, foot: 'Apri i parametri di sistema' }); }
+      const nAl = items.filter(i => i.st === 'al').length, nW = items.filter(i => i.st === 'wn').length;   // v1.05: a warning is not «in ordine»
+      cards.push({ id: 'sys', tab: 'sistema', title: 'Sistema', st: h ? (nAl ? 'al' : nW ? 'wn' : 'ok') : 'wn', big: h ? (nAl || nW || '✓') : '?',
+        sub: h ? (nAl ? 'da sistemare' : nW ? 'da controllare' : 'database, attività programmate e backup in ordine') : 'stato non disponibile', items, foot: 'Apri i parametri di sistema' }); }
     $('ov').innerHTML = cards.map(ovCard).join('');
+    loadGolive().catch(e => { const b = $('golive'); if (b) b.innerHTML = `<div class="status">${esc(e.message || String(e))}</div>`; });
     const nAl = cards.filter(c => c.st === 'al').length, nWn = cards.filter(c => c.st === 'wn').length;
     const big = $('ov-big'); big.className = 'big ' + (nAl ? 'al' : nWn ? 'wn' : 'ok');
     big.textContent = nAl ? `${plural(nAl, 'area da sistemare', 'aree da sistemare')}${nWn ? `, ${nWn} da controllare` : ''}` : nWn ? `Tutto funziona · ${plural(nWn, 'area da controllare', 'aree da controllare')}` : 'Tutto in ordine';

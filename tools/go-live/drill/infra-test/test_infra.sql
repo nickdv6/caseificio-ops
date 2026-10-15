@@ -43,7 +43,7 @@ do $$ declare d jsonb := fabula.ops_dashboard(); n int; a int; begin
   raise notice 'PASS 3 dashboard: % checks (≥ 36), 6 infra auto', n;
 end $$;
 
--- 4. trouble: live migration not on GitHub, Netlify behind, farm-order 500 twice, GitHub rate limit
+-- 4. trouble: live migration not on GitHub, Netlify behind, farm-order 500 twice, GitHub rate limit (v1.05, audit E-14: details in Italian)
 insert into supabase_migrations.schema_migrations(version) values ('20991231000000');
 select fabula.infra_probe();
 truncate want; insert into want select key, req_id from fabula.infra_status where req_id is not null;
@@ -63,8 +63,8 @@ select fabula.infra_collect();
 do $$ declare c jsonb := fabula.infra_checks(); t fabula.infra_status; begin
   raise notice 'checks: %', jsonb_pretty(c);
   if (c->'code_pushed'->>'done')::boolean then raise exception 'FAIL code_pushed should be red'; end if;
-  if (c->'code_pushed'->>'detail') not like '1 live migration(s) not on GitHub: 20991231000000%' then raise exception 'FAIL code_pushed detail %', c->'code_pushed'; end if;
-  if (c->'app_deployed'->>'done')::boolean or (c->'app_deployed'->>'detail') <> 'Live perla-v38, GitHub perla-v39 — Netlify has not deployed yet' then raise exception 'FAIL app_deployed %', c->'app_deployed'; end if;
+  if (c->'code_pushed'->>'detail') not like '1 migrazione applicata sul database ma non su GitHub: 20991231000000. Fai «git push» dal Mac' then raise exception 'FAIL code_pushed detail %', c->'code_pushed'; end if;
+  if (c->'app_deployed'->>'done')::boolean or (c->'app_deployed'->>'detail') <> 'Sito perla-v38, GitHub perla-v39: Netlify non ha ancora pubblicato (guarda il deploy su Netlify)' then raise exception 'FAIL app_deployed %', c->'app_deployed'; end if;
   if (c->'uptime'->>'done')::boolean then raise exception 'FAIL uptime should be red'; end if;
   select * into t from fabula.infra_status where key = 'github_tree';
   if t.ok is not null or jsonb_array_length(t.data->'versions') < 90 then raise exception 'FAIL rate limit should keep the list: %', t; end if;
@@ -126,7 +126,7 @@ do $$ declare c jsonb := fabula.infra_checks(); begin
   if not (c->'restore_tested'->>'done')::boolean then raise exception 'FAIL restore_tested %', c->'restore_tested'; end if;
   insert into fabula.agent_runs(agent, status, summary, error) values ('restore_drill', 'error', 'drill failed', '3 tables differ');
   c := fabula.infra_checks();
-  if (c->'restore_tested'->>'done')::boolean or (c->'restore_tested'->>'detail') not like 'Last drill FAILED%' then raise exception 'FAIL failed drill %', c->'restore_tested'; end if;
+  if (c->'restore_tested'->>'done')::boolean or (c->'restore_tested'->>'detail') not like 'Ultima prova FALLITA il %' then raise exception 'FAIL failed drill %', c->'restore_tested'; end if;
   raise notice 'PASS 9 restore drill: passed drill green, failed drill red (%)', c->'restore_tested'->>'detail';
 end $$;
 insert into auth.users(id, email) values ('11111111-1111-1111-1111-111111111111', 'test@example.com');

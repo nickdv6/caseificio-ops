@@ -99,12 +99,13 @@
   const goLink = (url, label) => url && LINK_OK.test(url) ? `<a class="go" href="${esc(url)}">${esc(label || linkLabel(url))} →</a>` : '';
   async function loadAvvisi() {
     const card = $('c-avvisi'); if (!card) return;
+    // v1.05 (audit E-09): the open alarms and the notices of the areas this profile works in (all of them with Sistema), not only for
+    // Configurazione users; a notice's area comes from its rule (v_active_notices.area)
     const [nt, al] = await Promise.all([
-      sb.from('v_active_notices').select('key, severity, title_it, items, created_at, audience, link'),
-      PERM.can('sistema', 1) ? sb.from('v_bot_feed').select('id, agent, agent_title, created_at, title, action_url, action_label').eq('severity', 'alert').is('read_at', null).is('notice_key', null)
-        .order('created_at', { ascending: false }).limit(30) : Promise.resolve({ data: [] })]);
+      sb.from('v_active_notices').select('key, severity, title_it, items, created_at, audience, link, area'),
+      sb.rpc('my_alarms')]);
     if (nt.error) throw nt.error;
-    const N = nt.data || [], A = al.data || [];
+    const N = (nt.data || []).filter(n => PERM.can('sistema', 1) || PERM.can(n.area || 'sistema', 1)), A = (al.error ? [] : (al.data || [])).slice(0, 30);
     badge('n-avvisi', N.length + A.length);
     if (!N.length && !A.length) { card.hidden = true; return; }
     card.hidden = false;

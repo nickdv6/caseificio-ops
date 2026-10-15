@@ -25,6 +25,11 @@ on conflict do nothing;
 insert into fabula.parties (id, type, legal_name, is_milk_supplier, active) values ('50000000-0000-4000-a000-0000000097f1', 'supplier', 'Masseria F', true, true) on conflict do nothing;
 \set CAS '''10000000-0000-4000-a000-0000000097a2'''
 
+-- v1.05 (audit E-32): the daily tasks start from prod.tasks_from (the replay's opening date is in 2027) and Sunday is closed: the test
+-- generates tasks for today and the days before, whatever the weekday
+update fabula.settings set value = '2026-01-01' where key = 'prod.tasks_from';
+update fabula.settings set value = '' where key = 'prod.closed_weekdays';
+
 -- ============================== A-05 task list ==============================
 delete from fabula.task_instances;
 select fabula.generate_daily_tasks(pg_temp.today()) n_today, fabula.generate_daily_tasks(pg_temp.today() - 1) n_y, fabula.generate_daily_tasks(pg_temp.today() - 2) n_y2 \gset

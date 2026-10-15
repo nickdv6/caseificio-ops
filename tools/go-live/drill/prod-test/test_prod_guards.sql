@@ -49,7 +49,7 @@ values (((:'t_watch'::timestamptz - interval '50 hours') at time zone 'Europe/Ro
 select fabula.prod_watch(:'t_watch'::timestamptz) w1 \gset
 select pg_temp.ck('19:45 Rome: open batch and old milk reported once',
   (:'w1'::jsonb->>'open_batches')::int >= 1 and (:'w1'::jsonb->>'old_milk')::int = 1
-  and exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'warn' and body like '%LG-3%' and body like '%MG-OLD: 300 kg%'), :'w1');   -- v1.00: old milk → «Sicurezza alimentare»
+  and exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and body like '%LG-3%' and body like '%MG-OLD: 300 kg%'), :'w1');   -- v1.00: old milk → «Sicurezza alimentare»; v1.05 (E-06): an alarm
 select pg_temp.ck('same evening: not posted twice', fabula.prod_watch(:'t_watch2'::timestamptz)->>'skipped' = 'already posted');
 select pg_temp.ck('other DST slot (18:45 Rome) skips', fabula.prod_watch(:'t_watch_dst'::timestamptz)->>'skipped' = 'not 19:xx in Rome');
 select pg_temp.ck('job scheduled; app users cannot run it',

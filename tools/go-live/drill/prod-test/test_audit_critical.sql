@@ -466,8 +466,9 @@ select pg_temp.ck('R2 …the closed lot that lost its only stretching reading is
   (select hold_reason from fabula.production_batches where batch_lot = 'LC96-H'));
 
 -- R5 · an alert notice is pushed once (not again through its bot-message copy); infrastructure first in the topics
+-- v1.05 (audit E-06): the notice's severity comes from its rule; lab_lot_unknown is an alarm (lot_guard is a warning)
 delete from fabula.notify_outbox where source_ref like 'R5%';
-insert into fabula.notices (key, severity, title_it, items, expires_at) values ('lot_guard:R5', 'alert', 'Lotto scaduto in vendita: R5', '[]', now() + interval '1 day');
+insert into fabula.notices (key, severity, title_it, items, expires_at) values ('lab_lot_unknown:R5', 'alert', 'Lotto scaduto in vendita: R5', '[]', now() + interval '1 day');
 select pg_temp.ck('R5 one alert notice = one push', (select count(*) from fabula.notify_outbox where title = 'Lotto scaduto in vendita: R5') = 1,
   (select string_agg(source || ':' || coalesce(source_ref, ''), ', ') from fabula.notify_outbox where title = 'Lotto scaduto in vendita: R5'));
 select pg_temp.ck('R5 topics: «haccp_nudge non è partito» and «backup bloccato» are infrastructure; tablet records refused are for the floor',

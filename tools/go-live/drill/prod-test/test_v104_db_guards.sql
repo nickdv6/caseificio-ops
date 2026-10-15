@@ -255,6 +255,10 @@ select pg_temp.ck('D-28 a note typed by hand keeps the «importi diversi» note 
 
 -- ============================== D-31 · a task needs its record ==============================
 select (:'d'::date - 1) y \gset
+-- v1.05 (audit E-32): the daily tasks start from prod.tasks_from (the replay's opening date is in 2027) and Sunday is closed: the test
+-- generates tasks for today and the days before, whatever the weekday
+update fabula.settings set value = '2026-01-01' where key = 'prod.tasks_from';
+update fabula.settings set value = '' where key = 'prod.closed_weekdays';
 select fabula.generate_daily_tasks(:'y'::date) is not null g \gset
 select min(ti.due_at) m_due, max(ti.due_at) e_due from fabula.task_instances ti join fabula.task_schedules ts on ts.id = ti.schedule_id
  where ts.code = 'T-CF1' and ti.followup_kind is null and ti.due_at >= (:'y'::date)::timestamp at time zone 'Europe/Rome' and ti.due_at < (:'y'::date + 1)::timestamp at time zone 'Europe/Rome' \gset

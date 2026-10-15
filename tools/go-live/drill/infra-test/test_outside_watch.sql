@@ -1,6 +1,7 @@
 -- v1.00a ops batch (audit E-22, E-24, E-25) · run on a fresh replay:
 --   tools/go-live/drill/infra-test/replay.sh ow_test
 --   su postgres -c "psql -d ow_test -f tools/go-live/drill/infra-test/test_outside_watch.sql" | grep -E "PASS|FAIL"   (CI runs it on every push)
+-- v1.05 (audit E-14): the board details are Italian now
 \set ON_ERROR_STOP 0
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
@@ -14,7 +15,7 @@ select vault.create_secret('test-backup-token-123', 'backup_export_token') is no
 -- 1. board before any report: both checks red and say what to set up
 select pg_temp.ck('before any report: outside watcher red, asks for the GitHub secret',
   not (pg_temp.chk('outside_watcher')->>'done')::boolean and pg_temp.chk('outside_watcher')->>'kind' = 'auto'
-  and pg_temp.chk('outside_watcher')->>'detail' like 'Not reporting yet%BACKUP_EXPORT_TOKEN%', pg_temp.chk('outside_watcher')->>'detail');
+  and pg_temp.chk('outside_watcher')->>'detail' like 'Non ancora attivo%BACKUP_EXPORT_TOKEN%', pg_temp.chk('outside_watcher')->>'detail');
 select pg_temp.ck('before any report: off-site copy red, asks for both secrets',
   not (pg_temp.chk('offsite_backup')->>'done')::boolean and pg_temp.chk('offsite_backup')->>'detail' like '%BACKUP_PASSPHRASE%');
 select pg_temp.ck('before any report: the hourly watch raises nothing', jsonb_array_length(fabula.outside_watch()->'raised') = 0);
@@ -33,10 +34,10 @@ reset role;
 
 select pg_temp.ck('watcher report stored and the board check is green',
   (select ok and detail = 'tutto OK' and last_ok_at > now() - interval '1 minute' from fabula.infra_status where key = 'outside_watcher')
-  and (pg_temp.chk('outside_watcher')->>'done')::boolean and pg_temp.chk('outside_watcher')->>'detail' like 'Last run %all OK%', pg_temp.chk('outside_watcher')->>'detail');
+  and (pg_temp.chk('outside_watcher')->>'done')::boolean and pg_temp.chk('outside_watcher')->>'detail' like 'Ultimo giro %tutto ok%', pg_temp.chk('outside_watcher')->>'detail');
 select public.fabula_outside_report('test-backup-token-123', 'watcher', '{"ok": false, "summary": "database non risponde"}') \gset
 select pg_temp.ck('a watcher report with a problem: still running (green), the problem shown',
-  (pg_temp.chk('outside_watcher')->>'done')::boolean and pg_temp.chk('outside_watcher')->>'detail' like '%found: database non risponde%'
+  (pg_temp.chk('outside_watcher')->>'done')::boolean and pg_temp.chk('outside_watcher')->>'detail' like '%trovato: database non risponde%'
   and (select fail_streak = 1 and last_ok_at is not null from fabula.infra_status where key = 'outside_watcher'));
 
 select public.fabula_outside_report('test-backup-token-123', 'offsite_backup', '{"ok": false, "summary": "manca il segreto BACKUP_PASSPHRASE"}') \gset
@@ -58,7 +59,7 @@ select pg_temp.ck('off-site report stored: board green with the summary',
   (pg_temp.chk('offsite_backup')->>'done')::boolean and pg_temp.chk('offsite_backup')->>'detail' like 'backup 13/10%');
 select public.fabula_outside_report('test-backup-token-123', 'offsite_backup', '{"ok": false, "summary": "file del 13/10 non trovato"}') \gset
 select pg_temp.ck('a failed off-site copy turns the board red with the reason',
-  not (pg_temp.chk('offsite_backup')->>'done')::boolean and pg_temp.chk('offsite_backup')->>'detail' like 'Last attempt failed%non trovato%');
+  not (pg_temp.chk('offsite_backup')->>'done')::boolean and pg_temp.chk('offsite_backup')->>'detail' like 'Ultimo tentativo fallito il %non trovato%');
 select pg_temp.err(format($$select public.fabula_outside_report('test-backup-token-123', 'offsite_backup', %L::jsonb)$$,
     jsonb_build_object('ok', true, 'summary', 'grande', 'blob', repeat('x', 20000))::text)) big_err \gset
 select pg_temp.ck('an oversized detail is cut, not refused',
@@ -76,7 +77,7 @@ select pg_temp.ck('an oversized drill report keeps its error',
   :'big_drill' = '' and (select status = 'error' and error = 'migrazioni non riuscite' from fabula.agent_runs where agent = 'restore_drill' order by started_at desc, id desc limit 1), :'big_drill');
 select public.fabula_outside_report('test-backup-token-123', 'restore_drill', '{"ok": false, "summary": "Prova di ripristino 13/10", "error": "3 tabelle con righe diverse"}') \gset
 select pg_temp.ck('a failed drill turns the board red with the error',
-  not (pg_temp.chk('restore_tested')->>'done')::boolean and pg_temp.chk('restore_tested')->>'detail' like '%FAILED%righe diverse%', pg_temp.chk('restore_tested')->>'detail');
+  not (pg_temp.chk('restore_tested')->>'done')::boolean and pg_temp.chk('restore_tested')->>'detail' like '%FALLITA%righe diverse%', pg_temp.chk('restore_tested')->>'detail');
 
 -- 4. the hourly dead-man's switch
 select public.fabula_outside_report('test-backup-token-123', 'offsite_backup', '{"ok": true, "summary": "backup 13/10"}') \gset

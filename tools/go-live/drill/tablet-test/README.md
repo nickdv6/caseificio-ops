@@ -4,7 +4,7 @@ Runs the real tablet app (fabula-tablet) in headless Chromium against a local co
 policies, so atomic saves, exactly-once re-sends and the offline flows can be checked without touching the live system.
 
 1. `../run_drill.sh latest.json.gz` — builds `restore_drill` from every migration and loads a backup.
-2. `su postgres -c "psql -d restore_drill -f setup.sql"` — test login (Test Casaro, role produzione) and auth stubs.
+2. `su postgres -c "psql -d restore_drill -f setup.sql"` — test login (Test Casaro, role produzione) and auth stubs. Since v1.05 it also sets `prod.tasks_from` = 2026-01-01 and no closing weekday, so the daily tasks and the evening list exist on any day.
 3. PostgREST 12 (static binary from github.com/PostgREST/postgrest/releases): `postgrest pgrst.conf` (port 3000).
 4. `su postgres -c "psql -d restore_drill -f test_save_ops.sql"` — SQL tests: one transaction, re-send with the same id,
    a failing step leaves nothing, update must match one row, whitelist, role policy refusal (a Banco user).
@@ -179,3 +179,14 @@ farm_test prints the poster with the QR key.
 
 Last run 15/10/2026 (v1.04), same setup with the 190 migrations, all 22 suites in a row (the 21 above, with v104_e2e after v103_e2e
 and alerts_e2e last): `FAILURES: none` in each, v104_e2e 12/12. pack_e2e reads the per-product reason («pesati 2 kg contro 4 ordinati (-50 %)»).
+
+27. `python3 v105_e2e.py` (v1.05, audit E-31 / E-09 / E-14 / E-28 / E-30; port 8784, browser in it-IT, the tablet's clock set to
+    09:30 and 15:30 Rome) — 09:30: «Ieri non registrato» with yesterday's lot, its item opens «Ricopia da foglio di carta» on yesterday's
+    date with the lot; 15:30: «Prima di chiudere» shown once; «Fine turno: esco» asks («Li registro adesso» keeps the shift, «Esco lo
+    stesso» closes it); a marketing profile's bell «Avvisi» → Console → Oggi with its alarms, not food safety; Panoramica → Sistema in
+    Italian; «Verso l'apertura»: a note required, who and when, «Annulla…» with a reason; the office sees no buttons. Expect
+    `FAILURES: none`. `operator_e2e.py` answers the badge-out question when it comes and clicks the first of two «badge di uscita»
+    items; `v103_e2e.py` clicks the reprint search result (the morning box can name the same lot).
+
+Last run 15/10/2026 (v1.05), same setup with the 193 migrations, all 23 suites in a row (the 22 above, with v105_e2e after v104_e2e
+and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.

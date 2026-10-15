@@ -142,6 +142,24 @@ def main():
         rows.append(('security scan', 'FAILED', str(e)[:200]))
         unexpected.append(f'security scan could not run: {e}')
 
+    # 2b. v1.05 (audit E-17): the bot prompts carry the shared rules and their version, and the expected versions in the
+    #     database (fabula.bot_prompt_versions, set by a migration) are the prompts' own: a prompt changed without
+    #     «sync_rules.py» and a new migration fails here, before its scheduled task and the drift check disagree
+    sync = os.path.join(REPO, 'tools', 'bots', 'sync_rules.py')
+    r = sh([sys.executable, sync, '--check'])
+    want = dict(re.findall(r"\('([a-z_]+)', '([0-9a-f]+)'\)", sh([sys.executable, sync, '--versions']).stdout))
+    try:
+        have = dict(l.split('|', 1) for l in psql_query(TEMPLATE, 'select agent || \'|\' || version from fabula.bot_prompt_versions order by 1').splitlines() if l)
+    except RuntimeError as e:
+        have = {'?': str(e)[:100]}
+    diff = sorted(a for a in set(want) | set(have) if want.get(a) != have.get(a))
+    ok = r.returncode == 0 and want and not diff
+    rows.append(('bot prompts (rules block, versions)', 'ok' if ok else 'FAILED',
+                 f'{len(want)} prompts' if ok else (r.stdout.strip() if r.returncode else '') + (' · versions differ: ' + ', '.join(diff) if diff else '')))
+    if not ok:
+        unexpected.append('bot prompts: run python3 tools/bots/sync_rules.py, then put the --versions output in a new migration'
+                          + (f' ({", ".join(diff)})' if diff else ''))
+
     # 3. SQL suites
     known = load_known()
     suites = sorted(glob.glob(os.path.join(DRILL, 'prod-test', 'test_*.sql'))) + \
