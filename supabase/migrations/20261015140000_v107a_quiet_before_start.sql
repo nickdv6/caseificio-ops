@@ -6,11 +6,12 @@
 -- alerts are for.
 --
 -- Quiet means BOTH: the day is before the start AND nothing real is happening (fabula._real_activity: a real lot in the last 14 days,
--- real milk or a real HACCP record in the last 7, or real finished product in stock). Real work before the start is always checked
--- (food safety first), and the milk plan comes back by itself as soon as real milk or lots appear.
+-- real milk in the last 7, or a real lot of finished product still in stock). Real work before the start is always checked (food
+-- safety first), and the milk plan comes back by itself as soon as real milk or lots appear. HACCP records alone do not count: on
+-- live the only ones (13/10) are tablet tests, and cold-room readings started early must not bring back the milk proposals.
 --   * The start: for the floor checks and the briefs, the first of «Primo giorno con le attività», the trial week and the opening
---     (fabula.quiet_until); for the milk plan, the first of the trial week and the opening (fabula.milk_start): starting the cold-room
---     tasks early does not bring back daily milk proposals before any production.
+--     (fabula.quiet_until); for the milk plan, the trial week while it is ahead or running, else the opening (fabula.milk_start(day)):
+--     starting the cold-room tasks early, or a trial week already over, does not bring back daily milk proposals.
 --   * Setting prod.quiet_before_start (Sì by default) switches all of it off.
 --   * plan_milk(): the automatic plan (no date given: the bot, the database's stand-in, «Esegui ora») proposes nothing on a quiet day
 --     and says from when it starts. A plan that already exists is still reported as such; a plan asked for a given day (tests, the
@@ -23,27 +24,28 @@
 --   * expire_approvals: an expired decision is news, not a decision still open: no «Nessuno se ne occupa» reminder 30 minutes later
 --     (also after the opening).
 --   * notify_digest_text: on Monday (the reader's day), while quiet, the morning summary has one «Verso l'apertura» block.
---   * Automatic milk plans already waiting for a quiet day are closed without a message (they would only expire with a Telegram).
+--   * Automatic milk plans already waiting for a quiet day are closed without a message (they would only expire with a Telegram);
+--     a plan proposed by hand from the Console (milk_order_again, now marked «manual») is never closed.
 -- Part b (v107b): the Shopify stock message respects selling at zero stock, and the milk planning prompt's new version.
 
 -- ============================== the switch ==============================
 insert into fabula.settings (key, value, description, data_type, kind, sort, impact_it, min_value, max_value, unit) values
   ('prod.quiet_before_start', '1',
-   'Silenzio prima dell''avvio: finché il caseificio non lavora (prima della settimana di prova o del «Primo giorno con le attività», e senza latte, lotti o prodotto veri) il piano latte non propone niente, il controllo serale non chiede tablet e conta di magazzino, i brief non chiedono i controlli HACCP. Latte o lotti veri riaccendono tutto da soli. No = sempre come a caseificio aperto.',
+   'Silenzio prima dell''avvio: finché il caseificio non lavora (prima della settimana di prova o del «Primo giorno con le attività», e senza latte, lotti o prodotto veri) il piano latte non propone niente, il controllo serale non chiede tablet e conta di magazzino, i brief non chiedono i controlli HACCP. Latte o lotti veri riaccendono tutto da soli. No = piano latte, controllo serale e brief come a caseificio aperto (le attività del tablet seguono sempre «Primo giorno con le attività»).',
    'number', 'flag', 41,
    'Con «No» arrivano ogni giorno il piano latte da decidere e i controlli mancanti anche a caseificio chiuso.', null, null, null)
 on conflict (key) do nothing;
 
 create or replace function fabula._real_activity(p_day date)
 returns boolean language sql stable set search_path = fabula, public as $$
-  -- v1.07: something real is going on around this day: a lot in the last 14 days, milk or a HACCP record in the last 7, or
-  -- finished product in stock (simulation data does not count)
+  -- v1.07: something real is going on around this day: a lot in the last 14 days, milk in the last 7, or a lot of finished product
+  -- still in stock (counted per lot, so a sale without a lot never hides product in the cold room). Simulation data does not count;
+  -- HACCP records alone do not either (tablet tests, cold-room readings started early).
   select exists (select 1 from fabula.production_batches where source <> 'simulation' and batch_date between p_day - 14 and p_day)
       or exists (select 1 from fabula.milk_intake where source <> 'simulation' and intake_date between p_day - 7 and p_day)
-      or exists (select 1 from fabula.haccp_log where coalesce(source, '') <> 'simulation'
-                  and (logged_at at time zone 'Europe/Rome')::date between p_day - 7 and p_day)
-      or coalesce((select sum(m.qty) from fabula.stock_moves m join fabula.products p on p.id = m.product_id
-                    where p.kind = 'finished_good' and coalesce(m.source, '') <> 'simulation'), 0) > 0.01
+      or exists (select 1 from fabula.stock_moves m join fabula.products p on p.id = m.product_id
+                  where p.kind = 'finished_good' and coalesce(m.source, '') <> 'simulation'
+                  group by m.product_id, m.lot_number having sum(m.qty) > 0.01)
 $$;
 
 create or replace function fabula.quiet_until()
@@ -52,10 +54,12 @@ returns date language sql stable set search_path = fabula, public as $$
   select least(fabula._setting_date('prod.tasks_from'), fabula._setting_date('trial.start'), fabula._setting_date('mkt.store_opening_date'))
 $$;
 
-create or replace function fabula.milk_start()
+create or replace function fabula.milk_start(p_day date)
 returns date language sql stable set search_path = fabula, public as $$
-  -- v1.07: the automatic milk plan wakes up on the first of the trial week and the opening (production, not the cold-room tasks)
-  select least(fabula._setting_date('trial.start'), fabula._setting_date('mkt.store_opening_date'))
+  -- v1.07: the automatic milk plan wakes up with production, not with the cold-room tasks: the trial week while it is ahead of this
+  -- day or running (trial.days), otherwise the opening. A trial week already over does not bring back daily proposals.
+  select case when t is not null and (p_day is null or p_day < t + greatest(coalesce(n, 5), 1)) then least(t, o) else o end
+    from (select fabula._setting_date('trial.start') t, fabula.setting_num('trial.days', 5)::int n, fabula._setting_date('mkt.store_opening_date') o) x
 $$;
 
 create or replace function fabula.quiet_day(p_day date)
@@ -69,13 +73,13 @@ create or replace function fabula.quiet_milk_day(p_day date)
 returns boolean language sql stable set search_path = fabula, public as $$
   -- v1.07: the automatic milk plan proposes nothing for this production day
   select coalesce(fabula.setting_num('prod.quiet_before_start', 1), 1) = 1
-     and coalesce(p_day < fabula.milk_start(), false) and not fabula._real_activity(p_day)
+     and coalesce(p_day < fabula.milk_start(p_day), false) and not fabula._real_activity(p_day)
 $$;
 
 comment on function fabula.quiet_day(date) is 'v1.07: true while prod.quiet_before_start is on, the day is before fabula.quiet_until() and nothing real is happening (fabula._real_activity). The evening check''s floor items and the HACCP lines of the briefs stay quiet on such a day.';
-comment on function fabula.quiet_milk_day(date) is 'v1.07: like quiet_day, with the production start (fabula.milk_start(): trial week or opening): the automatic milk plan proposes nothing for such a day.';
+comment on function fabula.quiet_milk_day(date) is 'v1.07: like quiet_day, with the production start (fabula.milk_start(day): the trial week while ahead or running, else the opening): the automatic milk plan proposes nothing for such a day.';
 do $g$ declare f text; begin
-  foreach f in array array['fabula._real_activity(date)', 'fabula.quiet_until()', 'fabula.milk_start()', 'fabula.quiet_day(date)', 'fabula.quiet_milk_day(date)'] loop
+  foreach f in array array['fabula._real_activity(date)', 'fabula.quiet_until()', 'fabula.milk_start(date)', 'fabula.quiet_day(date)', 'fabula.quiet_milk_day(date)'] loop
     execute format('revoke all on function %s from public, anon', f);
     execute format('grant execute on function %s to authenticated, service_role', f);
   end loop;
@@ -91,10 +95,10 @@ $s$, $s$  -- v1.07: before production starts and with nothing real going on, the
   -- no Telegram, nothing on the farm page. A plan asked for a given day is still made; real milk or lots bring the plan back by themselves.
   if p_date is null and fabula.quiet_milk_day(d) then
     return jsonb_build_object('date', d, 'weekday', v_wd, 'skipped', 'pre_opening',
-      'tasks_start', fabula.milk_start(),
-      'first_plan_day', case when extract(isodow from fabula.milk_start()) = 7 then fabula.milk_start() + 1 else fabula.milk_start() end,
+      'tasks_start', fabula.milk_start(d),
+      'first_plan_day', case when extract(isodow from fabula.milk_start(d)) = 7 then fabula.milk_start(d) + 1 else fabula.milk_start(d) end,
       'message_it', format('Nessun piano latte prima dell''avvio: il primo sarà per %s. Latte o lotti veri prima di allora lo riattivano da soli (Configurazione → Parametri → Produzione e latte, «Silenzio prima dell''avvio»)',
-                           fabula.it_day(case when extract(isodow from fabula.milk_start()) = 7 then fabula.milk_start() + 1 else fabula.milk_start() end)));
+                           fabula.it_day(case when extract(isodow from fabula.milk_start(d)) = 7 then fabula.milk_start(d) + 1 else fabula.milk_start(d) end)));
   end if;
   select count(*), coalesce(avg(total),0), coalesce(avg(whole),0) into v_n, v_total, v_whole_hist from (
 $s$);
@@ -178,6 +182,15 @@ $s$, $s$    fabula._wr('Registrazioni mancanti', coalesce(tw #>> '{compliance,mi
 $s$);
   if n = d then raise exception 'v107a: _why_weekly_brief pattern not found'; end if;
   execute n;
+
+  -- a plan proposed by hand from the Console is marked, so nothing automatic ever closes it
+  d := pg_get_functiondef('fabula.milk_order_again'::regproc);
+  n := replace(d, $s$  if v_appr is null then raise exception using errcode = '22023', message = 'Piano latte non creato: ' || coalesce(r->>'skipped', r::text); end if;
+$s$, $s$  if v_appr is null then raise exception using errcode = '22023', message = 'Piano latte non creato: ' || coalesce(r->>'skipped', r::text); end if;
+  update fabula.approvals set payload = payload || jsonb_build_object('manual', true) where id = v_appr;   -- v1.07
+$s$);
+  if n = d then raise exception 'v107a: milk_order_again pattern not found'; end if;
+  execute n;
 end $mig$;
 
 -- ============================== the briefs ==============================
@@ -205,13 +218,13 @@ returns jsonb language sql stable set search_path to 'fabula', 'public', 'extens
   -- v1.05 (audit E-19): this week against the previous one, every number as a % change
   -- v1.07: weeks that are quiet at their end (fabula.quiet_day): the missing HACCP checks are 0, pre_opening says until when
   select b || jsonb_build_object('changes', fabula._pct_changes(b -> 'this_week', b -> 'previous_week'))
-    from (select case when fabula.quiet_day((b0 ->> 'week_end')::date)
-                      then jsonb_set(case when fabula.quiet_day((b0 ->> 'week_start')::date - 1)
-                                          then jsonb_set(b0, '{previous_week,compliance,missing_checks}', '0'::jsonb, false) else b0 end,
-                                     '{this_week,compliance,missing_checks}', '0'::jsonb, false)
+    from (select case when fabula.quiet_day((b1 ->> 'week_end')::date)
+                      then jsonb_set(b1, '{this_week,compliance,missing_checks}', '0'::jsonb, false)
                            || jsonb_build_object('pre_opening', jsonb_build_object('tasks_start', fabula.quiet_until()))
-                      else b0 end b
-            from (select fabula._weekly_brief_base(p_week_end) b0) y) x
+                      else b1 end b
+            from (select case when fabula.quiet_day((b0 ->> 'week_start')::date - 1)   -- the previous week on its own (first week after the start)
+                              then jsonb_set(b0, '{previous_week,compliance,missing_checks}', '0'::jsonb, false) else b0 end b1
+                    from (select fabula._weekly_brief_base(p_week_end) b0) y0) y) x
 $$;
 
 -- ============================== an expiry is not a decision ==============================
@@ -302,5 +315,5 @@ end $mig$;
 update fabula.approvals a set status = 'expired', decided_by = 'Prima dell''avvio', decided_at = now(),
        decision_note = 'v1.07: nessun piano automatico prima dell''avvio'
  where a.status = 'pending' and a.requested_by = 'agent:milk_planning' and a.related_table = 'milk_plans'
-   and fabula.approval_type(a.kind, a.payload) = 'milk_plan'
+   and fabula.approval_type(a.kind, a.payload) = 'milk_plan' and not coalesce((a.payload->>'manual')::boolean, false)
    and fabula.quiet_milk_day((a.payload->>'plan_date')::date);

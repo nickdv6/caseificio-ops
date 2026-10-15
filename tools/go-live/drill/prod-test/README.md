@@ -245,3 +245,15 @@ both; the check for everyone with `bots.number_check_all`); every explainer on i
 an unknown read only through its labels, a broken one never fails; the size cap; the clean-up; the Sistema line; the 9 prompt
 versions. Run on a fresh replay. 15/10/2026: 37/37 PASS on a fresh replay and on the copy built by the SQL Editor script. Updated on
 purpose: `test_v105_bots_ops.sql` expects 11 lines in Panoramica → Sistema (v1.06 adds «Numeri dei messaggi»).
+
+`test_v107_quiet.sql` (v1.07, «Prima dell'avvio») — the switch and the dates (`quiet_until`, `milk_start(day)`: a trial week ahead,
+running or over; a null day is false); a real cold-room reading alone changes nothing; the automatic plan on a quiet day
+(`pre_opening`, first plan day, nothing created), a plan for a given day still made, an existing plan still «già pronto», the evening
+before the trial week, real milk brings the plan back, simulated milk does not, «Proponi di nuovo» marked «manual»; the stand-in and
+«Perché?»; the evening check without tablet and stock count; the briefs (HACCP lines and overdue tasks empty with `pre_opening`, their
+«Perché?», back with the switch off, with real milk, with real product in stock counted per lot; the first week after the start); the
+tablet's evening list with and without real product; an expiry without the 30-minute reminder; Monday's «Verso l'apertura» (Rome and
+New York readers, «domani», not on Tuesday, not after the start, not for a profile without Sistema); the Shopify stock message with
+`shopify.sell_at_zero`; the prompt version. Run on a fresh replay. 15/10/2026: 53/53 PASS on a fresh replay and on the copy built by
+the SQL Editor script. Updated on purpose: `test_v105_bots_ops.sql` E-31 (a real lot yesterday now brings today's cold rooms back before
+the start), `test_v106_perche.sql` and `infra-test/test_bot_fallback.sql` turn the quiet mode off (they test the dairy at work).

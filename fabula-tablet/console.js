@@ -39,6 +39,8 @@
   // one list of compliance issues: the tile counts exactly the red lines the card shows
   function complianceItems(b) {
     const h = b.haccp || {}, t = b.tasks || {}, items = [];
+    // v1.07: before the start, with nothing real going on, the day's checks are not asked: say so, so an empty list is not read as «all done»
+    if (b.pre_opening) items.push(['status', esc(b.pre_opening.note_it || "Prima dell'avvio i controlli HACCP del giorno non sono richiesti")]);
     (h.non_conformities || []).forEach(n => items.push(['ko', `Non conformità ${esc(n.point)}: ${num(n.value)} °C${n.action ? ' · ' + esc(n.action) : ''}`]));
     (h.missing_daily_checks || []).forEach(c => items.push(['ko', `Controllo mancante: ${esc(c)}`]));
     (h.evening_cold_checks_missing || []).filter(c => !(h.missing_daily_checks || []).includes(c)).forEach(c => items.push(['ko', `Controllo serale mancante: ${esc(c)}`]));

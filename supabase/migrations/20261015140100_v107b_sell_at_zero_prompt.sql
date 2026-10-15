@@ -45,5 +45,5 @@ end $mig$;
 
 -- ============================== the prompt (tools/bots/sync_rules.py --versions) ==============================
 insert into fabula.bot_prompt_versions (agent, version) values
-  ('milk_planning', '3d2acb5f30')
+  ('milk_planning', '581ad88a3f')
 on conflict (agent) do update set version = excluded.version, updated_at = now();

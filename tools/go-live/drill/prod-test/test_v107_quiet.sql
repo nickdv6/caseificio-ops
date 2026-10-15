@@ -29,8 +29,8 @@ insert into fabula.parties (type, legal_name, is_milk_supplier) values ('supplie
 select pg_temp.ck('setting prod.quiet_before_start: a Sì/No flag, on by default, sorted after «Primo giorno con le attività»',
   (select value = '1' and kind = 'flag' and data_type = 'number' and sort > (select sort from fabula.settings where key = 'prod.tasks_from')
      from fabula.settings where key = 'prod.quiet_before_start'));
-select pg_temp.ck('quiet_until = the first of tasks, trial, opening (day 10); milk_start = the first of trial and opening (day 12)',
-  fabula.quiet_until() = :'d'::date + 10 and fabula.milk_start() = :'d'::date + 12, fabula.quiet_until() || ' / ' || fabula.milk_start());
+select pg_temp.ck('quiet_until = the first of tasks, trial, opening (day 10); milk_start = the trial week ahead (day 12)',
+  fabula.quiet_until() = :'d'::date + 10 and fabula.milk_start(:'d'::date) = :'d'::date + 12, fabula.quiet_until() || ' / ' || fabula.milk_start(:'d'::date));
 select pg_temp.ck('quiet_day: today and day 9 are quiet; day 10 is not',
   fabula.quiet_day(:'d'::date) and fabula.quiet_day(:'d'::date + 9) and not fabula.quiet_day(:'d'::date + 10));
 select pg_temp.ck('quiet_milk_day: day 11 is still quiet for the milk plan (cold-room tasks started early do not bring the plans back); day 12 is not',
@@ -39,6 +39,19 @@ update fabula.settings set value = '0' where key = 'prod.quiet_before_start';
 select pg_temp.ck('«No» turns both off', not fabula.quiet_day(:'d'::date) and not fabula.quiet_milk_day(:'d'::date));
 update fabula.settings set value = '1' where key = 'prod.quiet_before_start';
 select pg_temp.ck('a null day is never quiet (false, not null)', fabula.quiet_day(null) is false and fabula.quiet_milk_day(null) is false);
+-- a trial week already over does not bring back the milk proposals (production waits for the opening); a running one does
+update fabula.settings set value = (:'d'::date - 30)::text where key = 'trial.start';
+select pg_temp.ck('trial week over 25 days ago: the milk plan waits for the opening, quiet', fabula.milk_start(:'pd'::date) = fabula._setting_date('mkt.store_opening_date')
+  and fabula.quiet_milk_day(:'pd'::date), fabula.milk_start(:'pd'::date)::text);
+update fabula.settings set value = (:'d'::date - 2)::text where key = 'trial.start';
+select pg_temp.ck('trial week running (started 2 days ago, 5 days): the milk plan proposes', not fabula.quiet_milk_day(:'d'::date) and not fabula.quiet_day(:'d'::date));
+update fabula.settings set value = (:'d'::date + 12)::text where key = 'trial.start';
+-- HACCP records alone are not production: a cold-room reading (a tablet test, or readings started early) changes nothing
+insert into fabula.haccp_log (control_point_id, logged_at, measured_value, result, source, operator)
+select id, now() - interval '1 day', 4, 'ok', 'tablet', 'Prova Q' from fabula.haccp_control_points where code = 'CCP-COLD-1' returning id hq \gset
+select pg_temp.ck('a real cold-room reading yesterday: still quiet for the floor and for the milk plan',
+  :'hq' <> '' and fabula.quiet_day(:'d'::date) and fabula.quiet_milk_day(:'pd'::date));
+delete from fabula.haccp_log where id = :'hq';
 select pg_temp.ck('the helpers can be run by logins (not anon); the digest helper only by the database',
   has_function_privilege('authenticated', 'fabula.quiet_day(date)', 'execute') and has_function_privilege('authenticated', 'fabula.quiet_milk_day(date)', 'execute')
   and not has_function_privilege('anon', 'fabula.quiet_day(date)', 'execute') and not has_function_privilege('anon', 'fabula._real_activity(date)', 'execute')
@@ -93,7 +106,18 @@ select pg_temp.ck('…and the automatic plan is made again', (:'pm5'::jsonb ->> 
 delete from fabula.milk_plans where id = (:'pm5'::jsonb ->> 'plan_id')::uuid;
 delete from fabula.approvals where id = (:'pm5'::jsonb ->> 'approval_id')::uuid;
 delete from fabula.milk_intake where milk_lot = 'MQ107-A';
-select pg_temp.ck('a simulated delivery does not count as real', not fabula._real_activity(:'d'::date));
+insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
+values (:'d'::date - 2, '07:00', :'sup', 'MQ107-SIM', 800, true, 4, 'simulation');
+select pg_temp.ck('a simulated delivery does not count as real',
+  (select count(*) from fabula.milk_intake where milk_lot = 'MQ107-SIM') = 1 and not fabula._real_activity(:'d'::date) and fabula.quiet_milk_day(:'pd'::date));
+delete from fabula.milk_intake where milk_lot = 'MQ107-SIM';
+-- a plan proposed by hand from the Console is marked, so the closing of automatic plans never touches it
+select case when extract(isodow from :'d'::date + 8) = 7 then :'d'::date + 9 else :'d'::date + 8 end md \gset
+select fabula.milk_order_again(:'md'::date)::text moa \gset
+select pg_temp.ck('Console «Proponi di nuovo» (milk_order_again): the plan is made on a quiet day and marked «manual»',
+  (select coalesce((payload->>'manual')::boolean, false) from fabula.approvals where id = (:'moa'::jsonb ->> 'approval_id')::uuid), :'moa');
+delete from fabula.milk_plans where approval_id = (:'moa'::jsonb ->> 'approval_id')::uuid;
+delete from fabula.approvals where id = (:'moa'::jsonb ->> 'approval_id')::uuid;
 
 -- ============================== the evening check ==============================
 select fabula.ops_health_check(:'wd'::date)::text oh1 \gset
@@ -139,7 +163,10 @@ select pg_temp.ck('food safety first: real product in stock brings the cold-room
 select fabula._haccp_evening_items(:'d'::date)::text ev1 \gset
 select pg_temp.ck('…and the tablet''s evening list asks for the cold rooms before the tasks start',
   :'ev1' like '%cold:%', :'ev1');
-delete from fabula.stock_moves where lot_number = 'LQ107-S1';
+insert into fabula.stock_moves (moved_at, product_id, lot_number, qty, move_type, reason, source)
+values (now() - interval '20 days', :'moz', null, -80, 'adjustment', 'test v1.07 vendita senza lotto', 'tablet');
+select pg_temp.ck('stock is counted per lot: a sale without a lot does not hide the 60 kg of lot LQ107-S1', fabula._real_activity(:'y'::date));
+delete from fabula.stock_moves where reason in ('test v1.07', 'test v1.07 vendita senza lotto');
 select fabula._haccp_evening_items(:'d'::date)::text ev2 \gset
 select pg_temp.ck('with nothing real, the evening list stays empty before the tasks start (as v1.05)', :'ev2' = '[]', :'ev2');
 
@@ -154,6 +181,13 @@ select fabula.weekly_brief()::text wb2 \gset
 select pg_temp.ck('…with the switch off, the week''s missing checks are counted again',
   (:'wb2'::jsonb #>> '{this_week,compliance,missing_checks}')::int > 0 and not (:'wb2'::jsonb ? 'pre_opening'));
 update fabula.settings set value = '1' where key = 'prod.quiet_before_start';
+-- the first week after the start: this week is counted, the previous one (still quiet) is not compared against phantom misses
+update fabula.settings set value = :'wb1'::jsonb ->> 'week_start' where key = 'prod.tasks_from';
+select fabula.weekly_brief()::text wb3 \gset
+select pg_temp.ck('first week after the start: this week''s missing checks counted, the previous (quiet) week 0, no pre_opening',
+  (:'wb3'::jsonb #>> '{this_week,compliance,missing_checks}')::int > 0 and (:'wb3'::jsonb #>> '{previous_week,compliance,missing_checks}')::int = 0
+  and not (:'wb3'::jsonb ? 'pre_opening'), left(:'wb3', 200));
+update fabula.settings set value = (:'d'::date + 10)::text where key = 'prod.tasks_from';
 
 -- ============================== an expiry is not a decision ==============================
 update fabula.approvals set expires_at = now() - interval '1 minute' where id = (:'pm2'::jsonb ->> 'approval_id')::uuid;
@@ -210,4 +244,4 @@ select pg_temp.ck('setting shopify.sell_at_zero exists as a Sì/No flag, on (the
   (select value = '1' and kind = 'flag' from fabula.settings where key = 'shopify.sell_at_zero'));
 
 -- ============================== the prompt ==============================
-select pg_temp.ck('the milk planning prompt''s new version is expected', (select version from fabula.bot_prompt_versions where agent = 'milk_planning') = '3d2acb5f30');
+select pg_temp.ck('the milk planning prompt''s new version is expected', (select version from fabula.bot_prompt_versions where agent = 'milk_planning') = '581ad88a3f');

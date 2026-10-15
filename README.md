@@ -17,6 +17,32 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 
 Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
 
+## «Prima dell'avvio»: quiet bots before the dairy works (v1.07)
+Found live on 15/10/2026 (project docs `claude/golive-rescore-2026-10-15.md`, `claude/audit-fixes-v107-2026-10-15.md`): every day the
+milk plan proposed 1.200 kg for a dairy with no building (four Telegrams each: decision, reminder, expiry, reminder of the expiry), the
+brief asked for HACCP records nobody could write, the evening check said the tablet was silent, and the stock check asked to stop selling
+at zero stock against the 02/10 decision. Migrations `v107a` (quiet mode) and `v107b` (stock message, prompt version); live apply:
+`tools/go-live/live-apply/2026-10-15_v107_sql-editor.sql` (built by `make_v107_script.py`); tablet sw `perla-v74` (one Console line).
+- **Quiet = before the start AND nothing real:** `fabula.quiet_day(day)` (floor checks, briefs) and `fabula.quiet_milk_day(day)` (the
+  automatic milk plan), both off with `prod.quiet_before_start` = No. Starts: `quiet_until()` = the first of `prod.tasks_from`,
+  `trial.start`, `mkt.store_opening_date`; `milk_start(day)` = the trial week while it is ahead or running (`trial.days`), else the
+  opening (cold-room tasks started early, or a trial week already over, do not bring back daily proposals). `_real_activity(day)`: a
+  non-simulation lot in the last 14 days, milk in the last 7, or a lot of finished product still in stock (per lot). HACCP records
+  alone do not count (on live the only ones, 13/10, are tablet tests).
+- **Milk plan:** `plan_milk()` without a date returns `skipped = pre_opening` (`tasks_start`, `first_plan_day`, `message_it`) after the
+  `plan_exists` check and creates nothing; with a date it plans as before. `bot_fallback_run` and `_why_plan_milk` say the same; the
+  milk planning prompt handles it (version `581ad88a3f`). `milk_order_again` marks its plan `payload.manual`. The migration closes the
+  automatic plans already waiting for a quiet day, without a message (expired «Prima dell'avvio»).
+- **Evening check / briefs / evening list:** `ops_health_check` skips `tablet_silent` and `stock_count_*` on a quiet day;
+  `daily_brief` empties the day's HACCP checks and overdue tasks and adds `pre_opening` (shown in the Console's «Conformità ieri» and in
+  «Perché?»); `weekly_brief` zeroes each week's missing checks only when that week is quiet; `_haccp_evening_items` (v1.05) now stays
+  quiet before the tasks start only when nothing real is going on (product in the cold room brings the evening checks back).
+- **Telegram:** `expire_approvals` clears `escalate_at` on the expiry it enqueues (no «Nessuno se ne occupa» on an expiry, also after
+  the opening). `notify_digest_text`: on Monday (the reader's day), while quiet, «Verso l'apertura» (`_digest_golive`: done / total,
+  «si parte …», the next three items).
+- **Shopify stock:** `shopify.sell_at_zero` (Sì): the message lists the tracked products that stop at zero instead of asking to turn off
+  «Continua a vendere quando esaurito»; the setting is part of the message's fingerprint.
+
 ## «Perché?»: the data behind every bot message (v1.06)
 Spec and notes: project docs `claude/perche-spec-v106-2026-10-15.md` and `claude/audit-fixes-v106-2026-10-15.md`. Migrations `v106a`
 (where the data is kept, how it reaches the message, the number check) and `v106b` (the explanations in Italian, the prompts'
