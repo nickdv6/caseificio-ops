@@ -1,0 +1,10 @@
+{
+  "version": "v1.08",
+  "title_it": "Rilasci automatici: un'approvazione su GitHub al posto dei passi a mano",
+  "order": ["functions", "database"],
+  "force": ["site"],
+  "after_it": [
+    "Apri https://app.bubalina.it ed entra una volta: è la nuova casa dell'app; il vecchio indirizzo Netlify funziona ancora fino a v1.08b"
+  ],
+  "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, honoured only by the release that edits this file (here: the first publication on GitHub Pages). after_it: steps left for people, shown in the Bot feed message."
+}

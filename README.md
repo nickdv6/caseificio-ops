@@ -15,7 +15,38 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 - `sop/` — printable floor procedure sheet, the «Sistema giù: cosa fare» card for partners (v0.96; both updated for v0.97, the daily sheet again for v0.98: commas, impossible yield, and for v0.99: the lot label at the start), and «Bot fermi: cosa fare» (v1.00; rev. 2 in v1.02: the Shopify syncs run in the database).
 - `tools/legacy-patches/` — one-off scripts used to patch the app in v0.25–v0.29 (kept for history, not needed).
 
-Deploy the tablet app by pointing Netlify / Cloudflare Pages at the `fabula-tablet` folder.
+Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
+`fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
+
+## Releases apply themselves after one approval (v1.08)
+Project doc `claude/audit-fixes-v108-2026-10-15.md`; how to use it: `RELEASING.md`. Until v1.07 each release was a list of manual
+steps for Nick (temporary Supabase token and CLI deploy from the Mac, SQL Editor paste, git merge and push, Netlify deploy at 15 of
+the free plan's 300 monthly credits, the whole site paused at zero as on 14/10).
+- **Workflow** `.github/workflows/release.yml`, after CI passes on `main` (pushes of this repo only): job `plan` (no secrets) lists what
+  changed since the git tag `live` (`tools/release/baseline.txt` = 298e2f4, v1.07, before the first run) and rehearses the database part
+  on a scratch Postgres built at the live commit (`replay.sh` now takes `MIGRATIONS_DIR`); nothing to deploy → nobody is asked. Job
+  `apply` waits for the approval of the environment `live` (Nick, `main` only; secret `SUPABASE_ACCESS_TOKEN` on two steps), then
+  `tools/release/release.py` deploys the changed server functions (`supabase@2.118.0 functions deploy --use-api`, `verify_jwt` from
+  `config.toml`, checked on Supabase) and the new migrations (one transaction through the Management API, the SQL Editor scripts'
+  guard; the live history is read before anything changes: a live version GitHub lacks stops the release), in `release.json`'s order;
+  publishes `fabula-tablet/` on GitHub Pages (app.bubalina.it) and checks `sw.js`; records the result (`fabula.release_record`); moves
+  the tag `live` only when everything worked.
+- **`tools/release/release.json`** per version: `version`, `title_it`, `order` (functions/database), `after_it` (steps for people,
+  in the message), `force` (parts to deploy without a git change, only in the release that writes it: v1.08 = the first Pages publish).
+  `release.py editor-script --live-last <v>` still writes a SQL Editor script when the pipeline is not available.
+- **Migration `v108a`:** `fabula.releases` (read: Sistema «vede»); `release_record(jsonb)` (database role only) writes the row and a
+  message in the Bot feed «Rilasci» (agent `rilascio`, area sistema, opens Panoramica): «Rilascio v… fatto» (info; warn with «Da fare»
+  for `after_it`, bot prompts to update, an app that still answers with the old version) or «Rilascio v… fermato al passo …» (alert →
+  Telegram `infra`, with the error, what already changed and the run). Panoramica → Sistema «Rilasci automatici» (`infra_checks`
+  key `release`). The drift texts follow the pipeline: a migration on GitHub but not live = a release waiting for the approval; an app
+  not yet published = approve the release; a migration live but not on GitHub = applied outside the release, its file goes on main.
+- **Function `invite-user`:** the invite and WhatsApp links use `infra.site_url` from the database (the same address as every other
+  link), so moving the app is one setting (v1.08b).
+- Tests: `prod-test/test_v108_release.sql` 28/28; `tools/release/test_release.py` (50 checks, in CI): plans on small git repos, the
+  script on a scratch history (second run refused, an error leaves nothing, a changed history stops it), the rehearsal, deploy and
+  record against a fake Management API and CLI (order, `--no-verify-jwt`, a failing function or migration, a live version GitHub lacks,
+  a wrong or missing token, a superseded commit, the site check). `test_v105_bots_ops.sql` and `infra-test/test_infra.sql` updated for
+  the new texts.
 
 ## «Prima dell'avvio»: quiet bots before the dairy works (v1.07)
 Found live on 15/10/2026 (project docs `claude/golive-rescore-2026-10-15.md`, `claude/audit-fixes-v107-2026-10-15.md`): every day the

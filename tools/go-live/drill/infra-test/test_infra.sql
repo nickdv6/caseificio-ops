@@ -63,8 +63,9 @@ select fabula.infra_collect();
 do $$ declare c jsonb := fabula.infra_checks(); t fabula.infra_status; begin
   raise notice 'checks: %', jsonb_pretty(c);
   if (c->'code_pushed'->>'done')::boolean then raise exception 'FAIL code_pushed should be red'; end if;
-  if (c->'code_pushed'->>'detail') not like '1 migrazione applicata sul database ma non su GitHub: 20991231000000. Fai «git push» dal Mac' then raise exception 'FAIL code_pushed detail %', c->'code_pushed'; end if;
-  if (c->'app_deployed'->>'done')::boolean or (c->'app_deployed'->>'detail') <> 'Sito perla-v38, GitHub perla-v39: Netlify non ha ancora pubblicato (guarda il deploy su Netlify)' then raise exception 'FAIL app_deployed %', c->'app_deployed'; end if;
+  -- v1.08: the release pipeline: a migration applied outside it goes on GitHub main (was «Fai git push dal Mac»)
+  if (c->'code_pushed'->>'detail') not like '1 migrazione applicata sul database ma non su GitHub: 20991231000000. Applicate fuori dal rilascio automatico: il file va salvato su GitHub main' then raise exception 'FAIL code_pushed detail %', c->'code_pushed'; end if;
+  if (c->'app_deployed'->>'done')::boolean or (c->'app_deployed'->>'detail') <> 'Sito perla-v38, GitHub perla-v39: il rilascio non ha ancora pubblicato l''app (approvalo su GitHub: Actions → Release)' then raise exception 'FAIL app_deployed %', c->'app_deployed'; end if;
   if (c->'uptime'->>'done')::boolean then raise exception 'FAIL uptime should be red'; end if;
   select * into t from fabula.infra_status where key = 'github_tree';
   if t.ok is not null or jsonb_array_length(t.data->'versions') < 90 then raise exception 'FAIL rate limit should keep the list: %', t; end if;

@@ -112,16 +112,17 @@ insert into fabula.infra_status (key, ok, detail, data, checked_at, last_ok_at)
 select 'github_tree', true, 'x', jsonb_build_object('versions', jsonb_agg(version) || '["29990101000000"]'::jsonb), now(), now() from supabase_migrations.schema_migrations
 on conflict (key) do update set data = excluded.data, ok = true, checked_at = now(), last_ok_at = now();
 select fabula.infra_checks()::text ic1 \gset
-select pg_temp.ck('E-27 a migration on GitHub but not applied live: «applica lo script SQL Editor», no push',
-  :'ic1'::jsonb #>> '{repo_sync,detail}' = '1 su GitHub ma non applicate sul database (29990101000000): applica lo script SQL Editor della versione (tools/go-live/live-apply); un push non serve'
+-- v1.08: the release pipeline applies migrations; the texts say to approve the release (was «applica lo script SQL Editor» / «git push» dal Mac)
+select pg_temp.ck('E-27 a migration on GitHub but not applied live: the release waits for the approval on GitHub, no push',
+  :'ic1'::jsonb #>> '{repo_sync,detail}' = '1 su GitHub ma non applicate sul database (29990101000000): il rilascio aspetta l''approvazione su GitHub (Actions → Release → «Review deployments»)'
   and (:'ic1'::jsonb #>> '{code_pushed,done}')::boolean, :'ic1'::jsonb #>> '{repo_sync,detail}');
 update fabula.infra_status set data = jsonb_build_object('versions', (select jsonb_agg(version) from supabase_migrations.schema_migrations
                                                                        where version < (select max(version) from supabase_migrations.schema_migrations)))
  where key = 'github_tree';
 select fabula.infra_checks()::text ic2 \gset
-select pg_temp.ck('E-27 a migration live but not on GitHub: «git push» dal Mac',
-  :'ic2'::jsonb #>> '{code_pushed,detail}' like '1 migrazione applicata sul database ma non su GitHub: % Fai «git push» dal Mac'
-  and :'ic2'::jsonb #>> '{repo_sync,detail}' = '1 sul database ma non su GitHub: fai «git push» dal Mac', :'ic2'::jsonb #>> '{code_pushed,detail}');
+select pg_temp.ck('E-27 a migration live but not on GitHub: applied outside the release, its file goes on main',
+  :'ic2'::jsonb #>> '{code_pushed,detail}' like '1 migrazione applicata sul database ma non su GitHub: %. Applicate fuori dal rilascio automatico: il file va salvato su GitHub main'
+  and :'ic2'::jsonb #>> '{repo_sync,detail}' = '1 sul database ma non su GitHub: il file va salvato su GitHub main', :'ic2'::jsonb #>> '{code_pushed,detail}');
 insert into fabula.infra_status (key, ok, detail, checked_at, last_ok_at) values
   ('site', false, 'timeout', now(), now() - interval '2 hours'), ('fn_farm_order', true, '403', now(), now()), ('fn_backup_export', true, '403', now(), now())
 on conflict (key) do update set ok = excluded.ok, detail = excluded.detail, checked_at = excluded.checked_at;
@@ -133,11 +134,11 @@ select pg_temp.ck('E-14 every system check detail is Italian (down item named, f
   and :'ic3' !~ '(Waiting|from the Mac|not on GitHub|has not deployed|Last drill|No drill|answered at|not answering|Not reporting|Silent since|No off-site)', :'ic3');
 select pg_temp.err($q$insert into fabula.notices (key, severity, title_it, items, expires_at) values ('lot_guard:v105', 'warn', 'x', '[{"code":"a"},{"lot":"L9"},{"code":"b","label_it":"Già scritto"}]', now() + interval '1 day')$q$) ni \gset
 insert into fabula.notices (key, severity, title_it, items, expires_at) values ('infra_drift', 'warn', 'GitHub, sito del tablet e database non allineati da più di 6 ore: cosa fare è scritto qui sotto',
-  '[{"code":"repo_sync","label_it":"1 su GitHub ma non applicate sul database (29990101000000): applica lo script SQL Editor della versione (tools/go-live/live-apply); un push non serve"}]', now() + interval '2 hours')
+  '[{"code":"repo_sync","label_it":"1 su GitHub ma non applicate sul database (29990101000000): il rilascio aspetta l''approvazione su GitHub (Actions → Release → «Review deployments»)"}]', now() + interval '2 hours')
 on conflict (key) do update set items = excluded.items, title_it = excluded.title_it, resolved_at = null, expires_at = excluded.expires_at;
 select body drift_body from fabula.bot_messages where notice_key = 'infra_drift' order by id desc limit 1 \gset
 select pg_temp.ck('E-27 the drift notice''s copy in the bots'' feed says the same way to fix it (no «git push» when the migration is not applied live)',
-  :'drift_body' like '%applica lo script SQL Editor della versione%' and :'drift_body' not like '%git push%', :'drift_body');
+  :'drift_body' like '%il rilascio aspetta l''approvazione su GitHub%' and :'drift_body' not like '%git push%', :'drift_body');
 select pg_temp.ck('E-14 a notice item without a label gets one (no raw data on a screen)', :'ni' = ''
   and (select items from fabula.notices where key = 'lot_guard:v105') = '[{"code":"a","label_it":"Dettaglio non disponibile"},{"lot":"L9","label_it":"Lotto L9"},{"code":"b","label_it":"Già scritto"}]'::jsonb,
   (select items::text from fabula.notices where key = 'lot_guard:v105'));
@@ -157,8 +158,8 @@ select fabula.system_checks()::text sc_uff \gset
 select pg_temp.as_user(:'mkt');
 select pg_temp.err('select fabula.system_checks()') sc_mkt \gset
 select set_config('request.jwt.claims', '', false);
-select pg_temp.ck('E-28 Configurazione → Panoramica → Sistema: 11 checks in Italian (v1.06: «Numeri dei messaggi»), the missing job and the bots'' instructions among them',
-  jsonb_array_length(:'sc_uff'::jsonb) = 11 and :'sc_uff'::jsonb @> '[{"key":"cron_jobs","label_it":"Attività programmate del database","done":false},{"key":"bot_prompts"},{"key":"vault_secret"}]'::jsonb,
+select pg_temp.ck('E-28 Configurazione → Panoramica → Sistema: 12 checks in Italian (v1.06: «Numeri dei messaggi», v1.08: «Rilasci automatici»), the missing job and the bots'' instructions among them',
+  jsonb_array_length(:'sc_uff'::jsonb) = 12 and :'sc_uff'::jsonb @> '[{"key":"cron_jobs","label_it":"Attività programmate del database","done":false},{"key":"bot_prompts"},{"key":"vault_secret"}]'::jsonb,
   :'sc_uff');
 select pg_temp.ck('E-28 …only with Sistema', :'sc_mkt' = 'Il tuo profilo non vede lo stato del sistema', :'sc_mkt');
 update cron.job set active = true where jobname = 'fabula_recon';

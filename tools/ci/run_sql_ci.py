@@ -10,7 +10,7 @@ Postgres 16, as root (the drill scripts use `su postgres`):
 2. Security: the same scan as the live board (fabula.security_findings()); a finding that is not in
    fabula.security_accepted fails the run, so a new definer function or view without a reason never reaches main.
 3. Every SQL suite (prod-test, infra-test) on its own copy of the replay, plus the CSV reader
-   (node) and the restore guard (python). tablet-test/test_save_ops.sql prints values to read by eye (no PASS/FAIL), so
+   (node), the restore guard (python) and the release pipeline (tools/release/test_release.py, v1.08). tablet-test/test_save_ops.sql prints values to read by eye (no PASS/FAIL), so
    it stays out; the browser suites cover the same saves. A suite fails on any «FAIL …» line, on an unexpected ERROR, or when it prints
    no PASS at all.
 4. tools/ci/known_failures.txt lists the checks that are known to fail, each with its reason. They are reported but do
@@ -203,6 +203,14 @@ def main():
     rows.append(('restore_guard_test.py', 'ok' if ok else 'FAILED', f'{p} pass' + (f', {len(f)} fail' if f else '')))
     if not ok:
         unexpected += [f'restore_guard_test.py: {n}' for n in f] or ['restore_guard_test.py: ' + (r.stderr or r.stdout)[-200:]]
+
+    # v1.08: the release pipeline (tools/release/release.py) against git repos made for the test, a fake Supabase API and CLI
+    r = sh([sys.executable, os.path.join(REPO, 'tools', 'release', 'test_release.py'), TEMPLATE])
+    p, f, _ = parse(r.stdout)
+    ok = 'FAILURES: none' in r.stdout
+    rows.append(('release/test_release.py', 'ok' if ok else 'FAILED', f'{p} pass' + (f', {len(f)} fail' if f else '')))
+    if not ok:
+        unexpected += [f'release/test_release.py: {n}' for n in f] or ['release/test_release.py: ' + (r.stderr or r.stdout)[-300:]]
 
     stale = [k for k in known if not k['seen']]
     return finish(rows, unexpected, notes, stale, t0, known)

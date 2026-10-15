@@ -1,0 +1,130 @@
+# v1.08: the release pipeline (RELEASING.md). Merging into main is the release: when CI is green on main, this workflow
+#   1. plan      (no secrets) lists what changes since the commit that is live (git tag «live»), and rehearses the database part:
+#                a scratch database built at the live commit gets the release script in one transaction. Nothing to deploy (docs,
+#                tests, tools only) → it stops here, nobody is asked anything. A STOP or a failed rehearsal → red, nothing asked.
+#   2. apply     waits for Nick's approval of the «live» environment (GitHub app: «Review deployments» → Approve), then deploys the
+#                server functions and applies the migrations (release.json says which first), publishes fabula-tablet on GitHub
+#                Pages (app.bubalina.it), checks the app answers with the new version, writes the result in the database (Bot feed
+#                «Rilasci», Telegram if it stopped) and moves the tag «live» to the released commit, only when everything worked.
+# Secrets: SUPABASE_ACCESS_TOKEN, only in the «live» environment and only on the two steps that call Supabase. Runs only for pushes
+# to main of this repository (never for pull requests or forks). Actions pinned to a commit (the repo is public).
+name: Release
+run-name: "Release · ${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title || format('manual {0}', inputs.sha || 'main') }}"
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit to release (empty: main as it is now)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  plan:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      anything: ${{ steps.plan.outputs.anything }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The commit, on main
+        id: sha
+        run: |
+          sha=$(git rev-parse --verify 'HEAD^{commit}')
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: What changes since the live commit
+        id: plan
+        run: python3 tools/release/release.py plan --sha "${{ steps.sha.outputs.sha }}"
+      - name: Postgres 16 for the rehearsal
+        if: steps.plan.outputs.anything == 'true' && steps.plan.outputs.database == 'true'
+        run: |
+          if ! pg_lsclusters 2>/dev/null | grep -q '^16 '; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-16
+          fi
+          sudo pg_ctlcluster 16 main start || true
+      - name: Rehearsal of the database part on a copy of the live commit
+        if: steps.plan.outputs.anything == 'true' && steps.plan.outputs.database == 'true'
+        run: sudo -E python3 tools/release/release.py rehearse --sha "${{ steps.sha.outputs.sha }}"
+
+  apply:
+    needs: plan
+    if: needs.plan.outputs.anything == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: release-apply
+      cancel-in-progress: false
+    environment:
+      name: live
+      url: ${{ steps.pages.outputs.page_url }}
+    permissions:
+      contents: write      # the tag «live»
+      pages: write         # GitHub Pages
+      id-token: write      # GitHub Pages
+    env:
+      SHA: ${{ needs.plan.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Still the newest release?
+        id: check
+        run: |
+          git fetch --force origin 'refs/tags/live:refs/tags/live' 2>/dev/null || true
+          python3 tools/release/release.py check --sha "$SHA"
+      - name: Server functions and database
+        id: deploy
+        if: steps.check.outputs.go == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: python3 tools/release/release.py deploy --sha "$SHA" --out "$RUNNER_TEMP/release-result.json"
+      - name: Package the app
+        id: pack
+        if: steps.deploy.outcome == 'success' && steps.deploy.outputs.site == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: fabula-tablet
+      - name: Publish the app on GitHub Pages
+        id: pages
+        if: steps.pack.outcome == 'success'
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: The app answers with the new version
+        if: steps.pages.outcome == 'success'
+        env:
+          PAGE_URL: ${{ steps.pages.outputs.page_url }}
+        run: python3 tools/release/release.py site-check --url "$PAGE_URL" --out "$RUNNER_TEMP/release-site.json"
+      - name: Record the result in the database
+        if: always() && steps.check.outputs.go == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SITE_OUTCOME: ${{ steps.pages.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        run: >-
+          python3 tools/release/release.py record --sha "$SHA" --result "$RUNNER_TEMP/release-result.json"
+          --site "$RUNNER_TEMP/release-site.json" --site-outcome "$SITE_OUTCOME" --job-status "$JOB_STATUS" --run-url "$RUN_URL"
+      - name: Move the tag «live» to this commit
+        if: success() && steps.check.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          git tag -f live "$SHA"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" refs/tags/live

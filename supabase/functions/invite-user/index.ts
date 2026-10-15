@@ -7,10 +7,21 @@
 //        password is saved) for the titolare to send by WhatsApp. Not subject to the Supabase e-mail rate limit.
 // POST { action: "deactivate", staff_id } / { action: "reactivate", staff_id } → staff.active false/true and bans/unbans the login.
 // Redirect: the e-mail link opens benvenuto.html on the site (Supabase → Authentication → URL configuration must allow it).
+// v1.08: the site's address comes from the database (setting infra.site_url, the same one every other link uses), so moving the app
+// (v1.08b: app.bubalina.it) is one setting; SITE_URL / the old Netlify address are only fallbacks.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const SITE = Deno.env.get("SITE_URL") ?? "https://flourishing-swan-6729c4.netlify.app";
+const SITE_FALLBACK = Deno.env.get("SITE_URL") ?? "https://flourishing-swan-6729c4.netlify.app";
+// deno-lint-ignore no-explicit-any
+async function siteUrl(admin: any): Promise<string> {
+  try {
+    const { data } = await admin.from("settings").select("value").eq("key", "infra.site_url").maybeSingle();
+    const v = String(data?.value ?? "").trim().replace(/\/+$/, "");
+    if (/^https:\/\/[a-z0-9.-]+(:\d+)?(\/[A-Za-z0-9._~\/-]*)?$/i.test(v)) return v;
+  } catch { /* the fallback below */ }
+  return SITE_FALLBACK.replace(/\/+$/, "");
+}
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -35,6 +46,7 @@ Deno.serve(async (req) => {
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch { /* empty */ }
   const action = String(body.action ?? "");
+  const SITE = await siteUrl(admin);
   const redirectTo = `${SITE}/benvenuto.html`;
 
   const findAuthUser = async (email: string) => {

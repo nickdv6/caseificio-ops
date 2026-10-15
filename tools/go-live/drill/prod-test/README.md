@@ -257,3 +257,12 @@ New York readers, «domani», not on Tuesday, not after the start, not for a pro
 `shopify.sell_at_zero`; the prompt version. Run on a fresh replay. 15/10/2026: 53/53 PASS on a fresh replay and on the copy built by
 the SQL Editor script. Updated on purpose: `test_v105_bots_ops.sql` E-31 (a real lot yesterday now brings today's cold rooms back before
 the start), `test_v106_perche.sql` and `infra-test/test_bot_fallback.sql` turn the quiet mode off (they test the dairy at work).
+
+`test_v108_release.sql` (v1.08, release pipeline, database side) — before any release «Rilasci automatici» is not green; a release
+that went through (row, «info» message with what reached production, not on Telegram, area sistema, opens Panoramica; Sistema green
+with date and parts); with steps for people («warn», counted in the title: `after_it`, the bots by name, an app still on the old
+version); stopped («alert» naming the step, the error, what already changed, the run link, Telegram `infra`; Sistema red); stopped
+before anything changed; no version → short commit; a non-GitHub link dropped; a wrong commit refused; titles ≤ 70 characters; the
+drift texts (approve the release, no SQL Editor, no «git push»); who sees what (no login can record, the owner reads, a profile without
+Sistema and anon do not); Sistema and «Perché?» labels; no new security finding. The pipeline itself (git, the Supabase API and CLI)
+is `tools/release/test_release.py`, also run by `tools/ci/run_sql_ci.py`.
