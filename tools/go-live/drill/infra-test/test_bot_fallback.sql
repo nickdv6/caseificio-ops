@@ -3,6 +3,8 @@
 --   su postgres -c "psql -d fb_test -f tools/go-live/drill/infra-test/test_bot_fallback.sql" | grep -E "PASS|FAIL"
 -- Drives fabula.bot_fallback() with fixed clock times on Monday 12/10/2026 (Rome) and checks what it does.
 \set ON_ERROR_STOP 0
+-- v1.07: these checks are about the dairy at work; the replay's opening is in 2027, so «Silenzio prima dell'avvio» is turned off
+update fabula.settings set value = '0' where key = 'prod.quiet_before_start';
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
 

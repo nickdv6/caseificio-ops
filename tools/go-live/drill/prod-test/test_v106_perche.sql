@@ -2,6 +2,8 @@
 --   tools/go-live/drill/infra-test/replay.sh a_test
 --   su postgres -c "psql -d a_test -f tools/go-live/drill/prod-test/test_v106_perche.sql" | grep -E "PASS|FAIL"
 \set ON_ERROR_STOP 0
+-- v1.07: these checks are about the dairy at work; the replay's opening is in 2027, so «Silenzio prima dell'avvio» is turned off
+update fabula.settings set value = '0' where key = 'prod.quiet_before_start';
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
 create or replace function pg_temp.err(p_sql text) returns text language plpgsql as
