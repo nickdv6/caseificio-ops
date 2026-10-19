@@ -55,7 +55,7 @@ the free plan's 300 monthly credits, the whole site paused at zero as on 14/10).
   yet published = approve the release; a migration live but not on GitHub = applied outside the release, its file goes on main.
 - **Function `invite-user`:** the invite and WhatsApp links use `infra.site_url` from the database (the same address as every other
   link), so moving the app is one setting (v1.08b).
-- Tests: `prod-test/test_v108_release.sql` 42/42; `tools/release/test_release.py` (106 checks, in CI): plans on small git repos (also
+- Tests: `prod-test/test_v108_release.sql` 42/42; `tools/release/test_release.py` (116 checks, in CI): plans on small git repos (also
   `_shared` and root files, `verify_jwt`, `force` across releases, superseded/diverged, removed or badly named migrations), the lint
   (14 ways to end the transaction, psql-only syntax, E-strings, `begin atomic`, no false STOP on the real migrations), the script on a scratch history (second run refused, an error leaves nothing, a changed history
   stops it, the marker, `search_path` per file), the rehearsal, deploy and record against a fake Management API and CLI (order,

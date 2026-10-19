@@ -180,7 +180,9 @@ def test_plan():
         check(f'lint: psql-only syntax or a hidden commit «{bad[:34]}» is refused', any(w.startswith('STOP') for w in R.lint_migration(bad, 'v')),
               R.lint_migration(bad, 'v'))
     for good in ("select 'a'::text, x::int from t;", 'select (array[1,2,3])[1:2];', "select E'it\\'s', e'a\\\\';\nselect 1;",
-                 "select ':nope' as \"a:b\";", 'create function f() returns int language sql\nbegin atomic\n  select 1;\n  select 2;\nend;\nselect 3;'):
+                 "select ':nope' as \"a:b\";", 'create function f() returns int language sql\nbegin atomic\n  select 1;\n  select 2;\nend;\nselect 3;',
+                 'create function f(x int) returns int language sql begin atomic select case when x > 0 then 1 else 0 end; end;\nselect 1;',
+                 'select (array[1,2,3])[lo :hi] from t;'):
         check(f'lint: fine «{good[:34]}»', not R.stops({'warnings': R.lint_migration(good, 'v')}), R.lint_migration(good, 'v'))
     real = [f for f in sorted(os.listdir(os.path.join(REAL, 'supabase/migrations'))) if f >= '20261013' and f.endswith('.sql')]
     noisy = [f for f in real if R.stops({'warnings': R.lint_migration(open(os.path.join(REAL, 'supabase/migrations', f), encoding='utf-8').read(), f)})]
@@ -208,6 +210,43 @@ def test_plan():
     check('plan (live history): a new file older than the live history is a STOP before approval',
           any('più vecchia' in w for w in R.stops(p)) and any('GitHub main non ha' in w for w in R.stops(p)), p['warnings'])
     shutil.rmtree(g.dir, ignore_errors=True)
+
+
+# ============================================================== 1b. settle() after a lost answer
+class FakeSb:
+    def __init__(self, counts):
+        self.counts, self.queries = list(counts), []
+
+    def sql(self, q, timeout=180):
+        self.queries.append(q)
+        if 'pg_stat_activity' in q:
+            n = self.counts.pop(0) if self.counts else 0
+            if n is None:
+                raise R.Stop('Supabase HTTP 503')
+            return [{'n': n}]
+        return [{'version': '1'}]
+
+    def live_versions(self):
+        return ['1']
+
+
+def test_settle():
+    R.POLL = (0.01, 2)
+    sb = FakeSb([1, 1, 0, 0])
+    got = R.settle(sb, 'abc-1-ff', 'x')
+    act = [q for q in sb.queries if 'pg_stat_activity' in q]
+    check('settle: waits while the tagged script runs, returns the history after two «not running» in a row',
+          got == {'1'} and len(act) == 4 and all("state = 'active'" in q and '-- release-script abc-1-ff ' in q for q in act), len(act))
+    sb = FakeSb([0, 1, 0, None, 0, 0])
+    R.settle(sb, 'abc-1-ff', 'x')
+    check('settle: a single «not running», or one between errors, is not enough',
+          len([q for q in sb.queries if 'pg_stat_activity' in q]) == 6)
+    R.POLL = (0.01, 0.1)
+    try:
+        R.settle(FakeSb([1] * 1000), 'abc-1-ff', 'x')
+        check('settle: still running at the deadline → Unknown («da verificare»)', False)
+    except R.Unknown as e:
+        check('settle: still running at the deadline → Unknown («da verificare»)', 'da verificare' in str(e), str(e))
 
 
 # ============================================================== 2. the script on a scratch history
@@ -451,7 +490,7 @@ def test_deploy_record():
     clilog = tempfile.mktemp(prefix='fakecli-', dir='/tmp')
     cli = os.path.join(tempfile.mkdtemp(prefix='fakecli-'), 'supabase')
     open(cli, 'w').write('#!/bin/bash\necho "$@" >> ' + clilog + '\n'
-                         'for a in "$@"; do [ "$a" = broken ] && { echo "bundle failed" >&2; exit 1; }; done\n'
+                         'for a in "$@"; do [ "$a" = broken ] && { echo "bundle failed" >&2; exit 1; }; [ "$a" = slowfn ] && sleep 3; done\n'
                          '[ -n "$SUPABASE_ACCESS_TOKEN" ] || { echo "no token" >&2; exit 1; }\necho deployed\n')
     os.chmod(cli, 0o755)
     R.CLI = cli
@@ -546,7 +585,24 @@ def test_deploy_record():
     rc = R.main(['deploy', '--sha', c5, '--out', out])
     res = json.load(open(out))
     check('deploy: a function Supabase still shows as old is a failure', rc == 2 and 'versione nuova' in (res['steps'].get('functions') or {}).get('error', ''), res['steps'])
+    check('deploy: …and it is «da verificare» (the CLI said deployed)', (res['steps'].get('functions') or {}).get('check') == ['alpha'], res['steps'])
     FakeApi.stale_function = False
+    g.write('supabase/functions/slowfn/index.ts', 'export {}\n')
+    c5b = g.commit('slow function')
+    R.CLI_TIMEOUT = 1
+    rc = R.main(['deploy', '--sha', c5b, '--live', c5, '--out', out])
+    res = json.load(open(out))
+    R.CLI_TIMEOUT = 600
+    fs = res['steps'].get('functions') or {}
+    check('deploy: a CLI that does not finish → stopped, that function «da verificare», no «Errore imprevisto»',
+          rc == 2 and fs.get('status') == 'failed' and fs.get('check') == ['slowfn'] and 'non ha finito' in fs.get('error', '')
+          and 'imprevisto' not in res.get('error', ''), res['steps'])
+    R.main(['record', '--sha', c5b, '--result', out, '--site-outcome', 'skipped', '--job-status', 'failure'])
+    body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
+    check('record: «Da verificare: funzioni del server: slowfn (forse pubblicate)»',
+          'Da verificare: funzioni del server: slowfn (forse pubblicate)' in body and 'Nessuna modifica' not in body, body)
+    g.rm('supabase/functions/slowfn/index.ts')
+    g.commit('slow function gone')
 
     os.environ['SUPABASE_ACCESS_TOKEN'] = 'wrong'
     rc = R.main(['deploy', '--sha', c5, '--out', out])
@@ -625,10 +681,21 @@ def test_deploy_record():
     R.main(['record', '--sha', c7, '--result', out, '--site-outcome', 'skipped', '--job-status', 'failure'])
     body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
     check('record: «Da verificare: database», not «Nessuna modifica»', 'Da verificare: database' in body and 'Nessuna modifica' not in body, body)
-    R.main(['record', '--sha', c7, '--result', '/nonexistent.json', '--site-outcome', 'cancelled', '--job-status', 'cancelled'])
+    half = tempfile.mktemp(suffix='.json', dir='/tmp')
+    json.dump({'started': True, 'steps': {'functions': {'status': 'ok', 'names': ['alpha']}, 'database': {'status': 'running'}}}, open(half, 'w'))
+    R.main(['record', '--sha', c7, '--result', half, '--site-outcome', 'skipped', '--job-status', 'cancelled'])
     body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
-    check('record: a run cancelled before writing its result → «Da verificare: il run si è interrotto…»',
+    check('record: a run cancelled during the database step → functions live, «Da verificare: database»',
+          'Già in produzione: funzioni del server: alpha' in body and 'Da verificare: database' in body and 'Nessuna modifica' not in body, body)
+    json.dump({'started': True, 'steps': {}}, open(half, 'w'))
+    R.main(['record', '--sha', c7, '--result', half, '--site-outcome', 'cancelled', '--job-status', 'cancelled'])
+    body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
+    check('record: a run cancelled right after it started → «Da verificare: il run si è interrotto…»',
           'il run si è interrotto' in body and 'Nessuna modifica' not in body, body)
+    R.main(['record', '--sha', c7, '--result', '/nonexistent.json', '--site-outcome', 'skipped', '--job-status', 'failure'])
+    body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
+    check('record: stopped before deploy started (e.g. the CLI download) → «Nessuna modifica», nothing to check',
+          'Nessuna modifica è arrivata in produzione' in body and 'Da verificare' not in body, body)
 
     # a result that cannot be written (the token, Supabase not answering): exit 2 and a note for the «blocked» step
     rt0 = tempfile.mkdtemp(dir='/tmp')
@@ -683,7 +750,7 @@ def test_deploy_record():
 if __name__ == '__main__':
     if os.geteuid() != 0:
         sys.exit('run as root (sudo): the tests use su postgres')
-    for t in (test_plan, test_script, test_rehearsal, test_deploy_record):
+    for t in (test_plan, test_settle, test_script, test_rehearsal, test_deploy_record):
         try:
             t()
         except Exception as e:      # noqa: BLE001

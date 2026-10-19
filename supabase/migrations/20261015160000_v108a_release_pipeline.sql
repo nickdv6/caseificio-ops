@@ -95,6 +95,11 @@ begin
                                    when 'site' then 'app del tablet (pubblicazione interrotta)'
                                    when 'functions' then 'funzioni del server' else k end order by k), '{}')
     into v_check from jsonb_each(s) e(k, v) where v->>'status' = 'unknown';
+  if jsonb_typeof(s #> '{functions,check}') = 'array' and jsonb_array_length(s #> '{functions,check}') > 0 then
+    -- the deploy timed out, or went through but Supabase did not confirm it: perhaps live
+    v_check := v_check || ('funzioni del server: ' || (select string_agg(e, ', ') from jsonb_array_elements_text(s #> '{functions,check}') e)
+                           || ' (forse pubblicate)');
+  end if;
   if v_uncertain then v_check := v_check || 'il run si è interrotto prima di scrivere cosa ha fatto: guarda il run su GitHub'::text; end if;
 
   if v_ok then

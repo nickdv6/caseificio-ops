@@ -48,6 +48,7 @@ MIG = re.compile(r'^supabase/migrations/(\d{14})_([A-Za-z0-9_.-]+)\.sql$')
 FN = re.compile(r'^supabase/functions/([A-Za-z0-9_-]+)/(.+)$')
 UA = 'caseificio-ops-release/1.08'
 SQL_TIMEOUT = 600          # the release script's own wait for an answer
+CLI_TIMEOUT = 600          # one function's deploy
 POLL = (15, 900)           # a lost answer: every 15 s, for up to 15 minutes, until the script is no longer running; then the history
 MARK = 'release_one_tx'    # the temporary table made after «begin» and checked before the history rows
 
@@ -295,6 +296,20 @@ def sql_skeleton(sql):
     return ''.join(out)
 
 
+def _psql_var(skel):
+    """A psql variable «:name» outside [ ] (inside, «x[lo :hi]» is an array slice); «::» is a cast."""
+    depth = 0
+    for i, c in enumerate(skel):
+        if c == '[':
+            depth += 1
+        elif c == ']':
+            depth = max(0, depth - 1)
+        elif c == ':' and depth == 0 and (i == 0 or skel[i - 1] != ':') and i + 1 < len(skel) and (skel[i + 1].isalpha() or skel[i + 1] == '_') \
+                and not (i > 0 and (skel[i - 1].isalnum() or skel[i - 1] == '_')):
+            return True
+    return False
+
+
 def lint_migration(sql, version):
     """Statements that break «one transaction for the whole release», and psql-only syntax (the rehearsal runs the script with psql,
     the release sends it as one query through the API), stop the release before anyone approves it (the marker in the script is the
@@ -310,8 +325,9 @@ def lint_migration(sql, version):
         if atomic:
             atomic = words != ['end']
             continue
-        if re.search(r'\bbegin\s+atomic\b', low):
-            atomic = not re.search(r'\bbegin\s+atomic\b.*\bend$', low, re.S)     # a body without «;» ends in the same piece
+        if (m := re.search(r'\bbegin\s+atomic\b', low)):
+            body = low[m.end():]                    # a body without «;» ends in this piece: one «end» more than its «case»s
+            atomic = len(re.findall(r'\bend\b', body)) <= len(re.findall(r'\bcase\b', body))
             continue
         if words[0] in TX_FIRST or any(re.match(r'\s*' + pat + r'\b', low) for pat in NOT_IN_TX):
             out.append(f'STOP {version}: «{" ".join(words[:3])}…» non può stare nell\'unica transazione del rilascio: toglilo '
@@ -319,7 +335,7 @@ def lint_migration(sql, version):
             break
     if '\\' in skel:
         out.append(f'STOP {version}: un comando di psql (con la barra rovesciata) non passa dall\'API di Supabase')
-    if '\x00psqlvar' in skel or re.search(r'(?<![:\w]):[A-Za-z_]', skel):
+    if '\x00psqlvar' in skel or _psql_var(skel):
         out.append(f'STOP {version}: una variabile di psql (:nome) non passa dall\'API di Supabase')
     if re.search(r'\bconcurrently\b', skel, re.I):
         out.append(f'STOP {version}: «concurrently» non può stare in una transazione')
@@ -508,22 +524,29 @@ def script_tag(sha):
 
 
 def settle(sb, tag, err):
-    """After a lost answer: wait while the script (found by its tag) is still running, then return the live history. If that cannot
-    be established within POLL[1] seconds → Unknown («da verificare»)."""
+    """After a lost answer: wait while the script (found by its tag) is still running, then return the live history. «Running» is
+    state «active» only: a script that failed inside its own «begin» can leave its session «idle in transaction (aborted)», and that
+    can never commit. The first look waits one interval (a quick 502 may come before the script reaches Postgres) and «not running»
+    must be seen twice in a row. If that cannot be established within POLL[1] seconds → Unknown («da verificare»)."""
     t_end = time.time() + POLL[1]
+    quiet = 0
     while True:
+        time.sleep(POLL[0])
         try:
-            rows = sb.sql("select count(*)::int as n from pg_stat_activity where pid <> pg_backend_pid() and state <> 'idle' "
+            rows = sb.sql("select count(*)::int as n from pg_stat_activity where pid <> pg_backend_pid() and state = 'active' "
                           f"and query like '%-- release-script {tag} %'")
             if int((rows or [{}])[0].get('n') or 0) == 0:
-                return set(sb.live_versions())
-            print('database: the script is still running on Supabase, waiting', flush=True)
+                quiet += 1
+                if quiet >= 2:
+                    return set(sb.live_versions())
+            else:
+                quiet = 0
+                print('database: the script is still running on Supabase, waiting', flush=True)
         except Stop:
-            pass
+            quiet = 0
         if time.time() >= t_end:
             raise Unknown(f'Database: esito da verificare, lo script era ancora in corso (o Supabase non rispondeva) dopo '
                           f'{int(POLL[1] // 60) or 1} minuti · {err}')
-        time.sleep(POLL[0])
 
 
 def step_database(sb, sha, label):
@@ -583,12 +606,18 @@ def step_functions(sb, sha, names):
         cmd = CLI.split() + ['--workdir', REPO, 'functions', 'deploy', name, '--project-ref', REF, '--use-api'] + ([] if jwt else ['--no-verify-jwt'])
         print('functions: deploy ' + name + ('' if jwt else ' --no-verify-jwt'), flush=True)
         t0 = time.time()
-        r = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, 'SUPABASE_ACCESS_TOKEN': sb.token}, timeout=600)
-        print((r.stdout[-3000:] + r.stderr[-3000:]).replace(sb.token, '***'), flush=True)
+        maybe = []                                     # deployed (or perhaps deployed), but not confirmed: «da verificare»
         try:
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, 'SUPABASE_ACCESS_TOKEN': sb.token}, timeout=CLI_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                maybe = [name]
+                raise Stop(f'Funzione {name}: il deploy non ha finito entro {CLI_TIMEOUT // 60 or 1} minuti' + (f' (già pubblicate: {", ".join(done)})' if done else ''))
+            print((r.stdout[-3000:] + r.stderr[-3000:]).replace(sb.token, '***'), flush=True)
             if r.returncode != 0:
                 raise Stop(f'Funzione {name} non pubblicata' + (f' (già pubblicate: {", ".join(done)})' if done else '')
                            + ' · ' + (r.stderr.strip() or r.stdout.strip())[-600:].replace(sb.token, '***'))
+            maybe = [name]                             # the CLI says it is deployed; the check below may still fail
             info = sb.function(name) or {}
             upd = _epoch(info.get('updated_at'))
             if upd is not None and upd < t0 - 120:
@@ -596,7 +625,7 @@ def step_functions(sb, sha, names):
             if info.get('verify_jwt') is not None and bool(info['verify_jwt']) != jwt:
                 raise Stop(f'Funzione {name}: verify_jwt è {info["verify_jwt"]} su Supabase, {jwt} in config.toml')
         except Stop as e:
-            e.partial = {'names': list(done)}          # those are live: the Bot feed must not say «nothing changed»
+            e.partial = {'names': list(done), 'check': maybe}   # live, and perhaps live: the Bot feed must not say «nothing changed»
             raise
         done.append(name)
     return {'status': 'ok', 'names': done}
@@ -761,9 +790,12 @@ def cmd_deploy(a):
         sb = Supabase()
         label = p['meta'].get('version') or p['sha'][:7]
         pending_against(sb.live_versions(), p['sha'])     # before anything changes: the token works and the live history fits GitHub
+        res['started'] = True                             # from here on, a run cut short leaves this file unfinished: «da verificare»
         for step in p['meta']['order']:
             res['steps'][step] = {'status': 'running'}
+            _save(res, a.out)
             res['steps'][step] = step_database(sb, p['sha'], label) if step == 'database' else step_functions(sb, p['sha'], p['functions'])
+            _save(res, a.out)
     except Exception as e:          # a Stop, or anything unexpected: written down so the record step can say where it stopped
         if not isinstance(e, Stop):
             e = Stop(f'Errore imprevisto · {type(e).__name__}: {e}')
@@ -774,10 +806,18 @@ def cmd_deploy(a):
         res['error'] = str(e)
         print('STOP: ' + str(e), file=sys.stderr)
         rc = 2
-    json.dump(res, open(a.out, 'w'), indent=2)
+    res['finished'] = True
+    _save(res, a.out)
     _summary(result_md(res))
     _output('site', 'true' if rc == 0 and p['site'] else 'false')
     return rc
+
+
+def _save(res, path):
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(res, f, indent=2)
+    os.replace(tmp, path)
 
 
 def result_md(res):
@@ -821,6 +861,12 @@ def cmd_record(a):
     try:
         have = bool(a.result) and os.path.exists(a.result)
         res = json.load(open(a.result)) if have else {'steps': {}}
+        # deploy started but never finished (cancelled, killed, timed out): a step it was in is unknown, the rest is as written
+        unfinished = bool(res.get('started')) and not res.get('finished')
+        if unfinished:
+            for k, v in res['steps'].items():
+                if v.get('status') == 'running':
+                    res['steps'][k] = {'status': 'unknown', 'error': 'il run si è interrotto durante questo passo'}
         if a.site:
             site = json.load(open(a.site)) if os.path.exists(a.site) else None
             if a.site_outcome == 'failure':
@@ -839,7 +885,7 @@ def cmd_record(a):
                    'status': 'failed' if failed else 'ok', 'steps': res['steps'], 'error': res.get('error'),
                    'after_it': m.get('after_it') or [], 'prompts': (res.get('plan') or {}).get('prompts') or [], 'run_url': a.run_url,
                    'warnings': (res.get('plan') or {}).get('warnings') or [],
-                   'uncertain': not have and a.job_status != 'success'}      # the run stopped before it wrote what it did
+                   'uncertain': unfinished and not any(v.get('status') == 'unknown' for k, v in res['steps'].items() if k != 'site')}
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         sb = Supabase()
         found = sb.sql("select to_regprocedure('fabula.release_record(jsonb)') is not null as ok")
