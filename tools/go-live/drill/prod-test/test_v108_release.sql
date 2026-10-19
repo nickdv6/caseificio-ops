@@ -79,6 +79,30 @@ select fabula.release_record(jsonb_build_object('version', 'v1.10', 'sha', repea
 select pg_temp.ck('stopped before anything changed: says so',
   (select body like '%Nessuna modifica è arrivata in produzione%' and title = 'Rilascio v1.10 fermato al passo «funzioni del server»'
      from fabula.bot_messages where id = (select message_id from fabula.releases where id = :r4)));
+-- stopped halfway through the functions: the ones already deployed are live
+select fabula.release_record(jsonb_build_object('version', 'v1.10', 'sha', repeat('e', 40), 'status', 'failed', 'error', 'Funzione beta non pubblicata (già pubblicate: alpha) · bundle failed',
+  'steps', jsonb_build_object('functions', jsonb_build_object('status', 'failed', 'names', '["alpha"]'::jsonb, 'error', 'bundle failed')))) r4b \gset
+select body from fabula.bot_messages where id = (select message_id from fabula.releases where id = :r4b) \gset b4b_
+select pg_temp.ck('stopped halfway through the functions: «Già in produzione» names them, not «Nessuna modifica»',
+  :'b4b_body' like '%Già in produzione: funzioni del server: alpha (poi si è fermato)%' and :'b4b_body' not like '%Nessuna modifica%'
+  and :'b4b_body' like '%the parts listed are already live%', :'b4b_body');
+-- an outcome nobody knows (the answer of the database step was lost), and a run that stopped before writing its result
+select fabula.release_record(jsonb_build_object('version', 'v1.10', 'sha', repeat('e', 40), 'status', 'failed', 'error', 'Database: esito da verificare',
+  'steps', jsonb_build_object('functions', jsonb_build_object('status', 'skipped'), 'database', jsonb_build_object('status', 'unknown', 'error', 'esito da verificare')))) r4c \gset
+select title, body from fabula.bot_messages where id = (select message_id from fabula.releases where id = :r4c) \gset b4c_
+select pg_temp.ck('a database step whose answer was lost: «Da verificare: database», not «Nessuna modifica»',
+  :'b4c_title' = 'Rilascio v1.10 fermato al passo «database»' and :'b4c_body' like '%Da verificare: database (la risposta di Supabase non è arrivata)%'
+  and :'b4c_body' not like '%Nessuna modifica%' and :'b4c_body' like '%the outcome must be checked%', :'b4c_title' || ' / ' || :'b4c_body');
+select fabula.release_record(jsonb_build_object('version', 'v1.10', 'sha', repeat('e', 40), 'status', 'failed', 'error', 'Il run di GitHub è finito come «cancelled»',
+  'uncertain', true, 'steps', '{}'::jsonb)) r4d \gset
+select pg_temp.ck('a run interrupted before writing its result: «Da verificare», guarda il run',
+  (select body like '%Da verificare: il run si è interrotto prima di scrivere cosa ha fatto%' and body not like '%Nessuna modifica%'
+     from fabula.bot_messages where id = (select message_id from fabula.releases where id = :r4d)));
+select fabula.release_record(jsonb_build_object('version', 'v1.15', 'sha', repeat('d', 40), 'status', 'ok',
+  'steps', '{"functions":{"status":"skipped"},"database":{"status":"skipped"},"site":{"status":"skipped"}}'::jsonb)) r4e \gset
+select pg_temp.ck('an ok release where every step was skipped: «nessuna modifica (solo documenti o prove)», not an empty line',
+  (select body like '%In produzione: nessuna modifica (solo documenti o prove)%' from fabula.bot_messages where id = (select message_id from fabula.releases where id = :r4e)));
+delete from fabula.releases where id = :r4e;     -- the checks below expect v1.09 to be the last release that went through
 select fabula.release_record(jsonb_build_object('sha', repeat('f', 40), 'status', 'failed', 'error', 'x', 'run_url', 'https://evil.example/actions/runs/1')) r5 \gset
 select pg_temp.ck('no version → the short commit; a link that is not a GitHub run is dropped',
   (select version = 'fffffff' and run_url is null from fabula.releases where id = :r5));
@@ -93,7 +117,10 @@ reset role;
 select pg_temp.ck('public.fabula_live_release() (anon, the plan job): the last release that went through, not the last row',
   (:'lr_anon'::jsonb ->> 'sha') = repeat('c', 40) and (:'lr_anon'::jsonb ->> 'version') = 'v1.09' and :'lr_anon'::jsonb ? 'at'
   and (select count(*) from fabula.releases where id > (select id from fabula.releases where sha = repeat('c', 40))) > 0, :'lr_anon');
-select pg_temp.ck('…and nothing else: three keys', (select count(*) from jsonb_object_keys(:'lr_anon'::jsonb)) = 3, :'lr_anon');
+select pg_temp.ck('…the live migration history (versions only), and nothing else',
+  (select count(*) from jsonb_object_keys(:'lr_anon'::jsonb)) = 4
+  and jsonb_array_length(:'lr_anon'::jsonb -> 'migrations') = (select count(*) from supabase_migrations.schema_migrations)
+  and (:'lr_anon'::jsonb -> 'migrations' ->> -1) = (select max(version) from supabase_migrations.schema_migrations), left(:'lr_anon', 200));
 
 -- ============================== a release blocked before the approval (the watcher's report function) ==============================
 select vault.create_secret('test-backup-token-108', 'backup_export_token') is not null as secret_set \gset
@@ -128,7 +155,11 @@ on conflict (key) do update set ok = excluded.ok, data = excluded.data, checked_
 select pg_temp.ck('a migration on GitHub not on the database: the release waits for the approval on GitHub (no more SQL Editor)',
   (fabula.infra_checks() -> 'repo_sync' ->> 'detail') like '%su GitHub ma non applicate sul database (29991231000000): il rilascio aspetta l''approvazione su GitHub (Actions → Release → «Review deployments»)'
   and (fabula.infra_checks() -> 'repo_sync' ->> 'detail') not like '%SQL Editor%', fabula.infra_checks() -> 'repo_sync' ->> 'detail');
-select pg_temp.ck('an app not yet published: approve the release (no more «guarda Netlify»)',
+select pg_temp.ck('an app not yet published, while it still lives on Netlify (until v1.08b): «guarda il deploy su Netlify»',
+  (fabula.infra_checks() -> 'app_deployed' ->> 'detail') = 'Sito perla-v98, GitHub perla-v99: Netlify non ha ancora pubblicato (guarda il deploy su Netlify)',
+  fabula.infra_checks() -> 'app_deployed' ->> 'detail');
+update fabula.settings set value = 'https://app.bubalina.it' where key = 'infra.site_url';
+select pg_temp.ck('…and once the app has moved: approve the release on GitHub',
   (fabula.infra_checks() -> 'app_deployed' ->> 'detail') = 'Sito perla-v98, GitHub perla-v99: il rilascio non ha ancora pubblicato l''app (approvalo su GitHub: Actions → Release)',
   fabula.infra_checks() -> 'app_deployed' ->> 'detail');
 update fabula.infra_status set data = jsonb_build_object('versions', (select jsonb_agg(version order by version) from supabase_migrations.schema_migrations where version <> (select max(version) from supabase_migrations.schema_migrations)))

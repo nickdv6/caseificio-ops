@@ -9,16 +9,18 @@
 --   * fabula.release_record(jsonb): called by the pipeline at the end (database role only). It writes the row and a message in the Bot
 --     feed («Rilasci»): done (info, or warn when something is left to do by hand: steps of release.json, bot prompts to update), or
 --     stopped (alert: Telegram, with what already changed and what did not).
---   * public.fabula_live_release(): the commit that is live (the last «ok» release), read by the workflow's plan job with the
---     publishable key, without any secret (the repo is public; a commit id is not a secret). Before v1.08 the plan starts from
+--   * public.fabula_live_release(): the commit that is live (the last «ok» release) and the live migration history (versions only),
+--     read by the workflow's plan job with the publishable key, without any secret (the repo is public; commit ids and migration
+--     versions are not secrets): the plan and its rehearsal then match what apply will do. Before v1.08 the plan starts from
 --     tools/release/baseline.txt. (A git tag «live» moved by the workflow was the first idea: GitHub refuses a GITHUB_TOKEN that moves
 --     a ref across workflow-file changes, review of 15/10.)
 --   * public.fabula_outside_report(token, 'release', …): a release stopped before anyone was asked (plan or rehearsal failed) posts an
 --     alert «Rilascio … bloccato prima dell'approvazione», with the backup token the outside watcher already uses.
 --   * Panoramica → Sistema «Rilasci automatici» (infra_checks 'release'): the last release, green when it went through.
---   * The drift texts say what to do now: a migration on GitHub but not on the database, or an app not yet published, means a release
---     is waiting for the approval on GitHub (no more «SQL Editor» or «guarda Netlify»); a migration on the database but not on GitHub
---     was applied outside the release and its file goes on main.
+--   * The drift texts say what to do now: a migration on GitHub but not on the database means a release is waiting for the approval
+--     on GitHub (no more «SQL Editor»); so does an app not yet published, once the app has left Netlify (v1.08b; while infra.site_url
+--     is the Netlify address the text still says «guarda Netlify»); a migration on the database but not on GitHub was applied outside
+--     the release and its file goes on main.
 
 -- ============================== the releases ==============================
 create table if not exists fabula.releases (
@@ -57,7 +59,8 @@ declare
   v_ok boolean := coalesce(p->>'status', '') = 'ok';
   v_ver text; s jsonb := case when jsonb_typeof(p->'steps') = 'object' then p->'steps' else '{}'::jsonb end;
   v_done text[] := '{}'; v_todo text[] := '{}'; v_brief text[] := '{}'; v_failed text; v_err text;
-  v_title text; v_sev text; v_body text; v_en text; x text; i int := 0;
+  v_title text; v_sev text; v_body text; v_en text; x text; i int := 0; v_check text[] := '{}';
+  v_uncertain boolean := coalesce(p->>'uncertain', '') = 'true';
   v_run text := nullif(p->>'run_url', '');
 begin
   if coalesce(p->>'sha', '') !~ '^[0-9a-f]{40}$' then raise exception 'release_record: sha mancante o non valido'; end if;
@@ -75,6 +78,10 @@ begin
   -- what reached production, in plain words
   if s #>> '{functions,status}' = 'ok' then
     v_done := v_done || ('funzioni del server: ' || (select string_agg(e, ', ') from jsonb_array_elements_text(coalesce(s #> '{functions,names}', '[]')) e));
+  elsif s #>> '{functions,status}' in ('failed', 'unknown') and jsonb_array_length(coalesce(s #> '{functions,names}', '[]')) > 0 then
+    -- stopped halfway: the ones already deployed are live
+    v_done := v_done || ('funzioni del server: ' || (select string_agg(e, ', ') from jsonb_array_elements_text(s #> '{functions,names}') e)
+                         || ' (poi si è fermato)');
   end if;
   if s #>> '{database,status}' = 'ok' then
     v_done := v_done || ('database: ' || fabula.it_n(jsonb_array_length(coalesce(s #> '{database,versions}', '[]')), 'modifica', 'modifiche'));
@@ -82,7 +89,13 @@ begin
   if s #>> '{site,status}' in ('ok', 'warn') then
     v_done := v_done || ('app del tablet ' || coalesce(s #>> '{site,sw}', ''));
   end if;
-  select k into v_failed from jsonb_each(s) e(k, v) where v->>'status' in ('failed', 'running') limit 1;
+  select k into v_failed from jsonb_each(s) e(k, v) where v->>'status' in ('failed', 'running', 'unknown') limit 1;
+  -- steps whose outcome nobody knows (a lost answer, an interrupted publication), and a run that stopped before writing its result
+  select coalesce(array_agg(case k when 'database' then 'database (la risposta di Supabase non è arrivata)'
+                                   when 'site' then 'app del tablet (pubblicazione interrotta)'
+                                   when 'functions' then 'funzioni del server' else k end order by k), '{}')
+    into v_check from jsonb_each(s) e(k, v) where v->>'status' = 'unknown';
+  if v_uncertain then v_check := v_check || 'il run si è interrotto prima di scrivere cosa ha fatto: guarda il run su GitHub'::text; end if;
 
   if v_ok then
     for x in select e from jsonb_array_elements_text(case when jsonb_typeof(p->'after_it') = 'array' then p->'after_it' else '[]' end) e loop
@@ -98,7 +111,7 @@ begin
     end if;
     v_title := left(format('Rilascio %s fatto', v_ver) || case when cardinality(v_todo) > 0 then ': ' || fabula.it_n(cardinality(v_todo), 'cosa da fare', 'cose da fare') else '' end, 70);
     v_sev := case when cardinality(v_todo) > 0 then 'warn' else 'info' end;
-    v_brief := v_brief || ('In produzione: ' || coalesce(array_to_string(v_done, ' · '), 'nessuna modifica (solo documenti o prove)'));
+    v_brief := v_brief || ('In produzione: ' || coalesce(nullif(array_to_string(v_done, ' · '), ''), 'nessuna modifica (solo documenti o prove)'));
     v_en := format('EN — Release %s is live (%s)%s.', v_ver,
                    coalesce(nullif(concat_ws(', ',
                      case when s #>> '{functions,status}' = 'ok' then 'functions ' || (select string_agg(e, ', ') from jsonb_array_elements_text(coalesce(s #> '{functions,names}', '[]')) e) end,
@@ -113,10 +126,14 @@ begin
                                                                                          else v_failed end, ''), 70);
     v_sev := 'alert';
     v_brief := v_brief || ('Errore: ' || coalesce(v_err, (select v->>'error' from jsonb_each(s) e(k, v) where v->>'error' is not null limit 1), 'vedi il rilascio su GitHub'));
-    v_brief := v_brief || case when cardinality(v_done) > 0 then 'Già in produzione: ' || array_to_string(v_done, ' · ')
-                               else 'Nessuna modifica è arrivata in produzione' end;
-    v_en := format('EN — Release %s stopped%s: nothing else changed; open the GitHub run; the fix comes as a new release to approve.', v_ver,
-                   coalesce(' at the ' || v_failed || ' step', ''));
+    if cardinality(v_done) > 0 then v_brief := v_brief || ('Già in produzione: ' || array_to_string(v_done, ' · ')); end if;
+    if cardinality(v_check) > 0 then v_brief := v_brief || ('Da verificare: ' || array_to_string(v_check, ' · ')); end if;
+    if cardinality(v_done) = 0 and cardinality(v_check) = 0 then v_brief := v_brief || 'Nessuna modifica è arrivata in produzione'::text; end if;
+    v_en := format('EN — Release %s stopped%s: %s; open the GitHub run; the fix comes as a new release to approve.', v_ver,
+                   coalesce(' at the ' || v_failed || ' step', ''),
+                   case when cardinality(v_check) > 0 then 'the outcome must be checked'
+                        when cardinality(v_done) > 0 then 'the parts listed are already live'
+                        else 'nothing changed' end);
   end if;
   if nullif(btrim(p->>'title_it'), '') is not null then v_brief := v_brief || btrim(p->>'title_it'); end if;
 
@@ -138,15 +155,18 @@ grant execute on function fabula.release_record(jsonb) to service_role;
 -- the live commit for the workflow's plan job (no secret): the last release that went through
 create or replace function public.fabula_live_release() returns jsonb
 language sql stable security definer set search_path = pg_catalog, fabula, public as $$
-  select (select jsonb_build_object('sha', r.sha, 'version', r.version, 'at', r.created_at)
-            from fabula.releases r where r.status = 'ok' order by r.id desc limit 1)
+  select jsonb_build_object(
+    'sha', r.sha, 'version', r.version, 'at', r.created_at,
+    'migrations', (select coalesce(jsonb_agg(m.version order by m.version), '[]'::jsonb) from supabase_migrations.schema_migrations m))
+    from (select 1) one
+    left join lateral (select x.sha, x.version, x.created_at from fabula.releases x where x.status = 'ok' order by x.id desc limit 1) r on true
 $$;
-comment on function public.fabula_live_release() is 'v1.08: the commit that is live (the last «ok» row of fabula.releases), for the Release workflow''s plan job with the publishable key; null before the first automatic release.';
+comment on function public.fabula_live_release() is 'v1.08: the commit that is live (the last «ok» row of fabula.releases; sha null before the first automatic release) and the live migration history (versions only), for the Release workflow''s plan job with the publishable key.';
 revoke all on function public.fabula_live_release() from public;
 grant execute on function public.fabula_live_release() to anon, authenticated, service_role;
 insert into fabula.security_accepted (key, reason) values
-  ('anon_security_definer_function_executable:public.fabula_live_release()', 'by design (v1.08): the Release workflow reads the live commit with the publishable key; returns the last released commit id, version and date (the repo is public), nothing else'),
-  ('authenticated_security_definer_function_executable:public.fabula_live_release()', 'by design (v1.08): same as for anon, the live commit id only')
+  ('anon_security_definer_function_executable:public.fabula_live_release()', 'by design (v1.08): the Release workflow reads the live commit with the publishable key; returns the last released commit id, version and date and the migration versions (the repo is public), nothing else'),
+  ('authenticated_security_definer_function_executable:public.fabula_live_release()', 'by design (v1.08): same as for anon, the live commit id and migration versions only')
 on conflict (key) do update set reason = excluded.reason;
 
 -- a release that stopped before anyone was asked (the plan or the rehearsal failed): an alert in «Rilasci»
@@ -212,7 +232,9 @@ $s$);
   if n = d then raise exception 'v108a: infra_checks repo_sync extra pattern not found'; end if;
   d := n;
   n := replace(d, $s$': Netlify non ha ancora pubblicato (guarda il deploy su Netlify)' end)$s$,
-                  $s$': il rilascio non ha ancora pubblicato l''app (approvalo su GitHub: Actions → Release)' end)$s$);
+                  $s$case when coalesce(fabula.setting_text('infra.site_url'), '') ilike '%netlify.app%'
+                          then ': Netlify non ha ancora pubblicato (guarda il deploy su Netlify)'      -- until v1.08b moves the app
+                          else ': il rilascio non ha ancora pubblicato l''app (approvalo su GitHub: Actions → Release)' end end)$s$);
   if n = d then raise exception 'v108a: infra_checks app_deployed pattern not found'; end if;
   d := n;
   n := replace(d, $s$    'vault_secret', fabula.vault_secret_check());

@@ -36,9 +36,12 @@ the free plan's 300 monthly credits, the whole site paused at zero as on 14/10).
 - **The database step** keeps the SQL Editor scripts' rules: the live history is read first (a live version GitHub lacks stops the
   release); every new file goes in ONE transaction through the Management API with a guard that refuses a changed history or a second
   run; each file starts from the default `search_path` (as in CI, one session per file); a marker set after `begin` must still be set
-  before the history rows, so a file that ends the transaction itself fails the release and its rehearsal; the plan refuses `begin`,
-  `commit`, `end`, `abort`, `savepoint`, `vacuum`, `concurrently`, psql backslash commands and the like before anyone is asked
-  (comments, strings and `$tag$` bodies are skipped). A lost answer (timeout, cut connection) is settled by reading the history.
+  before the history rows (a temporary table holding the transaction's id), so a file that ends the transaction itself fails the
+  release and its rehearsal; the plan refuses `begin`, `commit`, `end`, `abort`, `savepoint`, `vacuum`, `concurrently`, psql backslash
+  commands and variables and the like before anyone is asked (comments, strings, E-strings, `$tag$` and `begin atomic` bodies are
+  skipped). A lost answer (timeout, gateway 5xx, cut connection): the script is found in `pg_stat_activity` by its tag and waited for,
+  then the history decides; unknown → «da verificare». The plan job also reads the live migration history, so the plan and its
+  rehearsal match what apply will run (also after a release that stopped halfway).
 - **`tools/release/release.json`** per version: `version`, `title_it`, `order` (functions/database), `after_it` (steps for people,
   in the message), `force` (parts to deploy without a git change, kept until a release that carries it goes live: v1.08 = the first
   Pages publish). `release.py editor-script --live-last <v>` still writes a SQL Editor script when the pipeline is not available.
@@ -52,12 +55,13 @@ the free plan's 300 monthly credits, the whole site paused at zero as on 14/10).
   yet published = approve the release; a migration live but not on GitHub = applied outside the release, its file goes on main.
 - **Function `invite-user`:** the invite and WhatsApp links use `infra.site_url` from the database (the same address as every other
   link), so moving the app is one setting (v1.08b).
-- Tests: `prod-test/test_v108_release.sql` 37/37; `tools/release/test_release.py` (80 checks, in CI): plans on small git repos (also
+- Tests: `prod-test/test_v108_release.sql` 42/42; `tools/release/test_release.py` (106 checks, in CI): plans on small git repos (also
   `_shared` and root files, `verify_jwt`, `force` across releases, superseded/diverged, removed or badly named migrations), the lint
-  (14 ways to end the transaction), the script on a scratch history (second run refused, an error leaves nothing, a changed history
+  (14 ways to end the transaction, psql-only syntax, E-strings, `begin atomic`, no false STOP on the real migrations), the script on a scratch history (second run refused, an error leaves nothing, a changed history
   stops it, the marker, `search_path` per file), the rehearsal, deploy and record against a fake Management API and CLI (order,
   `--no-verify-jwt`, a failing function or migration, a live version GitHub lacks, a wrong or missing token, a superseded commit, a
-  late or lost answer), the live commit read both ways, the blocked and unrecorded reports, the site check. `test_v105_bots_ops.sql`
+  late or lost answer, a gateway 504 while the script runs, Supabase down afterwards, functions deployed before a stop), the live
+  commit and history read both ways, the blocked and unrecorded reports, the site check. `test_v105_bots_ops.sql`
   and `infra-test/test_infra.sql` updated for the new texts.
 
 ## «Prima dell'avvio»: quiet bots before the dairy works (v1.07)

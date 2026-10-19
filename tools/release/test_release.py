@@ -174,18 +174,39 @@ def test_plan():
         check(f'lint: «{bad[:28]}» is refused', any(w.startswith('STOP') for w in R.lint_migration(bad, 'v')), R.lint_migration(bad, 'v'))
     check('lint: concurrently and psql backslash commands are refused',
           any('concurrently' in w for w in R.lint_migration('create index concurrently i on t(x);', 'v'))
-          and any('backslash' in w for w in R.lint_migration('\\set x 1\nselect 1;', 'v')))
+          and any('barra rovesciata' in w for w in R.lint_migration('\\set x 1\nselect 1;', 'v')))
+    for bad in ("select 'create table x (id int)' \\gexec", 'select :x;', "select :'name';", 'select * from t where id = :"col";',
+                "select E'\\''; commit; begin; select '';", "create function f() returns int language sql begin atomic end;\ncommit;"):
+        check(f'lint: psql-only syntax or a hidden commit «{bad[:34]}» is refused', any(w.startswith('STOP') for w in R.lint_migration(bad, 'v')),
+              R.lint_migration(bad, 'v'))
+    for good in ("select 'a'::text, x::int from t;", 'select (array[1,2,3])[1:2];', "select E'it\\'s', e'a\\\\';\nselect 1;",
+                 "select ':nope' as \"a:b\";", 'create function f() returns int language sql\nbegin atomic\n  select 1;\n  select 2;\nend;\nselect 3;'):
+        check(f'lint: fine «{good[:34]}»', not R.stops({'warnings': R.lint_migration(good, 'v')}), R.lint_migration(good, 'v'))
+    real = [f for f in sorted(os.listdir(os.path.join(REAL, 'supabase/migrations'))) if f >= '20261013' and f.endswith('.sql')]
+    noisy = [f for f in real if R.stops({'warnings': R.lint_migration(open(os.path.join(REAL, 'supabase/migrations', f), encoding='utf-8').read(), f)})]
+    check(f'lint: the {len(real)} real migrations since v0.93 pass it (no false STOP)', not noisy, noisy)
     g.write('supabase/migrations/20260101000100_b.sql', 'create table fabula.t2 (id int, x int);\n')
     c9 = g.commit('edit applied migration')
     p = R.plan(c9, live=c8)
     check('plan: editing a migration that is already live is a warning', p['migrations_edited'] == ['20260101000100'], p['migrations_edited'])
     g.rm('supabase/migrations/20260102000000_c.sql')
     c10 = g.commit('remove live migration')
-    check('plan: a live migration removed from GitHub is a STOP before approval', any('removed from GitHub' in w for w in R.stops(R.plan(c10, live=c9))))
+    check('plan: a live migration removed from GitHub is a STOP before approval', any('GitHub main non ha' in w for w in R.stops(R.plan(c10, live=c9))))
     g.write('supabase/migrations/20260102000000_c.sql', 'create table fabula.t3 (id int);\n')
     g.write('supabase/migrations/20261016_fix.sql', 'select 1;\n')
     c11 = g.commit('badly named migration')
-    check('plan: a migration file without the 14-digit version is a STOP', any('14 digits' in w for w in R.stops(R.plan(c11, live=c9))))
+    check('plan: a migration file without the 14-digit version is a STOP', any('14 cifre' in w for w in R.stops(R.plan(c11, live=c9))))
+    # with the live history (the plan job reads it from the database): exactly what apply will run
+    g.rm('supabase/migrations/20261016_fix.sql')
+    g.write('supabase/migrations/20260104000000_e.sql', 'create table fabula.t5 (id int);\n')
+    c12 = g.commit('e')
+    hist = ['20260101000000', '20260101000100', '20260102000000', '20260103000000']      # d applied by a release that then failed
+    p = R.plan(c12, live=c9, live_migs=hist)
+    check('plan (live history): only what the database lacks, not what a failed release already applied',
+          [m['version'] for m in p['migrations']] == ['20260104000000'] and not R.stops(p), (p['migrations'], p['warnings']))
+    p = R.plan(c12, live=c9, live_migs=hist + ['20260105000000'])
+    check('plan (live history): a new file older than the live history is a STOP before approval',
+          any('più vecchia' in w for w in R.stops(p)) and any('GitHub main non ha' in w for w in R.stops(p)), p['warnings'])
     shutil.rmtree(g.dir, ignore_errors=True)
 
 
@@ -239,11 +260,23 @@ def test_script():
           r.returncode != 0 and 'chiuso la transazione' in r.stderr
           and psql_at(db, "select count(*) from supabase_migrations.schema_migrations where version = '20260104000000'") == '0', r.stderr[-300:])
     psql_at(db, 'drop table if exists t6; drop table if exists t7;')
+    pending_rm = [('20260104000000', 'remark', "create table t8 (id int);\ncommit;\nbegin;\nset local release.one_tx = 'on';\ncreate temp table release_one_tx (tx bigint);\ncreate table t9 (id int);\n")]
+    open(path, 'w').write(R.build_script(pending_rm, max(live), 'test'))
+    r = as_pg(None, db, path)
+    check('script: a file that commits and then fakes the marker is still caught (the marker holds the transaction id)',
+          r.returncode != 0 and 'chiuso la transazione' in r.stderr
+          and psql_at(db, "select count(*) from supabase_migrations.schema_migrations where version = '20260104000000'") == '0', r.stderr[-300:])
+    psql_at(db, 'drop table if exists t8; drop table if exists t9;')
+    pending_ra = [('20260104000000', 'resetall', 'reset all;\ncreate table t10 (id int);\n')]
+    open(path, 'w').write(R.build_script(pending_ra, max(live), 'test'))
+    r = as_pg(None, db, path)
+    check('script: «reset all» in a file does not trip the marker', r.returncode == 0, r.stderr[-300:])
+    last_now = psql_at(db, 'select max(version) from supabase_migrations.schema_migrations')
     # each file starts from the default search_path, as in CI (one session per file)
     psql_at(db, 'create schema if not exists other;')
     pending_sp = [('20260105000000', 'sp1', 'set search_path = other, public;\ncreate table sp_a (id int);\n'),
                   ('20260105000100', 'sp2', 'create table sp_b (id int);\n')]
-    open(path, 'w').write(R.build_script(pending_sp, max(live), 'test'))
+    open(path, 'w').write(R.build_script(pending_sp, last_now, 'test'))
     r = as_pg(None, db, path)
     check('script: a search_path set by one file does not reach the next one',
           r.returncode == 0 and psql_at(db, "select to_regclass('other.sp_a') is not null and to_regclass('public.sp_b') is not null and to_regclass('other.sp_b') is null") == 't',
@@ -281,8 +314,24 @@ def test_rehearsal():
     check('rehearsal: the release applies on a copy built at the live commit', rc == 0)
     g.write('supabase/migrations/20260103000000_c.sql', 'alter table fabula.nope add column x int;\n')
     c2 = g.commit('c2')
+    rt = tempfile.mkdtemp(dir='/tmp')
+    os.environ['RUNNER_TEMP'] = rt
     rc = R.main(['rehearse', '--sha', c2, '--db', 'release_test_rehearsal'])
+    note = json.load(open(os.path.join(rt, 'release-blocked.json'))) if os.path.exists(os.path.join(rt, 'release-blocked.json')) else {}
     check('rehearsal: a release that would fail stops before the approval', rc == 2)
+    check('rehearsal: the reason sent to the Bot feed is the ERROR line, not a CONTEXT line',
+          'ERROR:' in note.get('error', '') and 'CONTEXT' not in note.get('error', ''), note)
+    del os.environ['RUNNER_TEMP']
+    # built like the live database: b was applied by a release that then failed (the live commit is still c0)
+    g.rm('supabase/migrations/20260103000000_c.sql')
+    g.write('supabase/migrations/20260103000000_c.sql', 'insert into fabula.t1 values (1); insert into fabula.t2 values (1);\n')
+    c3 = g.commit('c3')
+    lm = tempfile.mktemp(suffix='.json', dir='/tmp')
+    json.dump(['20260101000000', '20260102000000'], open(lm, 'w'))
+    os.chmod(lm, 0o644)
+    rc = R.main(['rehearse', '--sha', c3, '--live', c0, '--live-migrations', lm, '--db', 'release_test_rehearsal'])
+    hist = psql_at('release_test_rehearsal', 'select string_agg(version, \',\' order by version) from supabase_migrations.schema_migrations')
+    check('rehearsal (live history): b comes from this commit\'s file, only c is the release', rc == 0 and hist == '20260101000000,20260102000000,20260103000000', hist)
     as_pg('dropdb --if-exists release_test_rehearsal')
     shutil.rmtree(g.dir, ignore_errors=True)
 
@@ -295,6 +344,8 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
     stale_function = False
     mode = None
     rest_missing = False
+    rest_404 = False
+    down_until = 0
     reports = []
 
     def _rest(self, fn, body):
@@ -303,6 +354,8 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
         if fn == 'fabula_live_release':
             if FakeApi.rest_missing:
                 return self._send(404, {'code': 'PGRST202', 'message': 'Could not find the function public.fabula_live_release'})
+            if FakeApi.rest_404:
+                return self._send(404, {'message': 'Not Found'})
             return self._send(200, json.loads(psql_at(FakeApi.db, 'select coalesce(public.fabula_live_release(), \'null\'::jsonb)')))
         if fn == 'fabula_outside_report':
             FakeApi.reports.append(body)
@@ -345,15 +398,29 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
         if not self.path.endswith('/database/query'):
             return self._send(404, {'message': 'not found'})
         script = body['query'].lstrip().startswith('-- ')            # the release script (not a short query)
+        if time.time() < FakeApi.down_until:                         # Supabase not answering at all
+            return self._send(503, {'message': 'Service Unavailable'})
         if script and FakeApi.mode == 'disconnect':                  # the answer is lost and nothing ran
             FakeApi.mode = None
+            self.close_connection = True
+            return
+        if script and FakeApi.mode == 'down':                        # the answer is lost, then nothing answers for a while
+            FakeApi.mode = None
+            FakeApi.down_until = time.time() + 3
             self.close_connection = True
             return
         f = tempfile.NamedTemporaryFile('w', suffix='.sql', delete=False, dir='/tmp')
         f.write(body['query'])
         f.close()
         os.chmod(f.name, 0o644)
-        r = run('su', 'postgres', '-c', f'psql -X -q --csv -v ON_ERROR_STOP=1 -d {FakeApi.db} -f {f.name}', cwd='/tmp', check_rc=False)
+        # like the Management API: the whole text is ONE query (psql -c sends it as is: no psql commands, all or nothing)
+        cmd = f'psql -X -q --csv -v SHOW_ALL_RESULTS=off -d {FakeApi.db} -c "$(cat {f.name})"'
+        if script and FakeApi.mode == 'gateway':                     # the gateway gives up with a 504 while the script keeps running
+            FakeApi.mode = None
+            threading.Thread(target=lambda: (run('su', 'postgres', '-c', cmd, cwd='/tmp', check_rc=False), os.unlink(f.name)), daemon=True).start()
+            time.sleep(0.6)
+            return self._send(504, {'message': 'upstream request timeout'})
+        r = run('su', 'postgres', '-c', cmd, cwd='/tmp', check_rc=False)
         os.unlink(f.name)
         if script and FakeApi.mode == 'slow':                        # it ran, but the answer comes too late
             FakeApi.mode = None
@@ -368,11 +435,17 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
         self._send(201, rows)
 
 
+class QuietServer(http.server.ThreadingHTTPServer):
+    def handle_error(self, request, client_address):      # a client that gave up (the timeout tests) is expected, not an error
+        if not isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            super().handle_error(request, client_address)
+
+
 def test_deploy_record():
     db = 'release_test_e2e'
     as_pg(f'dropdb --if-exists {db}; createdb -T {TEMPLATE} {db}')
     FakeApi.db = db
-    srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FakeApi)
+    srv = QuietServer(('127.0.0.1', 0), FakeApi)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     R.API = f'http://127.0.0.1:{srv.server_port}'
     clilog = tempfile.mktemp(prefix='fakecli-', dir='/tmp')
@@ -452,6 +525,11 @@ def test_deploy_record():
     res = json.load(open(out))
     check('deploy: a function that does not deploy stops before the database', rc == 2 and res['steps']['functions']['status'] == 'failed'
           and 'database' not in res['steps'] and 'broken' in res['steps']['functions']['error'], res['steps'])
+    check('deploy: …and the functions deployed before it are listed', res['steps']['functions'].get('names') == ['alpha', 'beta'], res['steps'])
+    R.main(['record', '--sha', c3, '--result', out, '--site-outcome', 'skipped', '--job-status', 'failure'])
+    body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
+    check('record: «Già in produzione: funzioni del server: alpha, beta», not «Nessuna modifica»',
+          'Già in produzione: funzioni del server: alpha, beta (poi si è fermato)' in body and 'Nessuna modifica' not in body, body)
 
     psql_at(db, "insert into supabase_migrations.schema_migrations(version, name) values ('29991231000500', 'outside')")
     g.rm('supabase/functions/broken/index.ts')
@@ -492,16 +570,24 @@ def test_deploy_record():
     os.environ['SUPABASE_PUBLISHABLE_KEY'] = 'test-publishable-key'
     R.PUBLIC_URL = R.API
     open(gho, 'w').close()
-    rc = R.main(['live', '--source', 'public'])
+    lmo = tempfile.mktemp(suffix='.json', dir='/tmp')
+    rc = R.main(['live', '--source', 'public', '--migrations-out', lmo])
     check('live (public): the same commit through public.fabula_live_release()', rc == 0 and f'live={c1}' in open(gho).read(), open(gho).read())
+    hist = json.load(open(lmo)) if os.path.exists(lmo) else []
+    check('live (public): …and the live migration history, for the plan and its rehearsal',
+          hist and hist[-1] == psql_at(db, 'select max(version) from supabase_migrations.schema_migrations') and len(hist) > 190, len(hist))
     FakeApi.rest_missing = True
     open(gho, 'w').close()
     rc = R.main(['live', '--source', 'public'])
     check('live (public): before v1.08 (no function) → empty, the baseline is used', rc == 0 and open(gho).read().strip() == 'live=', open(gho).read())
     FakeApi.rest_missing = False
+    FakeApi.rest_404 = True
+    rc = R.main(['live', '--source', 'public'])
+    check('live (public): any other 404 is a STOP, not a silent fall back to the baseline', rc == 2)
+    FakeApi.rest_404 = False
     del os.environ['GITHUB_OUTPUT']
 
-    # a lost answer: the history decides
+    # a lost answer: the script is looked for (pg_stat_activity, by its tag) until it ends, then the history decides
     R.SQL_TIMEOUT, R.POLL = 1, (0.3, 20)
     g.write('supabase/migrations/29991231000200_e2e_slow.sql', 'create table fabula.release_e2e_slow (id int);\n')
     c6 = g.commit('c6')
@@ -510,14 +596,39 @@ def test_deploy_record():
     res = json.load(open(out))
     check('deploy: an answer that comes too late, but the migration is in the history → ok («confermato»)',
           rc == 0 and res['steps']['database']['status'] == 'ok' and 'confermato' in res['steps']['database'].get('detail', ''), res['steps'])
+    g.write('supabase/migrations/29991231000250_e2e_gateway.sql', 'create table fabula.release_e2e_gw (id int);\nselect pg_sleep(2);\n')
+    c6b = g.commit('c6b')
+    FakeApi.mode = 'gateway'
+    calls0 = len(FakeApi.calls)
+    rc = R.main(['deploy', '--sha', c6b, '--live', c1, '--out', out])
+    res = json.load(open(out))
+    waited = sum(1 for c in FakeApi.calls[calls0:] if len(c) > 2 and 'pg_stat_activity' in c[2])
+    check('deploy: a gateway 504 while the script still runs → it waits for the script to end, then «confermato» (not «nessuna modifica»)',
+          rc == 0 and res['steps']['database']['status'] == 'ok' and 'confermato' in res['steps']['database'].get('detail', '') and waited >= 2,
+          (res['steps'], waited))
     g.write('supabase/migrations/29991231000300_e2e_lost.sql', 'create table fabula.release_e2e_lost (id int);\n')
     c7 = g.commit('c7')
     R.POLL = (0.1, 5)
     FakeApi.mode = 'disconnect'
     rc = R.main(['deploy', '--sha', c7, '--live', c1, '--out', out])
     res = json.load(open(out))
-    check('deploy: a lost answer and nothing in the history → stopped, «esito non confermato»',
-          rc == 2 and 'esito non confermato' in (res['steps'].get('database') or {}).get('error', ''), res['steps'])
+    check('deploy: a lost answer, the script not running and nothing in the history → «nessuna modifica, confermato dalla storia»',
+          rc == 2 and res['steps']['database']['status'] == 'failed'
+          and 'confermato dalla storia' in (res['steps'].get('database') or {}).get('error', ''), res['steps'])
+    R.POLL = (0.2, 1)
+    FakeApi.mode = 'down'
+    rc = R.main(['deploy', '--sha', c7, '--live', c1, '--out', out])
+    res = json.load(open(out))
+    FakeApi.down_until = 0
+    check('deploy: a lost answer and Supabase not answering afterwards → «da verificare» (unknown), not «nessuna modifica»',
+          rc == 2 and res['steps']['database']['status'] == 'unknown' and 'da verificare' in res['steps']['database'].get('error', ''), res['steps'])
+    R.main(['record', '--sha', c7, '--result', out, '--site-outcome', 'skipped', '--job-status', 'failure'])
+    body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
+    check('record: «Da verificare: database», not «Nessuna modifica»', 'Da verificare: database' in body and 'Nessuna modifica' not in body, body)
+    R.main(['record', '--sha', c7, '--result', '/nonexistent.json', '--site-outcome', 'cancelled', '--job-status', 'cancelled'])
+    body = psql_at(db, "select body from fabula.bot_messages where agent = 'rilascio' order by id desc limit 1")
+    check('record: a run cancelled before writing its result → «Da verificare: il run si è interrotto…»',
+          'il run si è interrotto' in body and 'Nessuna modifica' not in body, body)
 
     # a result that cannot be written (the token, Supabase not answering): exit 2 and a note for the «blocked» step
     rt0 = tempfile.mkdtemp(dir='/tmp')

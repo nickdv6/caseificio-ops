@@ -1,7 +1,7 @@
 # v1.08: the release pipeline (RELEASING.md). Merging into main is the release: when CI is green on main, this workflow
-#   1. plan      (no secrets) reads the live commit from the database (public.fabula_live_release(), the publishable key), lists
-#                what changes since then, and rehearses the database part: a scratch database built at the live commit gets the
-#                release script in one transaction. Nothing to deploy (docs, tests, tools only) → it stops here, nobody is asked.
+#   1. plan      (no Supabase secret) reads the live commit and migration history from the database (public.fabula_live_release(),
+#                the publishable key), lists what changes since then, and rehearses the database part: a scratch database built
+#                like the live one gets the release script in one transaction. Nothing to deploy (docs, tests, tools only) → it stops here, nobody is asked.
 #                A STOP or a failed rehearsal → red, nobody is asked, and the Bot feed / Telegram say so («bloccato prima
 #                dell'approvazione», through the outside watcher's report function and its backup token).
 #   2. apply     waits for Nick's approval of the «live» environment (GitHub app: «Review deployments» → Approve), then reads the
@@ -53,15 +53,15 @@ jobs:
           sha=$(git rev-parse --verify 'HEAD^{commit}')
           git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-      - name: The live commit (from the database)
+      - name: The live commit and migration history (from the database)
         id: live
-        run: python3 tools/release/release.py live --source public
+        run: python3 tools/release/release.py live --source public --migrations-out "$RUNNER_TEMP/live-migrations.json"
       - name: What changes since the live commit
         id: plan
         env:
           LIVE: ${{ steps.live.outputs.live }}
           SHA: ${{ steps.sha.outputs.sha }}
-        run: python3 tools/release/release.py plan --sha "$SHA" --live "$LIVE"
+        run: python3 tools/release/release.py plan --sha "$SHA" --live "$LIVE" --live-migrations "$RUNNER_TEMP/live-migrations.json"
       - name: Postgres 16 for the rehearsal
         if: steps.plan.outputs.anything == 'true' && steps.plan.outputs.database == 'true'
         run: |
@@ -74,7 +74,7 @@ jobs:
         env:
           LIVE: ${{ steps.live.outputs.live }}
           SHA: ${{ steps.sha.outputs.sha }}
-        run: sudo -E python3 tools/release/release.py rehearse --sha "$SHA" --live "$LIVE"
+        run: sudo -E python3 tools/release/release.py rehearse --sha "$SHA" --live "$LIVE" --live-migrations "$RUNNER_TEMP/live-migrations.json"
       - name: Tell the Bot feed the release was blocked before the approval
         if: failure() && steps.sha.outcome == 'success'
         env:
@@ -86,7 +86,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.anything == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45     # the database script may run 10 minutes, and a lost answer is waited for up to 15 more
     concurrency:
       group: release-apply
       cancel-in-progress: false

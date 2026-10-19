@@ -19,12 +19,17 @@ Editor, a git merge and push, a Netlify deploy). None of them is needed any more
 
 Nothing is asked when a merge changes only documents, tests or tools.
 
+If GitHub asks about two releases, approve the older one first, or reject it: the newer one contains everything in it. Only one
+release runs at a time, so the newer one waits and is asked after.
+
 ### If a release stops
 - **The database is never half-changed.** All the release's migrations go in one transaction: either all of them or none.
 - **Server functions deployed before the stop stay deployed.** They are always written to work with the database as it was before.
 - Tell Claude. The fix comes as a new merge, so you approve the new run it creates.
 - **Re-run all jobs** on the stopped run only when the cause was outside the code: an expired token (after replacing the secret) or Supabase or GitHub not answering. A re-run deploys the same commit again.
 - A release can also stop before you are asked (the plan or the rehearsal found a problem). The Bot feed then says «Rilascio … bloccato prima dell'approvazione»: nothing changed.
+- If the message says **«Da verificare»**, Supabase's answer got lost and it is not known whether a part went in. Tell Claude: the next release checks the database and does only what is missing.
+- **v1.08 itself is the exception:** the database does not yet have the release messages when it starts. If v1.08 stops, only GitHub's e-mail tells you.
 
 ### One-time setup (before the first automatic release, v1.08)
 Do these in order (about 15 minutes):
@@ -52,6 +57,9 @@ Do these in order (about 15 minutes):
    3. Back on GitHub, **Verify**.
 6. Tell Claude the setup is done. Claude merges v1.08, and step 2 of «Each release» follows: approve it.
 
+Nothing else is needed: the report of a blocked release uses `BACKUP_EXPORT_TOKEN`, the repository secret the outside watcher
+already has since v1.00.
+
 After v1.08:
 - the app answers on https://app.bubalina.it as well as on the old Netlify address;
 - v1.08b moves everyone over, through the pipeline, once you have opened the new address and signed in once.
@@ -59,7 +67,7 @@ After v1.08:
 ## For Claude: preparing a release
 - **Branch** `vNNN-name` from `main`.
 - **Database:** new files in `supabase/migrations/<14-digit version>_<name>.sql`, newer than the live history.
-  - The release wraps them all in one transaction. A file must not contain `begin;`/`commit;`, `concurrently` or psql backslash commands. The plan refuses them before anyone is asked.
+  - The release wraps them all in one transaction, sent as ONE query through the Supabase API. A file must not contain `begin;`/`commit;` (or `end`, `abort`, `savepoint`…), `concurrently`, psql backslash commands or psql variables (`:name`). The plan refuses them before anyone is asked.
 - **Server functions:** in `supabase/functions/<name>/`. Only those changed since the live commit are deployed (all of them when `_shared/` changes), with `verify_jwt` from `supabase/config.toml`.
 - **App:** in `fabula-tablet/`. Bump `CACHE` in `sw.js`.
 - **`tools/release/release.json`**, one per version:
@@ -85,16 +93,16 @@ After v1.08:
 
 | Job / step | What it does | Secrets |
 |---|---|---|
-| plan | The commit must be on `main`. The live commit comes from the database (`public.fabula_live_release()`, the last «ok» release, read with the publishable key), or `tools/release/baseline.txt` before the first release. It lists what changed since then. A STOP makes it red and nobody is asked: a migration that cannot run in one transaction, a live migration removed from GitHub, a badly named file, a rewritten history. | none |
-| plan · rehearsal | Only when the database changes. A scratch Postgres is built from the live commit's migrations (`replay.sh` with `MIGRATIONS_DIR`). The release script must apply on it and a second run must be refused. | none |
+| plan | The commit must be on `main`. The live commit and the live migration history come from the database (`public.fabula_live_release()`, read with the publishable key), or `tools/release/baseline.txt` before the first release. It lists what changed since then; the migrations are exactly those the live history lacks. A STOP makes it red and nobody is asked: a migration that cannot run in one transaction or uses psql-only syntax, a live migration GitHub lacks, a new file older than the live history, a badly named file, a rewritten history. | none |
+| plan · rehearsal | Only when the database changes. A scratch Postgres is built like the live one (the live history's versions, from the live commit's files, `replay.sh` with `MIGRATIONS_DIR`). The release script must apply on it and a second run must be refused. | none |
 | plan · blocked | When the plan or the rehearsal fails, the Bot feed and Telegram say «bloccato prima dell'approvazione». It goes through `public.fabula_outside_report(…, 'release', …)`, the outside watcher's channel. | `BACKUP_EXPORT_TOKEN`, that step only |
 | apply | Waits for Nick's approval of the `live` environment. The environment only allows `main`. | `SUPABASE_ACCESS_TOKEN` on the steps that call Supabase |
 | apply · live, check | Reads the live commit again through the Management API. A newer release finished meanwhile → nothing to do. A rewritten history → STOP, recorded. | yes |
 | apply · CLI | Supabase CLI 2.118.0 from its GitHub release, checked against a pinned sha256, installed in a step with no secret. | — |
 | apply · deploy | 1. Reads the live migration history first: every live version must exist on GitHub, otherwise STOP before anything changes. 2. Functions (`supabase functions deploy --use-api`, checked on Supabase afterwards). 3. Database in `release.json`'s order. | yes |
-| apply · deploy (database) | One transaction through the Management API (the SQL Editor's path), with the same guard as the old scripts. Each file starts from the default search_path, as in CI. A marker set at the start must still be set at the end, so a file that ends the transaction itself fails the release and its rehearsal. A lost answer is settled by reading the history again for 3 minutes. It stops at the first failure. | yes |
+| apply · deploy (database) | One transaction through the Management API (the SQL Editor's path), with the same guard as the old scripts. Each file starts from the default search_path, as in CI. A marker made at the start (a temporary table holding the transaction's id) must still be there at the end, so a file that ends the transaction itself fails the release and its rehearsal. A lost answer (a timeout, a gateway 5xx, a cut connection): the script is looked for in `pg_stat_activity` by its tag until it ends (up to 15 minutes), then the history decides; if that cannot be known, the step is «da verificare». It stops at the first failure. | yes |
 | apply · site | `fabula-tablet/` is published on GitHub Pages, and `sw.js` must answer with the new version. If it does not yet, that is a warning: DNS and HTTPS can lag. | — |
-| apply · record | `fabula.release_record()`: a row in `fabula.releases`, a message in the Bot feed, the line «Rilasci automatici» in Panoramica → Sistema. An «ok» row is what makes the commit live: no git tag, nothing written to the repo. | yes |
+| apply · record | `fabula.release_record()`: a row in `fabula.releases`, a message in the Bot feed, the line «Rilasci automatici» in Panoramica → Sistema. An «ok» row is what makes the commit live: no git tag, nothing written to the repo. A stopped release lists what is already live (functions deployed before the stop) and what is to be checked. If the result cannot be written, a last step reports «esito non registrato» through the watcher's channel. | yes |
 
 The `github-pages` environment that GitHub creates for Pages is not used by this workflow. Only people with write access to the
 repository (Nick, Claude) could publish through it, from a workflow of their own.
