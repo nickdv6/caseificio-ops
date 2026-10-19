@@ -1,8 +1,9 @@
-# Netlify: deploy only when the app changed (14/10/2026). Every push to main used to rebuild and redeploy the site,
-# 155 pushes since 01/10, and the account ran out of its plan allowance («usage_exceeded», site paused 14/10).
-# Pushes that touch only migrations, tests, docs, tools or workflows are now skipped (exit 0 = skip the build).
-# Two copies on purpose: Netlify reads this file from the site's base directory, which may be the repo root or
-# fabula-tablet/. The path below starts with «:/», so it means the repo's fabula-tablet/ folder either way.
-# Only «ignore» is set here: base, publish and build settings stay as they are in the Netlify dashboard.
+# Netlify (v1.08b, 19/10/2026): the app lives on https://app.bubalina.it (GitHub Pages, published by every release). This Netlify
+# site only forwards: fabula-tablet/config.js sends every page opened here to the same page on the new address (the tablet first
+# sends what is waiting and carries its name and id). Netlify builds only when config.js changes, so that forwarding stays and no
+# release spends Netlify credits (15 of the free plan's 300 per deploy; at zero Netlify pauses the site, as on 14/10).
+# Two copies on purpose: Netlify reads this file from the site's base directory, which may be the repo root or fabula-tablet/.
+# The path below starts with «:/», so it means the repo's fabula-tablet/config.js either way. Only «ignore» is set here: base,
+# publish and build settings stay as they are in the Netlify dashboard.
 [build]
-  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- :/fabula-tablet/"
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- :/fabula-tablet/config.js"

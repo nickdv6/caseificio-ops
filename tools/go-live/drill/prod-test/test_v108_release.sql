@@ -155,6 +155,7 @@ on conflict (key) do update set ok = excluded.ok, data = excluded.data, checked_
 select pg_temp.ck('a migration on GitHub not on the database: the release waits for the approval on GitHub (no more SQL Editor)',
   (fabula.infra_checks() -> 'repo_sync' ->> 'detail') like '%su GitHub ma non applicate sul database (29991231000000): il rilascio aspetta l''approvazione su GitHub (Actions → Release → «Review deployments»)'
   and (fabula.infra_checks() -> 'repo_sync' ->> 'detail') not like '%SQL Editor%', fabula.infra_checks() -> 'repo_sync' ->> 'detail');
+update fabula.settings set value = 'https://flourishing-swan-6729c4.netlify.app' where key = 'infra.site_url';   -- as before v1.08b
 select pg_temp.ck('an app not yet published, while it still lives on Netlify (until v1.08b): «guarda il deploy su Netlify»',
   (fabula.infra_checks() -> 'app_deployed' ->> 'detail') = 'Sito perla-v98, GitHub perla-v99: Netlify non ha ancora pubblicato (guarda il deploy su Netlify)',
   fabula.infra_checks() -> 'app_deployed' ->> 'detail');

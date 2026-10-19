@@ -18,6 +18,27 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## The app moves to https://app.bubalina.it (v1.08b)
+Second automatic release (project doc `claude/audit-fixes-v108-2026-10-15.md`, «v1.08b»). Since v1.08 every release publishes
+`fabula-tablet/` on GitHub Pages at app.bubalina.it; Netlify kept serving the same app at its old address.
+- **Migration `v108b`:** `infra.site_url` = https://app.bubalina.it, so every link the database builds (Telegram «apri», the morning
+  summary, the hourly site check) uses it, and the drift texts say «approva il rilascio su GitHub» (v1.08a made them follow the
+  setting). The drift notice and the uptime alert no longer say Netlify. `ops_health` prompt version `2422561503` (its sentences for
+  uptime and app_deployed name GitHub, not Netlify).
+- **`fabula-tablet/config.js`** (loaded first by every page): on `*.netlify.app` every page goes to the same page on app.bubalina.it,
+  path, ?query and #hash kept (the Masseria's QR and the trade links keep working), after removing the old address's service worker
+  and caches. The tablet (`index.html`) first waits until nothing is waiting to be sent from the old address (`fabula_queue`, refused
+  saves not yet reported, photos in IndexedDB), showing a bar with the count, then carries `?device=` and `?device_uid=`; on the new
+  address the id is kept (only if none is there yet) and removed from the address bar. Sign-ins are per address: everyone signs in once.
+  sw `perla-v75`.
+- **Netlify** (`netlify.toml`, both copies): builds only when `fabula-tablet/config.js` changes, so this release deploys the forwarding
+  there once and later releases spend no Netlify credits.
+- **`invite-user`** and **`tools/watch/check.sh`**: the fallback and the outside watcher's site are app.bubalina.it.
+- **Before approving:** Supabase → Authentication → URL Configuration: Site URL `https://app.bubalina.it`, Redirect URLs
+  `https://app.bubalina.it/**` (`RELEASING.md`).
+- Tests: `prod-test/test_v108b_move.sql` 10/10; `tablet-test/v108b_e2e.py` 10/10; `infra-test/test_infra.sql` and `test_v108_release.sql`
+  updated for the new address.
+
 ## Releases apply themselves after one approval (v1.08)
 Project doc `claude/audit-fixes-v108-2026-10-15.md`; how to use it: `RELEASING.md`. Until v1.07 each release was a list of manual
 steps for Nick (temporary Supabase token and CLI deploy from the Mac, SQL Editor paste, git merge and push, Netlify deploy at 15 of

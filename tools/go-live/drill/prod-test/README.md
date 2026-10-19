@@ -266,3 +266,12 @@ before anything changed; no version → short commit; a non-GitHub link dropped;
 drift texts (approve the release, no SQL Editor, no «git push»); who sees what (no login can record, the owner reads, a profile without
 Sistema and anon do not); Sistema and «Perché?» labels; no new security finding. The pipeline itself (git, the Supabase API and CLI)
 is `tools/release/test_release.py`, also run by `tools/ci/run_sql_ci.py`.
+
+`test_v108b_move.sql` (v1.08b, the app moves to https://app.bubalina.it, database side) — `infra.site_url` is the new address and its
+description no longer says Netlify; a Telegram message's «apri» link opens app.bubalina.it; no database function names the old address,
+and only `infra_checks` still mentions Netlify (the v1.08 wording, used only while the setting is a netlify.app address); the drift
+notice says «approva il rilascio su GitHub»; the uptime alert says «GitHub Pages / Supabase»; «App pubblicata = GitHub» behind says to
+approve the release; the system-check bot's prompt version; no new security finding. 19/10/2026: 10/10 PASS on a fresh replay of the 199
+migrations. Updated on purpose: `infra-test/test_infra.sql` expects the GitHub wording again (the replay now has the new address), and
+`test_v108_release.sql` sets the Netlify address before its Netlify-wording check. The forwarding from the old address is
+`tablet-test/v108b_e2e.py`.

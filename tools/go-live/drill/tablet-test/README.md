@@ -204,6 +204,13 @@ and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.
     restore_drill, so the page gets the database's own brief with `pre_opening` added on the first load (what the database sends on a
     quiet day is covered by prod-test/test_v107_quiet.sql). Expect `FAILURES: none` (5 checks).
 
+30. `python3 v108b_e2e.py` (v1.08b, the app moves to https://app.bubalina.it) — both addresses are served from the local files through
+    Playwright routes, so nothing reaches Netlify, GitHub or Supabase. A Console page on the old Netlify address goes to the same page
+    on app.bubalina.it with ?query and #hash; the tablet with nothing waiting goes too, as the same tablet (name and id carried, the id
+    kept on the new address and removed from the address bar); with records waiting it stays, says why with the count, and goes by
+    itself once the queue is empty; a refused save already reported does not hold it back, one not yet reported does; on the new
+    address nothing moves and an id already there is not replaced. Expect `FAILURES: none` (10 checks).
+
 Last run 15/10/2026 (v1.07), same setup with the 197 migrations, all 25 suites in the usual order (the 24 above with v106_e2e after
 v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same database once the local server restarted):
 `FAILURES: none` in each, v107_e2e 5/5.

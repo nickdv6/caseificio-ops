@@ -8,11 +8,11 @@
 // POST { action: "deactivate", staff_id } / { action: "reactivate", staff_id } → staff.active false/true and bans/unbans the login.
 // Redirect: the e-mail link opens benvenuto.html on the site (Supabase → Authentication → URL configuration must allow it).
 // v1.08: the site's address comes from the database (setting infra.site_url, the same one every other link uses), so moving the app
-// (v1.08b: app.bubalina.it) is one setting; SITE_URL / the old Netlify address are only fallbacks.
+// is one setting (v1.08b: app.bubalina.it); SITE_URL / the app's address are only fallbacks.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const SITE_FALLBACK = Deno.env.get("SITE_URL") ?? "https://flourishing-swan-6729c4.netlify.app";
+const SITE_FALLBACK = Deno.env.get("SITE_URL") ?? "https://app.bubalina.it";
 // deno-lint-ignore no-explicit-any
 async function siteUrl(admin: any): Promise<string> {
   try {

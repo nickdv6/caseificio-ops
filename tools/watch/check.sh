@@ -15,7 +15,7 @@
 #   - the run still fails on a confirmed problem, so GitHub also e-mails the repo owner.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
-SITE="${SITE:-https://flourishing-swan-6729c4.netlify.app}"
+SITE="${SITE:-https://app.bubalina.it}"     # v1.08b: GitHub Pages (was the Netlify address)
 SB="${SB:-https://ojkquhzaeypsphncjqwy.supabase.co}"
 KEY="${KEY:-sb_publishable_Kl7c4NqV44tjDYs6IbpA0Q_S5ENoKq3}"   # publishable key, the same one shipped in fabula-tablet/config.js
 STATE_FILE="${STATE_FILE:-.watch-state/state}"
@@ -90,7 +90,7 @@ elif [ $((now - prev_at)) -ge $((REALERT_HOURS * 3600)) ] && [ "$quiet" = false 
 else why=; fi
 if [ -n "$why" ]; then
   head=$([ "$why" = reminder ] && echo "⚠️ Caseificio: il problema c'è ancora (controllo esterno, GitHub)" || echo "⚠️ Caseificio: problema confermato dal controllo esterno (GitHub, fuori da Supabase)")
-  msg=$(printf '%s\n\n%s\n\nControllato due volte a 3 minuti di distanza. Al banco e in produzione: foglio «Sistema giù: cosa fare». Nick: Supabase, Netlify e la board.%s' \
+  msg=$(printf '%s\n\n%s\n\nControllato due volte a 3 minuti di distanza. Al banco e in produzione: foglio «Sistema giù: cosa fare». Nick: Supabase, GitHub e la board.%s' \
     "$head" "$(echo "$msgs" | sed 's/^/• /')" "${RUN_URL:+
 
 $RUN_URL}")
@@ -100,6 +100,6 @@ else
   echo "Stesso problema già segnalato su Telegram: prossimo promemoria dopo ${REALERT_HOURS} ore (non di notte)."
   echo "fail $prev_at $sig" > "$STATE_FILE"
 fi
-{ echo "## Caseificio: problema confermato"; echo; echo "$msgs" | sed 's/^/- /'; echo; echo "Controllato due volte a 3 minuti di distanza. Vedi Supabase, Netlify e la board."; } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+{ echo "## Caseificio: problema confermato"; echo; echo "$msgs" | sed 's/^/- /'; echo; echo "Controllato due volte a 3 minuti di distanza. Vedi Supabase, GitHub e la board."; } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 echo "::error::$summary"
 exit 1
