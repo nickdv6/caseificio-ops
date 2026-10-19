@@ -136,7 +136,8 @@
         if (a === b) return e.textContent = 'Scegli una password diversa da quella attuale.';
         const ok = $('ui-pwok'); ok.disabled = true;
         try {
-          const { data: { user } } = await sb.auth.getUser(); const email = user && user.email;   // review L4: the login's e-mail now, not the stored one
+          const { data: { user }, error: ue } = await sb.auth.getUser(); const email = user && user.email;   // review L4: the login's e-mail now, not the stored one
+          if (ue && PERM.isNetworkError(ue)) return e.textContent = 'Nessuna connessione: riprova quando c\'è rete.';
           if (!email) return e.textContent = 'Sessione scaduta: esci e rientra, poi riprova.';
           const chk = await sb.auth.signInWithPassword({ email, password: a });
           if (chk.error) return e.textContent = /invalid/i.test(chk.error.message) ? 'La password attuale non è corretta.' : chk.error.message;

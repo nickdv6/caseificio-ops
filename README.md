@@ -41,8 +41,9 @@ Staff onboarding, the next improvement after the release pipeline (re-score 15/1
   length, 12 hours later (`close_stale_shifts`, job `fabula_close_stale_shifts` at :07: a badge-out queued offline is accepted up to
   12 hours late with its own time and must still find the shift open); the tablet's «In turno» lists active people only.
 - **Review (one High fixed):** the link's login is chosen and bound to the person (`access_link_bind`, errcode P0409 for a login that
-  belongs to someone else) BEFORE its password is written; `add`, `access_link` and `update_email` refuse an e-mail that is someone
-  else's login. A dead link tells only why; the link leaves the address bar at once; a failed save never reopens a replaced link; a
+  belongs to someone else) BEFORE its password is written; `add`, `access_link` and `update_email` (and the old `invite`, `link`,
+  `resend`, still there for app copies cached on devices) refuse an e-mail that is someone else's login. A second check confirmed the
+  fixes (the takeover script now gets «conflict» and the password stays). A dead link tells only why; the link leaves the address bar at once; a failed save never reopens a replaced link; a
   blocked login is unblocked when the active person sets the password; the mentions use plain text matching.
 - **Telegram links** for someone's phone last `auth.link_days` too (they lasted 24 h).
 - **C-23** «Cambia password» (current, new, repeat) is in the user menu of every page that uses the shared shell; **C-20** «Esci» asks

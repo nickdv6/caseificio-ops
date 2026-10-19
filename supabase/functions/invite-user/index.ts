@@ -133,10 +133,12 @@ Deno.serve(async (req) => {
       const { data: other } = await admin.from("staff").select("id, full_name").eq("email", email).neq("id", staff.id).maybeSingle();
       if (other) return json({ error: `Questa email è già di ${other.full_name}` }, 409);
       let was: string | null = null;
-      const own = await loginOwner(email, staff.id);
-      if (own) return TAKEN(own.staff.full_name);
+      const taken = await findAuthUser(email);
+      if (taken) {
+        const { data: owner } = await admin.from("staff").select("full_name").eq("auth_user_id", taken.id).neq("id", staff.id).maybeSingle();
+        if (owner) return TAKEN(owner.full_name);
+      }
       if (staff.auth_user_id) {
-        const taken = await findAuthUser(email);
         if (taken && taken.id !== staff.auth_user_id) return json({ error: "Questa email ha già un altro account di accesso: scegline un'altra" }, 409);
         const { data: cur } = await admin.auth.admin.getUserById(staff.auth_user_id);
         was = cur?.user?.email ?? null;
@@ -174,6 +176,8 @@ Deno.serve(async (req) => {
         if (error) throw error;
         staff = data;
       }
+      const own = await loginOwner(email, staff!.id);
+      if (own) return TAKEN(own.staff.full_name);
       let authUser = await findAuthUser(email);
       let invited = false;
       if (!authUser) {
@@ -194,12 +198,14 @@ Deno.serve(async (req) => {
       if (!staff.active) return json({ error: "Persona disattivata" }, 400);
       if (!staff.email) return json({ error: "Manca l'email" }, 400);
       const email = staff.email.toLowerCase();
+      const own = await loginOwner(email, staff.id);
+      if (own) return TAKEN(own.staff.full_name);
       const existing = await findAuthUser(email);
       const type = existing ? "recovery" : "invite";   // recovery also confirms an invited account that never finished
       const { data, error } = await admin.auth.admin.generateLink(
         existing ? { type: "recovery", email, options: { redirectTo } } : { type: "invite", email, options: { redirectTo, data: { full_name: staff.full_name } } });
       if (error) throw error;
-      if (data.user && staff.auth_user_id !== data.user.id) await admin.from("staff").update({ auth_user_id: data.user.id }).eq("id", staff.id);
+      if (data.user && staff.auth_user_id !== data.user.id) { const { error: le } = await admin.from("staff").update({ auth_user_id: data.user.id }).eq("id", staff.id); if (le) throw le; }
       const link = `${SITE}/benvenuto.html?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=${type}`;
       return json({ ok: true, link, type, has_password: !!(existing && existing.last_sign_in_at) });
     }
@@ -209,6 +215,8 @@ Deno.serve(async (req) => {
       if (!staff) return json({ error: "Persona non trovata" }, 404);
       if (action === "resend") {
         if (!staff.email) return json({ error: "Manca l'email" }, 400);
+        const own = await loginOwner(staff.email.toLowerCase(), staff.id);
+        if (own) return TAKEN(own.staff.full_name);
         const existing = await findAuthUser(staff.email.toLowerCase());
         if (existing && existing.last_sign_in_at) {
           const { error } = await userClient.auth.resetPasswordForEmail(staff.email, { redirectTo });

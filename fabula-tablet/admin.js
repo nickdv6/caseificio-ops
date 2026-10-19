@@ -518,7 +518,7 @@
   function showOffboard(sum) {
     let box = $('usr-done'); if (!box) { box = document.createElement('div'); box.id = 'usr-done'; box.className = 'card'; box.style.marginTop = '12px'; $('users').before(box); }
     const done = [sum.shift_closed ? 'turno aperto chiuso' : '', sum.rota_removed ? `${sum.rota_removed} ${sum.rota_removed === 1 ? 'turno futuro tolto' : 'turni futuri tolti'}` : '',
-      sum.links_revoked ? 'link di accesso annullato' : '', sum.telegram_unlinked ? 'Telegram scollegato' : '', sum.pin_removed ? 'PIN tolto' : '', 'accesso bloccato'].filter(Boolean);
+      sum.links_revoked ? 'link di accesso annullato' : '', sum.telegram_unlinked ? 'Telegram scollegato' : '', sum.pin_removed ? 'PIN tolto' : '', sum.blocked === false ? '' : 'accesso bloccato'].filter(Boolean);
     box.innerHTML = `<b>${esc(sum.full_name)} è disattivato</b><div class="status">${esc(done.join(' · '))}</div>
       ${(sum.mentions || []).length ? `<div style="margin-top:6px"><b>Ancora a suo nome, da cambiare a mano:</b><ul style="margin:4px 0 0 18px;padding:0">${sum.mentions.map(m => `<li>${esc(m.kind)} «${esc(m.what)}» <small class="status">· ${esc(m.where)}</small></li>`).join('')}</ul></div>` : ''}
       <div class="row" style="margin-top:6px"><button class="btn sm sec" type="button" id="usr-done-x">Chiudi</button></div>`;
@@ -633,7 +633,7 @@
         lines.push('', 'Si può riattivare in qualsiasi momento.');
         if (!confirm(lines.join('\n'))) return;
         const r = await callUsers({ action: 'deactivate', staff_id: p.id });
-        await loadUsers(); showOffboard(r.summary || { full_name: p.full_name }); toast(r.warning || `${p.full_name} disattivato`, r.warning ? 'err' : '');
+        await loadUsers(); showOffboard({ ...(r.summary || { full_name: p.full_name }), blocked: !r.warning }); toast(r.warning || `${p.full_name} disattivato`, r.warning ? 'err' : '');
       });
       else b('Riattiva', 'sec', async () => {
         await callUsers({ action: 'reactivate', staff_id: p.id });

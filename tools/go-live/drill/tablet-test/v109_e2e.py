@@ -239,7 +239,11 @@ try:
     # C-13 change the e-mail of someone with a login
     click_in_card(ap, f'Bruna Login{RUN}', 'Cambia')
     ap.evaluate(f"(() => {{ const i = {card(f'Bruna Login{RUN}')}.querySelector('.p-email input'); i.value = 'BRUNA.NUOVA{RUN}@test.it'; i.dispatchEvent(new Event('input', {{ bubbles: true }})); }})()")
-    dl.answers = [True]; click_in_card(ap, f'Bruna Login{RUN}', 'Salva email'); ap.wait_for_timeout(3500)
+    dl.answers = [True]; click_in_card(ap, f'Bruna Login{RUN}', 'Salva email')
+    for _ in range(40):   # the change goes through the server function (which looks through every login): wait for it, not a fixed time
+        if sql1(f"select email from fabula.staff where id = '{BRUNA_S}'") == f'bruna.nuova{RUN}@test.it': break
+        ap.wait_for_timeout(500)
+    ap.wait_for_function(f"(() => {{ const c = {card(f'Bruna Login{RUN}')}; return c && c.querySelector('.p-email b') && c.querySelector('.p-email b').textContent === 'bruna.nuova{RUN}@test.it'; }})()", timeout=20000)
     em = sql1(f"select s.email || '|' || u.email from fabula.staff s join auth.users u on u.id = s.auth_user_id where s.id = '{BRUNA_S}'")
     check('C-13: «Cambia email» of someone with a login asks, then changes the login e-mail too (one account, no second one)',
           any('Cambia anche l\'email con cui Bruna entra' in x for x in dl.log) and em == f'bruna.nuova{RUN}@test.it|bruna.nuova{RUN}@test.it'
