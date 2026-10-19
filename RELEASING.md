@@ -22,14 +22,17 @@ Nothing is asked when a merge changes only documents, tests or tools.
 ### If a release stops
 - **The database is never half-changed.** All the release's migrations go in one transaction: either all of them or none.
 - **Server functions deployed before the stop stay deployed.** They are always written to work with the database as it was before.
-- Tell Claude. After the fix: GitHub → Actions → Release → the run → **Re-run all jobs**, or the next merge carries it.
+- Tell Claude. The fix comes as a new merge, so you approve the new run it creates.
+- **Re-run all jobs** on the stopped run only when the cause was outside the code: an expired token (after replacing the secret) or Supabase or GitHub not answering. A re-run deploys the same commit again.
+- A release can also stop before you are asked (the plan or the rehearsal found a problem). The Bot feed then says «Rilascio … bloccato prima dell'approvazione»: nothing changed.
 
 ### One-time setup (before the first automatic release, v1.08)
 Do these in order (about 15 minutes):
 
 1. **Supabase token for GitHub.** Supabase → Account → **Access Tokens** (https://supabase.com/dashboard/account/tokens):
-   1. **Generate new token**, named «GitHub release», with the longest expiry offered.
+   1. **Generate new token**, named «GitHub release», with an expiry of about a year. Put a reminder in your calendar a week before.
    2. Copy it (it is shown once).
+   - The token opens every project of your Supabase account, not only Caseificio. GitHub keeps it encrypted and gives it only to the release steps you approve.
    - When it expires, a release stops with «token non valido o scaduto»: make a new one and replace the secret in step 2.
 2. **GitHub environment «live»**, the approval step. Repo nickdv6/caseificio-ops → **Settings** → **Environments** → **New environment**:
    1. Name: `live` → **Configure environment**.
@@ -43,7 +46,11 @@ Do these in order (about 15 minutes):
 4. **DNS for app.bubalina.it**, where bubalina.it's DNS is managed (GoDaddy) → **DNS** → **Add record**:
    - type `CNAME`, name `app`, value `nickdv6.github.io`, TTL 1 hour.
    - This only adds an address. The shop on www.bubalina.it does not change.
-5. Tell Claude the setup is done. Claude merges v1.08, and step 2 of «Each release» follows: approve it.
+5. **Recommended: verify bubalina.it on GitHub**, so no other GitHub account can ever publish on a bubalina.it address.
+   1. GitHub → your avatar → **Settings** → **Pages** → **Add a domain** → `bubalina.it`.
+   2. Add the TXT record it shows in GoDaddy.
+   3. Back on GitHub, **Verify**.
+6. Tell Claude the setup is done. Claude merges v1.08, and step 2 of «Each release» follows: approve it.
 
 After v1.08:
 - the app answers on https://app.bubalina.it as well as on the old Netlify address;
@@ -65,7 +72,8 @@ After v1.08:
 - **Tests:**
   - `sudo python3 tools/ci/run_sql_ci.py`: every SQL suite and `tools/release/test_release.py`;
   - the browser suites in `tools/go-live/drill/tablet-test`.
-- **What will deploy:** `git fetch --tags && python3 tools/release/release.py plan --sha HEAD` lists it against the live commit.
+- **What will deploy:** `python3 tools/release/release.py plan --sha HEAD --live <live commit>` lists it against the live commit.
+  - The live commit is the last «ok» row of `fabula.releases`, read with `release.py live --source public`, or with the Supabase connector.
 - **Ship:** push the branch. When Nick says go: `git checkout main && git merge --ff-only <branch> && git push origin main`. Then watch the run.
 - **Without the pipeline** (GitHub down, the token revoked):
   - Database: `python3 tools/release/release.py editor-script --live-last <the live history's last version>` writes the SQL Editor script, as before v1.08.
@@ -77,14 +85,19 @@ After v1.08:
 
 | Job / step | What it does | Secrets |
 |---|---|---|
-| plan | The commit must be on `main`. It lists what changed since the live commit: the git tag `live`, or `tools/release/baseline.txt` before the first release. A STOP (a migration that cannot run in one transaction, a rewritten history) makes it red and nobody is asked. | none |
+| plan | The commit must be on `main`. The live commit comes from the database (`public.fabula_live_release()`, the last «ok» release, read with the publishable key), or `tools/release/baseline.txt` before the first release. It lists what changed since then. A STOP makes it red and nobody is asked: a migration that cannot run in one transaction, a live migration removed from GitHub, a badly named file, a rewritten history. | none |
 | plan · rehearsal | Only when the database changes. A scratch Postgres is built from the live commit's migrations (`replay.sh` with `MIGRATIONS_DIR`). The release script must apply on it and a second run must be refused. | none |
-| apply | Waits for Nick's approval of the `live` environment. The environment only allows `main`. | `SUPABASE_ACCESS_TOKEN`, on two steps |
-| apply · check | Reads the tag again. A newer release finished meanwhile → nothing to do. | — |
-| apply · deploy | 1. Reads the live migration history first: every live version must exist on GitHub, otherwise STOP before anything changes. 2. Functions (`supabase functions deploy --use-api`, checked on Supabase afterwards). 3. Database in `release.json`'s order: one transaction through the Management API (the SQL Editor's path) with the same guard as the old scripts, then the history is read again. It stops at the first failure. | yes |
+| plan · blocked | When the plan or the rehearsal fails, the Bot feed and Telegram say «bloccato prima dell'approvazione». It goes through `public.fabula_outside_report(…, 'release', …)`, the outside watcher's channel. | `BACKUP_EXPORT_TOKEN`, that step only |
+| apply | Waits for Nick's approval of the `live` environment. The environment only allows `main`. | `SUPABASE_ACCESS_TOKEN` on the steps that call Supabase |
+| apply · live, check | Reads the live commit again through the Management API. A newer release finished meanwhile → nothing to do. A rewritten history → STOP, recorded. | yes |
+| apply · CLI | Supabase CLI 2.118.0 from its GitHub release, checked against a pinned sha256, installed in a step with no secret. | — |
+| apply · deploy | 1. Reads the live migration history first: every live version must exist on GitHub, otherwise STOP before anything changes. 2. Functions (`supabase functions deploy --use-api`, checked on Supabase afterwards). 3. Database in `release.json`'s order. | yes |
+| apply · deploy (database) | One transaction through the Management API (the SQL Editor's path), with the same guard as the old scripts. Each file starts from the default search_path, as in CI. A marker set at the start must still be set at the end, so a file that ends the transaction itself fails the release and its rehearsal. A lost answer is settled by reading the history again for 3 minutes. It stops at the first failure. | yes |
 | apply · site | `fabula-tablet/` is published on GitHub Pages, and `sw.js` must answer with the new version. If it does not yet, that is a warning: DNS and HTTPS can lag. | — |
-| apply · record | `fabula.release_record()`: a row in `fabula.releases`, a message in the Bot feed, the line «Rilasci automatici» in Panoramica → Sistema. | yes |
-| apply · tag | The tag `live` moves to the released commit, only when every step worked. | GitHub token |
+| apply · record | `fabula.release_record()`: a row in `fabula.releases`, a message in the Bot feed, the line «Rilasci automatici» in Panoramica → Sistema. An «ok» row is what makes the commit live: no git tag, nothing written to the repo. | yes |
+
+The `github-pages` environment that GitHub creates for Pages is not used by this workflow. Only people with write access to the
+repository (Nick, Claude) could publish through it, from a workflow of their own.
 
 Tests: `tools/release/test_release.py` (in CI) covers:
 - small git repos;

@@ -110,62 +110,82 @@ def test_plan():
     md = R.summary_md(p)
     check('plan: the summary names the parts', 'Server functions | alpha' in md and '20260102000000 c' in md and 'publish fabula-tablet' in md, md)
 
-    run('git', '-C', g.dir, 'tag', 'live', c1)
     g.write('supabase/functions/beta/beta_test.ts', 'export const t = 1\n')
     g.write('fabula-tablet/README.md', 'app 2\n')
     c2 = g.commit('tests and readme only')
-    p = R.plan(c2)
-    check('plan: the tag «live» is the base once it exists', p['base'] == c1 and p['base_from'] == 'tag live', p['base_from'])
+    p = R.plan(c2, live=c1)
+    check('plan: the database\'s live commit is the base once there is one', p['base'] == c1 and p['base_from'] == 'database', p['base_from'])
     check('plan: a test file or the app README deploy nothing', not p['anything'] and p['functions'] == [] and not p['site'], p)
 
     g.write('supabase/functions/_shared/util.ts', 'export const x = 3\n')
     c3 = g.commit('shared')
-    p = R.plan(c3)
+    p = R.plan(c3, live=c2)
     check('plan: a change in _shared redeploys every function', p['functions'] == ['alpha', 'beta'], p['functions'])
+    g.write('supabase/functions/deno.json', '{}\n')
+    c3b = g.commit('root file')
+    check('plan: a file at the functions\' root (deno.json) redeploys every function', R.plan(c3b, live=c3)['functions'] == ['alpha', 'beta'])
 
-    run('git', '-C', g.dir, 'tag', '-f', 'live', c3)
     g.write('supabase/config.toml', '[functions.beta]\nverify_jwt = true\n')
     c4 = g.commit('jwt')
-    p = R.plan(c4)
+    p = R.plan(c4, live=c3b)
     check('plan: a verify_jwt change in config.toml redeploys that function', p['functions'] == ['beta'], p['functions'])
     check('function config: a function not listed verifies the JWT', R.function_config(c3).get('alpha', True) is True and R.function_config(c3)['beta'] is False)
 
-    run('git', '-C', g.dir, 'tag', '-f', 'live', c4)
     g.write('tools/release/release.json', json.dumps({'version': 'v9', 'force': ['site', 'functions']}))
     c5 = g.commit('force')
-    p = R.plan(c5)
+    p = R.plan(c5, live=c4)
     check('plan: «force» in the release that writes release.json', p['site'] and p['functions'] == ['alpha', 'beta'] and p['meta']['version'] == 'v9', p)
-    run('git', '-C', g.dir, 'tag', '-f', 'live', c5)
+    g.write('tools/release/release.json', json.dumps({'version': 'v10'}))
+    c5b = g.commit('next release before v9 went live')
+    p = R.plan(c5b, live=c4)
+    check('plan: a «force» of a release that never went live is kept by the next one', p['site'] and p['functions'] == ['alpha', 'beta'], p)
     g.write('docs.md', 'x\n')
     c6 = g.commit('docs')
-    p = R.plan(c6)
-    check('plan: «force» is not repeated by the next release', not p['anything'], p)
+    p = R.plan(c6, live=c5b)
+    check('plan: «force» is not repeated once its release is live', not p['anything'], p)
 
-    check('relation: the live commit itself → same', R.plan(c5)['relation'] == 'same')
-    check('relation: an older commit → behind (superseded)', R.plan(c4)['relation'] == 'behind')
+    check('relation: the live commit itself → same', R.plan(c5, live=c5)['relation'] == 'same')
+    check('relation: an older commit → behind (superseded)', R.plan(c4, live=c5)['relation'] == 'behind')
     run('git', '-C', g.dir, 'checkout', '-q', '-b', 'side', c3)
     g.write('side.txt', 'x\n')
     side = g.commit('side')
     run('git', '-C', g.dir, 'checkout', '-q', 'main')
-    check('relation: a commit that does not contain the live one → diverged', R.plan(side)['relation'] == 'diverged')
+    check('relation: a commit that does not contain the live one → diverged', R.plan(side, live=c5)['relation'] == 'diverged')
+    try:
+        R.plan(c6, live='0' * 40)
+        check('plan: a live commit GitHub does not have → STOP', False)
+    except R.Stop as e:
+        check('plan: a live commit GitHub does not have → STOP', 'non è nella storia' in str(e), str(e))
 
     g.write('supabase/migrations/20260103000000_d.sql', 'begin;\ncreate table fabula.t4 (id int);\ncommit;\n')
     c7 = g.commit('begin commit')
-    p = R.plan(c7)
+    p = R.plan(c7, live=c6)
     check('plan: a migration with its own begin/commit is a STOP before approval', any('STOP 20260103000000' in w for w in p['warnings']), p['warnings'])
-    rc = R.main(['plan', '--sha', c7])
+    rc = R.main(['plan', '--sha', c7, '--live', c6])
     check('plan: the command exits 2 on a STOP (no approval asked)', rc == 2)
     g.rm('supabase/migrations/20260103000000_d.sql')
-    g.write('supabase/migrations/20260103000000_d.sql', 'do $$ begin\n  perform 1;\nend $$;\ncreate function fabula.f() returns int language plpgsql as $f$ begin commit; return 1; end $f$;\n')
+    g.write('supabase/migrations/20260103000000_d.sql', 'do $$ begin\n  perform 1;\nend $$;\ncreate function fabula.f() returns int language plpgsql as $f$ begin commit; return 1; end $f$;\n'
+            "select case when 1 = 1 then 'a;commit;' else 'b'\nend;\n-- commit;\n/* end; */ select 1;\n")
     c8 = g.commit('begin inside bodies')
-    check('lint: begin/commit inside $$ bodies is fine', not R.stops(R.plan(c8)), R.plan(c8)['warnings'])
+    check('lint: begin/commit inside $$ bodies, strings, comments and CASE … END is fine', not R.stops(R.plan(c8, live=c6)), R.plan(c8, live=c6)['warnings'])
+    for bad in ('create table a (x int);\nend;', 'select 1; end transaction;', 'abort;', 'commit work;', 'commit and chain;', 'begin transaction;',
+                'start transaction isolation level serializable;', '/* x */ commit;', "select '--'; commit;", 'savepoint s1;', 'vacuum t;',
+                'alter system set work_mem = 1;', 'create database x;', 'prepare transaction \'t\';'):
+        check(f'lint: «{bad[:28]}» is refused', any(w.startswith('STOP') for w in R.lint_migration(bad, 'v')), R.lint_migration(bad, 'v'))
     check('lint: concurrently and psql backslash commands are refused',
           any('concurrently' in w for w in R.lint_migration('create index concurrently i on t(x);', 'v'))
           and any('backslash' in w for w in R.lint_migration('\\set x 1\nselect 1;', 'v')))
     g.write('supabase/migrations/20260101000100_b.sql', 'create table fabula.t2 (id int, x int);\n')
     c9 = g.commit('edit applied migration')
-    p = R.plan(c9)
+    p = R.plan(c9, live=c8)
     check('plan: editing a migration that is already live is a warning', p['migrations_edited'] == ['20260101000100'], p['migrations_edited'])
+    g.rm('supabase/migrations/20260102000000_c.sql')
+    c10 = g.commit('remove live migration')
+    check('plan: a live migration removed from GitHub is a STOP before approval', any('removed from GitHub' in w for w in R.stops(R.plan(c10, live=c9))))
+    g.write('supabase/migrations/20260102000000_c.sql', 'create table fabula.t3 (id int);\n')
+    g.write('supabase/migrations/20261016_fix.sql', 'select 1;\n')
+    c11 = g.commit('badly named migration')
+    check('plan: a migration file without the 14-digit version is a STOP', any('14 digits' in w for w in R.stops(R.plan(c11, live=c9))))
     shutil.rmtree(g.dir, ignore_errors=True)
 
 
@@ -211,6 +231,23 @@ def test_script():
     r = as_pg(None, db, path)
     check('script: the history changed since it was built → STOP', r.returncode != 0 and 'non finisce più' in r.stderr, r.stderr[-200:])
 
+    # the marker: a file that ends the transaction makes the script fail (and its rehearsal: nobody is asked)
+    pending_tx = [('20260104000000', 'endtx', 'create table t6 (id int);\nend;\ncreate table t7 (id int);\n')]
+    open(path, 'w').write(R.build_script(pending_tx, max(live), 'test'))
+    r = as_pg(None, db, path)
+    check('script: a file that ends the transaction itself is caught by the marker (no history row)',
+          r.returncode != 0 and 'chiuso la transazione' in r.stderr
+          and psql_at(db, "select count(*) from supabase_migrations.schema_migrations where version = '20260104000000'") == '0', r.stderr[-300:])
+    psql_at(db, 'drop table if exists t6; drop table if exists t7;')
+    # each file starts from the default search_path, as in CI (one session per file)
+    psql_at(db, 'create schema if not exists other;')
+    pending_sp = [('20260105000000', 'sp1', 'set search_path = other, public;\ncreate table sp_a (id int);\n'),
+                  ('20260105000100', 'sp2', 'create table sp_b (id int);\n')]
+    open(path, 'w').write(R.build_script(pending_sp, max(live), 'test'))
+    r = as_pg(None, db, path)
+    check('script: a search_path set by one file does not reach the next one',
+          r.returncode == 0 and psql_at(db, "select to_regclass('other.sp_a') is not null and to_regclass('public.sp_b') is not null and to_regclass('other.sp_b') is null") == 't',
+          r.stderr[-300:])
     try:
         R.pending_against(live + ['20260109000000'], c2)
         check('pending: a live version GitHub does not have → STOP', False)
@@ -256,6 +293,21 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
     calls = []
     fn_jwt = {}
     stale_function = False
+    mode = None
+    rest_missing = False
+    reports = []
+
+    def _rest(self, fn, body):
+        if self.headers.get('apikey') != 'test-publishable-key':
+            return self._send(401, {'message': 'Invalid API key'})
+        if fn == 'fabula_live_release':
+            if FakeApi.rest_missing:
+                return self._send(404, {'code': 'PGRST202', 'message': 'Could not find the function public.fabula_live_release'})
+            return self._send(200, json.loads(psql_at(FakeApi.db, 'select coalesce(public.fabula_live_release(), \'null\'::jsonb)')))
+        if fn == 'fabula_outside_report':
+            FakeApi.reports.append(body)
+            return self._send(200, {'ok': True})
+        self._send(404, {'message': 'not found'})
 
     def log_message(self, *a):
         pass
@@ -286,16 +338,26 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get('Content-Length') or 0)
         body = json.loads(self.rfile.read(n) or b'{}')
         FakeApi.calls.append(('POST', self.path, body.get('query', '')[:120]))
+        if self.path.startswith('/rest/v1/rpc/'):                  # PostgREST with the publishable key
+            return self._rest(self.path.rsplit('/', 1)[-1], body)
         if not self._auth():
             return
         if not self.path.endswith('/database/query'):
             return self._send(404, {'message': 'not found'})
+        script = body['query'].lstrip().startswith('-- ')            # the release script (not a short query)
+        if script and FakeApi.mode == 'disconnect':                  # the answer is lost and nothing ran
+            FakeApi.mode = None
+            self.close_connection = True
+            return
         f = tempfile.NamedTemporaryFile('w', suffix='.sql', delete=False, dir='/tmp')
         f.write(body['query'])
         f.close()
         os.chmod(f.name, 0o644)
         r = run('su', 'postgres', '-c', f'psql -X -q --csv -v ON_ERROR_STOP=1 -d {FakeApi.db} -f {f.name}', cwd='/tmp', check_rc=False)
         os.unlink(f.name)
+        if script and FakeApi.mode == 'slow':                        # it ran, but the answer comes too late
+            FakeApi.mode = None
+            time.sleep(3)
         if r.returncode != 0:
             return self._send(400, {'message': 'Failed to run sql query: ' + r.stderr.strip()})
         rows = list(csv.DictReader(io.StringIO(r.stdout))) if r.stdout.strip() else []
@@ -366,7 +428,7 @@ def test_deploy_record():
 
     rc = R.main(['deploy', '--sha', c1, '--out', out])
     res = json.load(open(out))
-    check('deploy again (tag not moved): the database step has nothing to do', rc == 0 and res['steps']['database']['status'] == 'skipped', res['steps'])
+    check('deploy again from the same base: the database step has nothing to do', rc == 0 and res['steps']['database']['status'] == 'skipped', res['steps'])
 
     g.write('supabase/migrations/29991231000100_e2e_bad.sql', 'create table fabula.release_e2e_bad (id int);\nselect 1/0;\n')
     c2 = g.commit('c2')
@@ -418,10 +480,77 @@ def test_deploy_record():
     check('deploy: no token → STOP naming the missing secret', rc == 2 and 'SUPABASE_ACCESS_TOKEN' in res.get('error', ''), res.get('error'))
     os.environ['SUPABASE_ACCESS_TOKEN'] = TOKEN
 
-    run('git', '-C', g.dir, 'tag', 'live', c5)
-    rc = R.main(['deploy', '--sha', c1, '--out', out])
+    rc = R.main(['deploy', '--sha', c1, '--live', c5, '--out', out])
     res = json.load(open(out))
     check('deploy: an older commit than the live one does nothing', rc == 2 and 'behind' in res.get('error', ''), res.get('error'))
+
+    # the live commit, read back: Management API (apply job) and PostgREST with the publishable key (plan job)
+    gho = tempfile.mktemp(dir='/tmp')
+    os.environ['GITHUB_OUTPUT'] = gho
+    rc = R.main(['live', '--source', 'api'])
+    check('live (api): the last «ok» release is the live commit', rc == 0 and f'live={c1}' in open(gho).read(), open(gho).read() if os.path.exists(gho) else '')
+    os.environ['SUPABASE_PUBLISHABLE_KEY'] = 'test-publishable-key'
+    R.PUBLIC_URL = R.API
+    open(gho, 'w').close()
+    rc = R.main(['live', '--source', 'public'])
+    check('live (public): the same commit through public.fabula_live_release()', rc == 0 and f'live={c1}' in open(gho).read(), open(gho).read())
+    FakeApi.rest_missing = True
+    open(gho, 'w').close()
+    rc = R.main(['live', '--source', 'public'])
+    check('live (public): before v1.08 (no function) → empty, the baseline is used', rc == 0 and open(gho).read().strip() == 'live=', open(gho).read())
+    FakeApi.rest_missing = False
+    del os.environ['GITHUB_OUTPUT']
+
+    # a lost answer: the history decides
+    R.SQL_TIMEOUT, R.POLL = 1, (0.3, 20)
+    g.write('supabase/migrations/29991231000200_e2e_slow.sql', 'create table fabula.release_e2e_slow (id int);\n')
+    c6 = g.commit('c6')
+    FakeApi.mode = 'slow'
+    rc = R.main(['deploy', '--sha', c6, '--live', c1, '--out', out])
+    res = json.load(open(out))
+    check('deploy: an answer that comes too late, but the migration is in the history → ok («confermato»)',
+          rc == 0 and res['steps']['database']['status'] == 'ok' and 'confermato' in res['steps']['database'].get('detail', ''), res['steps'])
+    g.write('supabase/migrations/29991231000300_e2e_lost.sql', 'create table fabula.release_e2e_lost (id int);\n')
+    c7 = g.commit('c7')
+    R.POLL = (0.1, 5)
+    FakeApi.mode = 'disconnect'
+    rc = R.main(['deploy', '--sha', c7, '--live', c1, '--out', out])
+    res = json.load(open(out))
+    check('deploy: a lost answer and nothing in the history → stopped, «esito non confermato»',
+          rc == 2 and 'esito non confermato' in (res['steps'].get('database') or {}).get('error', ''), res['steps'])
+
+    # a result that cannot be written (the token, Supabase not answering): exit 2 and a note for the «blocked» step
+    rt0 = tempfile.mkdtemp(dir='/tmp')
+    os.environ['RUNNER_TEMP'] = rt0
+    os.environ['SUPABASE_ACCESS_TOKEN'] = 'wrong'
+    rc = R.main(['record', '--sha', c7, '--result', out, '--site-outcome', 'skipped', '--job-status', 'success'])
+    nf = os.path.join(rt0, 'release-blocked.json')
+    note = json.load(open(nf)) if os.path.exists(nf) else {}
+    check('record: a result that cannot be written exits 2 and leaves the reason for the «blocked» step',
+          rc == 2 and 'non registrato' in note.get('error', ''), note)
+    os.environ['SUPABASE_ACCESS_TOKEN'] = TOKEN
+    os.environ['BACKUP_EXPORT_TOKEN'] = 'test-backup-token'
+    rc = R.main(['blocked', '--stage', 'record', '--sha', c7, '--run-url', 'https://github.com/nickdv6/caseificio-ops/actions/runs/8'])
+    rep = FakeApi.reports[-1] if FakeApi.reports else {}
+    check('blocked (record): reported with the stage «record» and the reason',
+          rc == 0 and rep.get('p_detail', {}).get('stage') == 'record' and 'non registrato' in rep['p_detail'].get('error', ''), rep)
+    del os.environ['BACKUP_EXPORT_TOKEN']
+
+    # blocked before the approval: reported with the backup token through the watcher's function
+    rt = tempfile.mkdtemp(dir='/tmp')
+    os.environ['RUNNER_TEMP'] = rt
+    json.dump({'version': 'v9.02', 'sha': c7, 'error': 'prova generale fallita: boom'}, open(os.path.join(rt, 'release-blocked.json'), 'w'))
+    os.environ['BACKUP_EXPORT_TOKEN'] = 'test-backup-token'
+    rc = R.main(['blocked', '--sha', c7, '--run-url', 'https://github.com/nickdv6/caseificio-ops/actions/runs/9'])
+    rep = FakeApi.reports[-1] if FakeApi.reports else {}
+    check('blocked: reported as kind «release» with the backup token, the stage and the reason',
+          rc == 0 and rep.get('p_kind') == 'release' and rep.get('p_token') == 'test-backup-token'
+          and rep.get('p_detail', {}).get('stage') == 'plan' and rep['p_detail'].get('error') == 'prova generale fallita: boom', rep)
+    del os.environ['BACKUP_EXPORT_TOKEN']
+    n = len(FakeApi.reports)
+    R.main(['blocked', '--sha', c7])
+    check('blocked: without the token nothing is sent (GitHub\'s e-mail only)', len(FakeApi.reports) == n)
+    del os.environ['RUNNER_TEMP']
 
     site = tempfile.mktemp(suffix='.json', dir='/tmp')
     class Quiet(http.server.SimpleHTTPRequestHandler):

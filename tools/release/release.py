@@ -1,68 +1,85 @@
 #!/usr/bin/env python3
 """Release pipeline (v1.08, 15/10/2026). Used by .github/workflows/release.yml; RELEASING.md explains the flow for people.
 
-What a release is: everything on GitHub main since the last release. The commit that is live is the git tag `live` (before the
-first automatic release: tools/release/baseline.txt). After CI passes on main, the workflow runs:
+What a release is: everything on GitHub main since the last release. The commit that is live is the last «ok» row of fabula.releases
+(read without secrets through public.fabula_live_release(), with the token through the Management API); before the first automatic
+release it is tools/release/baseline.txt. After CI passes on main, the workflow runs:
 
-    release.py plan      --sha S            no secrets: what changed since `live`, the rehearsal script, the summary for the approval page
-    release.py rehearse  --sha S            no secrets: builds a scratch database at `live` and applies the release script to it
+    release.py live --source public             no secrets: the live commit (the database's word, not a git tag)
+    release.py plan      --sha S --live L       no secrets: what changed since L, the summary for the approval page
+    release.py rehearse  --sha S --live L       no secrets: a scratch database built at L gets the release script
+    release.py blocked   --sha S                (plan failed, or nothing could be recorded) tells the Bot feed / Telegram, with the
+                                                backup token the outside watcher uses
     (Nick approves the «live» environment on GitHub: the only step a person does)
-    release.py check     --sha S            the tag again (another release may have finished meanwhile): stop if superseded
-    release.py deploy    --sha S            server functions and database, in release.json's order; stops at the first failure
+    release.py live --source api                the live commit again (another release may have finished meanwhile)
+    release.py check     --sha S --live L       superseded → nothing to do; a rewritten history → STOP
+    release.py deploy    --sha S --live L       server functions and database, in release.json's order; stops at the first failure
     (the workflow publishes the site to GitHub Pages)
-    release.py site-check --url U           the published sw.js carries the version of fabula-tablet/sw.js
-    release.py record    --sha S            writes the result in fabula.releases (Bot feed «Rilasci», Telegram on a failure)
-    (the workflow moves the tag `live` to S, only when everything succeeded)
+    release.py site-check --url U               the published sw.js carries the version of fabula-tablet/sw.js
+    release.py record    --sha S                writes the result in fabula.releases (Bot feed «Rilasci», Telegram on a failure);
+                                                an «ok» row makes S the live commit
 
 The database step is the same as the SQL Editor scripts of v0.93–v1.07: the live migration history is read first; every live version
 must exist on GitHub (otherwise STOP: the database has something GitHub does not), the new files go in ONE transaction with a guard
-that refuses to run if the history changed meanwhile, and they are recorded in supabase_migrations.schema_migrations.
-SQL goes through the Supabase Management API (POST /v1/projects/{ref}/database/query, the same path as the dashboard's SQL Editor),
-functions through the Supabase CLI; both use the SUPABASE_ACCESS_TOKEN secret of the «live» environment and nothing else.
+that refuses to run if the history changed meanwhile, and they are recorded in supabase_migrations.schema_migrations. A marker set at
+the start of the transaction must still be there at the end: a file that ends the transaction itself makes the release (and its
+rehearsal) fail. SQL goes through the Supabase Management API (POST /v1/projects/{ref}/database/query, the SQL Editor's path),
+functions through the Supabase CLI (a checked download, installed by the workflow before the token is in the environment).
 
 Fallback without the pipeline: `release.py editor-script --live-last <version>` writes the SQL Editor script for the migrations after
 that version (paste it in Supabase → SQL Editor as before).
 """
-import argparse, json, os, re, subprocess, sys, tempfile, time, tomllib, urllib.error, urllib.request
+import argparse, http.client, json, os, re, subprocess, sys, tempfile, time, tomllib, urllib.error, urllib.request
 
 REPO = os.environ.get('RELEASE_REPO') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 TOOLS = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))   # this checkout's tools/ (replay.sh)
 REF = os.environ.get('SUPABASE_PROJECT_REF', 'ojkquhzaeypsphncjqwy')
 API = os.environ.get('SUPABASE_API_URL', 'https://api.supabase.com').rstrip('/')
-CLI = os.environ.get('SUPABASE_CLI', 'npx -y supabase@2.118.0')       # pinned; tests point this at a fake
+PUBLIC_URL = os.environ.get('SUPABASE_URL', f'https://{REF}.supabase.co').rstrip('/')
+CLI = os.environ.get('SUPABASE_CLI', 'npx -y supabase@2.118.0')       # the workflow installs a checked binary; tests use a fake
 BASELINE = 'tools/release/baseline.txt'
 META = 'tools/release/release.json'
+MIG_FILE = re.compile(r'^supabase/migrations/[^/]+\.sql$')
 MIG = re.compile(r'^supabase/migrations/(\d{14})_([A-Za-z0-9_.-]+)\.sql$')
 FN = re.compile(r'^supabase/functions/([A-Za-z0-9_-]+)/(.+)$')
 UA = 'caseificio-ops-release/1.08'
+SQL_TIMEOUT = 600          # the release script; the history is then re-read every POLL[0] s, POLL[1] times, if the answer was lost
+POLL = (15, 12)
+MARK = 'release.one_tx'
 
 
 class Stop(Exception):
     """A reason not to go on, in Italian (it reaches the Bot feed) with the technical detail after « · »."""
 
 
+class Unclear(Stop):
+    """The request may or may not have reached Supabase (timeout, connection cut, an answer that is not JSON)."""
+
+
 # ------------------------------------------------------------------ git
-def git(*args, check=True):
+def git(*args):
     r = subprocess.run(['git', '-C', REPO, *args], capture_output=True, text=True)
-    if check and r.returncode != 0:
+    if r.returncode != 0:
         raise Stop(f'git {" ".join(args[:2])} non riuscito · {r.stderr.strip()[:300]}')
     return r.stdout
 
 
 def commit_of(rev):
-    out = subprocess.run(['git', '-C', REPO, 'rev-parse', '-q', '--verify', rev + '^{commit}'], capture_output=True, text=True)
-    return out.stdout.strip() if out.returncode == 0 else None
+    out = subprocess.run(['git', '-C', REPO, 'rev-parse', '-q', '--verify', (rev or '') + '^{commit}'], capture_output=True, text=True)
+    return out.stdout.strip() if out.returncode == 0 and rev else None
 
 
 def is_ancestor(a, b):
     return subprocess.run(['git', '-C', REPO, 'merge-base', '--is-ancestor', a, b]).returncode == 0
 
 
-def base_commit():
-    """The commit that is live: tag `live`, else the baseline file of the commit being released."""
-    live = commit_of('refs/tags/live')
+def base_commit(live=None):
+    """The commit that is live: the database's last «ok» release when it has one, else the baseline file."""
     if live:
-        return live, 'tag live'
+        c = commit_of(live)
+        if not c:
+            raise Stop(f'Il commit live {live[:7]} (dal database) non è nella storia di GitHub · storia riscritta?')
+        return c, 'database'
     sha = open(os.path.join(REPO, BASELINE), encoding='utf-8').read().split()[0]
     c = commit_of(sha)
     if not c:
@@ -88,10 +105,14 @@ def exists_at(commit, path):
     return subprocess.run(['git', '-C', REPO, 'cat-file', '-e', f'{commit}:{path}'], capture_output=True).returncode == 0
 
 
+def migration_files(commit):
+    return [p for p in git('ls-tree', '-r', '--name-only', commit, 'supabase/migrations').split('\n') if MIG_FILE.match(p)]
+
+
 def migrations_at(commit):
     """{version: (name, path)} of the migration files in that commit; two files with the same version are refused."""
     out = {}
-    for p in git('ls-tree', '-r', '--name-only', commit, 'supabase/migrations').split('\n'):
+    for p in migration_files(commit):
         m = MIG.match(p)
         if not m:
             continue
@@ -140,22 +161,35 @@ def meta(commit):
     return m
 
 
+def forced(base, sha):
+    """«force» of every release.json written between the live commit and this one (a release that never went live is not lost)."""
+    out = set()
+    for c in git('log', '--format=%H', f'{base}..{sha}', '--', META).split():
+        try:
+            out |= set(json.loads(file_at(c, META)).get('force') or []) if exists_at(c, META) else set()
+        except json.JSONDecodeError:
+            pass
+    return out
+
+
 # ------------------------------------------------------------------ plan
-def plan(sha):
-    sha = commit_of(sha) or sha
-    if not commit_of(sha):
-        raise Stop(f'Commit {sha} non trovato')
-    base, base_from = base_commit()
+def plan(sha, live=None):
+    sha = commit_of(sha)
+    if not sha:
+        raise Stop('Commit da rilasciare non trovato')
+    base, base_from = base_commit(live)
     rel = relation(base, sha)
     p = {'sha': sha, 'base': base, 'base_from': base_from, 'relation': rel, 'migrations': [], 'migrations_edited': [],
          'functions': [], 'functions_removed': [], 'site': False, 'prompts': [], 'warnings': [], 'meta': meta(sha), 'anything': False}
     if rel != 'ahead':
         return p
     ch = changes(base, sha)
-    paths = {path for _, path in ch}
-    meta_changed = META in paths
-    force = set(p['meta'].get('force') or []) if meta_changed else set()   # a «force» acts only in the release that writes it
+    force = forced(base, sha)
 
+    bad_names = [path for path in migration_files(sha) if not MIG.match(path)]
+    if bad_names:
+        p['warnings'].append('STOP: migration files whose name is not <14 digits>_<name>.sql (CI replays them, a release would never apply them): '
+                             + ', '.join(bad_names))
     base_migs, migs = migrations_at(base), migrations_at(sha)
     p['migrations'] = [{'version': v, 'name': migs[v][0]} for v in sorted(set(migs) - set(base_migs))]
     p['migrations_edited'] = sorted(v for st, path in ch if st == 'M' and (m := MIG.match(path)) and (v := m.group(1)) in base_migs)
@@ -163,26 +197,22 @@ def plan(sha):
         p['warnings'].append('Migration files changed after they went live (not run again): ' + ', '.join(p['migrations_edited']))
     gone = sorted(set(base_migs) - set(migs))
     if gone:
-        p['warnings'].append('Migration files removed from GitHub but live on the database: ' + ', '.join(gone)
-                             + ' (the database step will stop)')
+        p['warnings'].append('STOP: migration files removed from GitHub but live on the database: ' + ', '.join(gone))
 
     fns_now, fns_base = functions_at(sha), functions_at(base)
-    touched = set()
-    shared = False
-    for st, path in ch:
-        m = FN.match(path)
-        if not m:
+    touched, shared = set(), False
+    for _, path in ch:
+        if not path.startswith('supabase/functions/'):
             continue
-        if m.group(1).startswith('_'):
-            shared = True                     # supabase/functions/_shared: every function may import it
+        m = FN.match(path)
+        if not m or m.group(1).startswith('_'):
+            shared = True                     # _shared/ or a file at the functions' root (deno.json, import_map.json): all of them
         elif not path.endswith('_test.ts'):
             touched.add(m.group(1))
-    if shared:
+    if shared or 'functions' in force:
         touched |= fns_now
     cfg_now, cfg_base = function_config(sha), function_config(base)
     touched |= {f for f in fns_now if cfg_now.get(f, True) != cfg_base.get(f, True)}
-    if 'functions' in force:
-        touched |= fns_now
     p['functions'] = sorted(touched & fns_now)
     p['functions_removed'] = sorted(fns_base - fns_now)
     if p['functions_removed']:
@@ -197,18 +227,70 @@ def plan(sha):
     return p
 
 
+# ------------------------------------------------------------------ the migration lint
+TX_FIRST = {'begin', 'commit', 'rollback', 'end', 'abort', 'savepoint', 'release'}
+NOT_IN_TX = [r'start\s+transaction', r'prepare\s+transaction', r'commit\s+prepared', r'rollback\s+prepared', r'vacuum', r'alter\s+system',
+             r'(create|drop)\s+database', r'(create|drop)\s+tablespace', r'reindex\s+(\w+\s+)*?(system|database)\b']
+
+
+def sql_skeleton(sql):
+    """The SQL with string literals, quoted names, comments and $tag$ bodies blanked out: only the statements' own words are left."""
+    out, i, n = [], 0, len(sql)
+    while i < n:
+        c = sql[i]
+        if c == '-' and sql.startswith('--', i):
+            j = sql.find('\n', i)
+            i = n if j < 0 else j
+        elif c == '/' and sql.startswith('/*', i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if sql.startswith('/*', i):
+                    depth, i = depth + 1, i + 2
+                elif sql.startswith('*/', i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            out.append(' ')
+        elif c in ("'", '"'):
+            j = i + 1
+            while j < n:
+                if sql[j] == c and sql.startswith(c * 2, j):
+                    j += 2
+                elif sql[j] == c:
+                    break
+                else:
+                    j += 1
+            i = j + 1
+            out.append(' x ')
+        elif c == '$' and (m := re.match(r'\$([A-Za-z_][A-Za-z0-9_]*)?\$', sql[i:])) and not (i and (sql[i - 1].isalnum() or sql[i - 1] == '_')):
+            tag = m.group(0)
+            j = sql.find(tag, i + len(tag))
+            i = n if j < 0 else j + len(tag)
+            out.append(' x ')
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
+
+
 def lint_migration(sql, version):
-    """Statements that break «one transaction for the whole release» stop the release before anyone approves it."""
+    """Statements that break «one transaction for the whole release» stop the release before anyone approves it (the marker in the
+    script is the backstop for anything this misses)."""
     out = []
-    body = re.sub(r'--[^\n]*', '', sql)
-    body = re.sub(r'\$([A-Za-z_]*)\$.*?\$\1\$', '', body, flags=re.S)   # function bodies may say begin/commit freely
-    if re.search(r'(^|;)\s*(begin|commit|rollback|start\s+transaction)\s*;', body, re.I | re.M):
-        out.append(f'STOP {version}: the file opens or closes a transaction itself (begin/commit): remove it, the release wraps everything in one')
-    if re.search(r'^\s*\\', body, re.M):
+    skel = sql_skeleton(sql)
+    for stmt in skel.split(';'):
+        words = stmt.strip().lower().split()
+        if not words:
+            continue
+        if words[0] in TX_FIRST or any(re.match(r'\s*' + pat + r'\b', stmt.strip().lower()) for pat in NOT_IN_TX):
+            out.append(f'STOP {version}: «{" ".join(words[:3])}…» cannot run inside the release\'s single transaction: remove it '
+                       '(the release opens and closes the transaction itself)')
+            break
+    if re.search(r'^\s*\\', skel, re.M):
         out.append(f'STOP {version}: a psql command (a line starting with a backslash) does not run through the Supabase API')
-    if re.search(r'\bconcurrently\b', body, re.I):
+    if re.search(r'\bconcurrently\b', skel, re.I):
         out.append(f'STOP {version}: «concurrently» cannot run inside a transaction')
-    if re.search(r'alter\s+type\s+\S+\s+add\s+value', body, re.I):
+    if re.search(r'alter\s+type\s+\S+\s+add\s+value', skel, re.I):
         out.append(f'NOTE {version}: adds an enum value; it cannot be used later in the same release')
     return out
 
@@ -230,10 +312,9 @@ def summary_md(p, title='Release plan'):
     else:
         lines.append('| Part | What changes |')
         lines.append('|---|---|')
-        order = m['order']
         parts = {'functions': ('Server functions', ', '.join(p['functions']) or '—'),
                  'database': ('Database', ', '.join(f'{x["version"]} {x["name"]}' for x in p['migrations']) or '—')}
-        for k in order:
+        for k in m['order']:
             lines.append(f'| {parts[k][0]} | {parts[k][1]} |')
         lines.append(f'| Site (app.bubalina.it) | {"publish fabula-tablet" if p["site"] else "—"} |')
         if p['prompts']:
@@ -250,7 +331,8 @@ def summary_md(p, title='Release plan'):
 # ------------------------------------------------------------------ the database script
 def build_script(pending, prev, label):
     """pending: [(version, name, sql)] in order; prev: the live history's last version (None for an empty history).
-    The same shape as the SQL Editor scripts: one transaction, a guard, the files, the history rows."""
+    The same shape as the SQL Editor scripts: one transaction, a guard, the files, the history rows. Each file starts from the default
+    search_path (as in CI, where each file has its own session) and the marker must survive to the end."""
     versions = ', '.join(f"'{v}'" for v, _, _ in pending)
     guard_prev = (f"  if (select max(version) from supabase_migrations.schema_migrations) is distinct from '{prev}' then\n"
                   f"    raise exception 'STOP: la storia del database non finisce più a {prev}: qualcuno ha applicato altro nel frattempo';\n"
@@ -258,13 +340,18 @@ def build_script(pending, prev, label):
     out = [f'-- {label}: {len(pending)} migration(s) after {prev or "an empty history"} (built by tools/release/release.py)\n',
            '-- One transaction: if any step fails nothing changes. It records the versions and refuses a second run.\n',
            'begin;\n',
+           f"set local {MARK} = 'on';\n",
            'do $release_guard$ begin\n',
            f'  if exists (select 1 from supabase_migrations.schema_migrations where version in ({versions})) then\n',
            "    raise exception 'STOP: queste versioni sono già nella storia del database: niente da fare';\n",
            '  end if;\n', guard_prev, 'end $release_guard$;\n']
     for v, n, sql in pending:
-        out.append(f'\n-- ======================= {v}_{n} =======================\n' + sql.rstrip() + '\n')
-    out.append('\ninsert into supabase_migrations.schema_migrations (version, name) values\n'
+        out.append(f'\n-- ======================= {v}_{n} =======================\nreset search_path;\n' + sql.rstrip() + '\n')
+    out.append('\ndo $release_tx$ begin\n'
+               f"  if coalesce(current_setting('{MARK}', true), '') <> 'on' then\n"
+               "    raise exception 'STOP: una migrazione ha chiuso la transazione da sola (begin/commit/end): il rilascio non è più in un''unica transazione';\n"
+               '  end if;\nend $release_tx$;\n'
+               'insert into supabase_migrations.schema_migrations (version, name) values\n'
                + ',\n'.join(f"  ('{v}', '{n}')" for v, n, _ in pending) + ';\ncommit;\n\n'
                'select version, name from supabase_migrations.schema_migrations order by version desc limit 5;\n')
     return ''.join(out)
@@ -276,7 +363,7 @@ def pending_against(live, sha):
     extra = sorted(set(live) - set(migs))
     if extra:
         raise Stop('Il database ha versioni che GitHub main non ha: ' + ', '.join(extra[:5])
-                   + ' · applicate fuori dal rilascio: il file va prima salvato su GitHub main')
+                   + ' · applicate fuori dal rilascio, oppure file tolti da GitHub: il file va (ri)messo su GitHub main')
     pending = sorted(set(migs) - set(live))
     if not pending:
         return [], (max(live) if live else None)
@@ -289,7 +376,31 @@ def pending_against(live, sha):
     return [(v, migs[v][0], file_at(sha, migs[v][1])) for v in pending], prev
 
 
-# ------------------------------------------------------------------ Supabase Management API
+# ------------------------------------------------------------------ Supabase
+def http_json(req, timeout):
+    """(status, parsed JSON). HTTP errors → Stop with Supabase's message; anything that leaves the outcome open → Unclear."""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode()
+            return r.status, json.loads(raw or 'null')
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors='replace')[:1500]
+        try:
+            detail = json.loads(detail).get('message', detail)
+        except (ValueError, AttributeError):
+            pass
+        hint = {401: 'token non valido o scaduto', 403: 'il token non può accedere al progetto', 429: 'troppe richieste'}.get(e.code, '')
+        err = Stop(f'Supabase HTTP {e.code}{": " + hint if hint else ""} · {detail}')
+        err.code = e.code
+        raise err
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, (TimeoutError, ConnectionError)):
+            raise Unclear(f'Supabase: la risposta non è arrivata · {e.reason}')
+        raise Stop(f'Supabase non raggiungibile · {e.reason}')
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        raise Unclear(f'Supabase: risposta interrotta o non leggibile · {type(e).__name__}: {e}')
+
+
 class Supabase:
     def __init__(self, token=None):
         self.token = token or os.environ.get('SUPABASE_ACCESS_TOKEN', '')
@@ -297,34 +408,53 @@ class Supabase:
             raise Stop('Manca il segreto SUPABASE_ACCESS_TOKEN nell\'ambiente «live» di GitHub')
 
     def call(self, method, path, body=None, timeout=180):
-        req = urllib.request.Request(API + path, method=method,
-                                     data=None if body is None else json.dumps(body).encode(),
+        req = urllib.request.Request(API + path, method=method, data=None if body is None else json.dumps(body).encode(),
                                      headers={'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json',
                                               'Accept': 'application/json', 'User-Agent': UA})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                raw = r.read().decode() or 'null'
-                return json.loads(raw)
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors='replace')[:1500]
-            try:
-                detail = json.loads(detail).get('message', detail)
-            except (ValueError, AttributeError):
-                pass
-            hint = {401: 'token non valido o scaduto', 403: 'il token non può accedere al progetto'}.get(e.code, '')
-            raise Stop(f'Supabase API HTTP {e.code}{": " + hint if hint else ""} · {detail}')
-        except urllib.error.URLError as e:
-            raise Stop(f'Supabase API non raggiungibile · {e.reason}')
+        return http_json(req, timeout)[1]
 
-    def sql(self, query):
-        rows = self.call('POST', f'/v1/projects/{REF}/database/query', {'query': query})
+    def sql(self, query, timeout=180):
+        rows = self.call('POST', f'/v1/projects/{REF}/database/query', {'query': query}, timeout)
         return rows if isinstance(rows, list) else []
 
     def live_versions(self):
         return [r['version'] for r in self.sql('select version from supabase_migrations.schema_migrations order by version')]
 
+    def live_release(self):
+        """The last «ok» release's commit, or None (no table yet before v1.08, or no release yet)."""
+        if not (self.sql("select to_regclass('fabula.releases') is not null as ok") or [{}])[0].get('ok'):
+            return None
+        rows = self.sql("select sha from fabula.releases where status = 'ok' order by id desc limit 1")
+        return rows[0]['sha'] if rows else None
+
     def function(self, slug):
         return self.call('GET', f'/v1/projects/{REF}/functions/{slug}')
+
+
+def public_key():
+    if os.environ.get('SUPABASE_PUBLISHABLE_KEY'):
+        return os.environ['SUPABASE_PUBLISHABLE_KEY']
+    m = re.search(r'supabaseKey:\s*"([^"]+)"', open(os.path.join(TOOLS, '..', 'fabula-tablet', 'config.js'), encoding='utf-8').read())
+    if not m:
+        raise Stop('Chiave pubblica di Supabase non trovata in fabula-tablet/config.js')
+    return m.group(1)
+
+
+def public_rpc(name, body):
+    """A public database function through PostgREST with the publishable key (the same key the app ships)."""
+    req = urllib.request.Request(f'{PUBLIC_URL}/rest/v1/rpc/{name}', method='POST', data=json.dumps(body).encode(),
+                                 headers={'apikey': public_key(), 'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': UA})
+    return http_json(req, 30)[1]
+
+
+def live_from_public():
+    try:
+        r = public_rpc('fabula_live_release', {})
+    except Stop as e:
+        if getattr(e, 'code', None) == 404:          # before v1.08: the function does not exist yet
+            return None
+        raise
+    return (r or {}).get('sha') if isinstance(r, dict) else None
 
 
 # ------------------------------------------------------------------ the steps
@@ -333,46 +463,37 @@ def step_database(sb, sha, label):
     pending, prev = pending_against(live, sha)
     if not pending:
         return {'status': 'skipped', 'versions': [], 'detail': 'nessuna migrazione nuova'}
+    want = [v for v, _, _ in pending]
     script = build_script(pending, prev, label)
-    print(f'database: applying {len(pending)} migration(s) after {prev}: {", ".join(v for v, _, _ in pending)}', flush=True)
+    print(f'database: applying {len(pending)} migration(s) after {prev}: {", ".join(want)}', flush=True)
     try:
-        sb.sql(script)
+        sb.sql(script, timeout=SQL_TIMEOUT)
+    except Unclear as e:
+        # the transaction may still be running or have committed: the history decides, read again for a few minutes
+        for _ in range(POLL[1]):
+            time.sleep(POLL[0])
+            try:
+                after = set(sb.live_versions())
+            except Stop:
+                continue
+            got = [v for v in want if v in after]
+            if len(got) == len(want):
+                return {'status': 'ok', 'versions': want, 'names': [n for _, n, _ in pending], 'after': prev,
+                        'detail': 'confermato dalla storia dopo un errore di rete'}
+            if got:
+                raise Stop(f'ATTENZIONE: {len(got)} versioni su {len(want)} risultano applicate ({", ".join(got)}) · {e}')
+        raise Stop(f'Database: esito non confermato, nessuna versione nuova nella storia dopo 3 minuti · {e}')
     except Stop as e:
         after = set(sb.live_versions())
-        half = [v for v, _, _ in pending if v in after]
+        half = [v for v in want if v in after]
         if half:                                        # cannot happen with one transaction; said loudly if it ever does
             raise Stop(f'ATTENZIONE: errore ma {len(half)} versioni risultano applicate ({", ".join(half)}) · {e}')
         raise Stop(f'Database non aggiornato (nessuna modifica) · {e}')
     after = set(sb.live_versions())
-    missing = [v for v, _, _ in pending if v not in after]
+    missing = [v for v in want if v not in after]
     if missing:
         raise Stop('Lo script è andato ma la storia non ha ' + ', '.join(missing))
-    return {'status': 'ok', 'versions': [v for v, _, _ in pending], 'names': [n for _, n, _ in pending], 'after': prev}
-
-
-def step_functions(sb, sha, names):
-    if not names:
-        return {'status': 'skipped', 'names': []}
-    cfg = function_config(sha)
-    done = []
-    for name in names:
-        jwt = cfg.get(name, True)
-        cmd = CLI.split() + ['--workdir', REPO, 'functions', 'deploy', name, '--project-ref', REF, '--use-api'] + ([] if jwt else ['--no-verify-jwt'])
-        print('functions: ' + ' '.join(cmd), flush=True)
-        t0 = time.time()
-        r = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, 'SUPABASE_ACCESS_TOKEN': sb.token}, timeout=600)
-        print(r.stdout[-3000:] + r.stderr[-3000:], flush=True)
-        if r.returncode != 0:
-            raise Stop(f'Funzione {name} non pubblicata' + (f' (già pubblicate: {", ".join(done)})' if done else '')
-                       + ' · ' + (r.stderr.strip() or r.stdout.strip())[-600:])
-        info = sb.function(name) or {}
-        upd = _epoch(info.get('updated_at'))
-        if upd is not None and upd < t0 - 120:
-            raise Stop(f'Funzione {name}: Supabase non mostra una versione nuova (ultima {info.get("updated_at")})')
-        if (info or {}).get('verify_jwt') is not None and bool(info['verify_jwt']) != jwt:
-            raise Stop(f'Funzione {name}: verify_jwt è {info["verify_jwt"]} su Supabase, {jwt} in config.toml')
-        done.append(name)
-    return {'status': 'ok', 'names': done}
+    return {'status': 'ok', 'versions': want, 'names': [n for _, n, _ in pending], 'after': prev}
 
 
 def _epoch(v):
@@ -388,8 +509,44 @@ def _epoch(v):
     return None
 
 
+def step_functions(sb, sha, names):
+    if not names:
+        return {'status': 'skipped', 'names': []}
+    cfg = function_config(sha)
+    done = []
+    for name in names:
+        jwt = cfg.get(name, True)
+        cmd = CLI.split() + ['--workdir', REPO, 'functions', 'deploy', name, '--project-ref', REF, '--use-api'] + ([] if jwt else ['--no-verify-jwt'])
+        print('functions: deploy ' + name + ('' if jwt else ' --no-verify-jwt'), flush=True)
+        t0 = time.time()
+        r = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, 'SUPABASE_ACCESS_TOKEN': sb.token}, timeout=600)
+        print((r.stdout[-3000:] + r.stderr[-3000:]).replace(sb.token, '***'), flush=True)
+        if r.returncode != 0:
+            raise Stop(f'Funzione {name} non pubblicata' + (f' (già pubblicate: {", ".join(done)})' if done else '')
+                       + ' · ' + (r.stderr.strip() or r.stdout.strip())[-600:].replace(sb.token, '***'))
+        info = sb.function(name) or {}
+        upd = _epoch(info.get('updated_at'))
+        if upd is not None and upd < t0 - 120:
+            raise Stop(f'Funzione {name}: Supabase non mostra una versione nuova (ultima {info.get("updated_at")})')
+        if info.get('verify_jwt') is not None and bool(info['verify_jwt']) != jwt:
+            raise Stop(f'Funzione {name}: verify_jwt è {info["verify_jwt"]} su Supabase, {jwt} in config.toml')
+        done.append(name)
+    return {'status': 'ok', 'names': done}
+
+
+# ------------------------------------------------------------------ commands
+def cmd_live(a):
+    if a.source == 'api':
+        sha = Supabase().live_release()
+    else:
+        sha = live_from_public()
+    print(f'live commit (database): {sha or "none yet: " + BASELINE}')
+    _output('live', sha or '')
+    return 0
+
+
 def cmd_plan(a):
-    p = plan(a.sha)
+    p = plan(a.sha, a.live)
     md = summary_md(p)
     print(md)
     if a.out:
@@ -397,17 +554,22 @@ def cmd_plan(a):
     _summary(md)
     _output('anything', 'true' if p['relation'] == 'ahead' and p['anything'] else 'false')
     _output('database', 'true' if p['migrations'] else 'false')
-    _output('site', 'true' if p['site'] else 'false')
     _output('version', p['meta'].get('version') or '')
     if p['relation'] == 'diverged' or stops(p):
+        _blocked_note(p, 'STOP nel piano: ' + ' | '.join(stops(p)) if stops(p) else 'storia riscritta: il commit non contiene quello live')
         return 2
     return 0
+
+
+def _blocked_note(p, why):
+    if os.environ.get('RUNNER_TEMP'):
+        json.dump({'version': p['meta'].get('version'), 'sha': p['sha'], 'error': why}, open(os.path.join(os.environ['RUNNER_TEMP'], 'release-blocked.json'), 'w'))
 
 
 def cmd_rehearse(a):
     """A scratch database with the migrations of the live commit, then the release script on it, as one transaction (needs local
     Postgres 16 and root, like tools/ci/run_sql_ci.py)."""
-    p = plan(a.sha)
+    p = plan(a.sha, a.live)
     if p['relation'] != 'ahead' or not p['migrations']:
         print('rehearsal: no database change in this release')
         return 0
@@ -422,10 +584,14 @@ def cmd_rehearse(a):
                        capture_output=True, text=True, env={**os.environ, 'MIGRATIONS_DIR': work})
     print(r.stdout[-2000:] + r.stderr[-2000:])
     if 'failures: 0' not in r.stdout:
+        _blocked_note(p, 'prova generale: le migrazioni del commit live non si ricostruiscono')
         print('rehearsal: the live commit does not replay cleanly')
         return 2
-    live = sorted(base_migs)
-    pending, prev = pending_against(live, p['sha'])
+    try:
+        pending, prev = pending_against(sorted(base_migs), p['sha'])
+    except Stop as e:
+        _blocked_note(p, f'prova generale: {e}')
+        raise
     script = build_script(pending, prev, f'rehearsal of {p["meta"].get("version") or p["sha"][:7]}')
     script = re.sub(r'create extension if not exists pg_net[^;]*;', '-- pg_net stubbed', script, flags=re.I)
     script = re.sub(r'create extension if not exists pg_cron[^;]*;', '-- pg_cron stubbed', script, flags=re.I)
@@ -436,9 +602,11 @@ def cmd_rehearse(a):
     print(r.stdout[-1500:] + r.stderr[-3000:])
     if r.returncode != 0:
         _summary(f'\n**Rehearsal FAILED**: the release script does not apply on a copy of the live commit.\n\n```\n{r.stderr[-1500:]}\n```\n')
+        _blocked_note(p, 'prova generale fallita: ' + (r.stderr.strip().splitlines() or ['?'])[-1][:300])
         return 2
     again = subprocess.run(['su', 'postgres', '-c', f'psql -X -q -v ON_ERROR_STOP=1 -d {db} -f {path}'], capture_output=True, text=True, cwd='/tmp')
     if again.returncode == 0 or 'STOP' not in again.stderr:
+        _blocked_note(p, 'prova generale: una seconda esecuzione non è stata rifiutata')
         print('rehearsal: a second run was NOT refused')
         return 2
     _summary(f'\nRehearsal: the {len(pending)} migration(s) apply in one transaction on a copy built at the live commit, and a second run is refused.\n')
@@ -446,19 +614,53 @@ def cmd_rehearse(a):
     return 0
 
 
+def cmd_blocked(a):
+    """The plan or the rehearsal stopped before anyone was asked: tell the Bot feed (and Telegram) with the backup token the outside
+    watcher already uses. Without the token, GitHub's own failure e-mail is the only notice."""
+    note = {}
+    if os.environ.get('RUNNER_TEMP') and os.path.exists(os.path.join(os.environ['RUNNER_TEMP'], 'release-blocked.json')):
+        note = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'release-blocked.json')))
+    token = os.environ.get('BACKUP_EXPORT_TOKEN', '')
+    if not token:
+        print('blocked: no BACKUP_EXPORT_TOKEN, nothing sent')
+        return 0
+    try:
+        version = note.get('version') or meta(commit_of(a.sha) or 'HEAD').get('version')
+    except Stop:
+        version = None
+    default = {'plan': 'il piano del rilascio non è riuscito (vedi il run su GitHub)',
+               'apply': 'il rilascio non ha raggiunto Supabase (vedi il run su GitHub)',
+               'record': 'il risultato non è stato scritto nel database (vedi il run su GitHub)'}[a.stage]
+    detail = {'ok': False, 'stage': a.stage, 'version': version, 'sha': commit_of(a.sha) or a.sha, 'run_url': a.run_url,
+              'error': note.get('error') or default}
+    try:
+        public_rpc('fabula_outside_report', {'p_token': token, 'p_kind': 'release', 'p_detail': detail})
+        print('blocked: reported to the database')
+    except Exception as e:      # noqa: BLE001 — the run is red anyway; GitHub e-mails Nick
+        print(f'blocked: could not report · {e}')
+    return 0
+
+
 def cmd_check(a):
-    base, _ = base_commit()
-    rel = relation(base, commit_of(a.sha) or a.sha)
-    print(f'live {base[:7]}, this {a.sha[:7]}: {rel}')
+    base, src = base_commit(a.live)
+    sha = commit_of(a.sha)
+    rel = relation(base, sha)
+    print(f'live {base[:7]} ({src}), this {sha[:7]}: {rel}')
     _output('go', 'true' if rel == 'ahead' else 'false')
+    _output('stop', 'true' if rel == 'diverged' else 'false')
+    if rel == 'ahead':
+        p = plan(sha, a.live)
+        _output('functions', 'true' if p['functions'] else 'false')
     if rel == 'diverged':
+        json.dump({'steps': {}, 'meta': meta(sha), 'error': 'Storia riscritta: il commit non contiene quello live (' + base[:7] + ')'},
+                  open(a.out, 'w'), indent=2)
         print('STOP: the commit does not contain the live one')
         return 2
     return 0
 
 
 def cmd_deploy(a):
-    p = plan(a.sha)
+    p = plan(a.sha, a.live)
     res = {'steps': {}, 'plan': {k: p[k] for k in ('sha', 'base', 'migrations', 'functions', 'site', 'prompts', 'warnings')}, 'meta': p['meta']}
     rc = 0
     try:
@@ -507,7 +709,7 @@ def cmd_site_check(a):
     """The site must serve the sw.js version of the release (GitHub Pages can take a minute; DNS or HTTPS may lag on day one)."""
     want = sw_version(open(os.path.join(REPO, 'fabula-tablet/sw.js'), encoding='utf-8').read())
     got, err = None, None
-    for i in range(a.tries):
+    for _ in range(a.tries):
         try:
             req = urllib.request.Request(a.url.rstrip('/') + f'/sw.js?release={int(time.time())}', headers={'User-Agent': UA, 'Cache-Control': 'no-cache'})
             with urllib.request.urlopen(req, timeout=20) as r:
@@ -525,41 +727,44 @@ def cmd_site_check(a):
 
 
 def cmd_record(a):
-    res = json.load(open(a.result)) if a.result and os.path.exists(a.result) else {'steps': {}, 'meta': meta(a.sha)}
-    if a.site:
-        site = json.load(open(a.site)) if os.path.exists(a.site) else None
-        if a.site_outcome == 'failure':
-            res['steps']['site'] = {'status': 'failed', 'error': 'Pubblicazione su GitHub Pages non riuscita (vedi il run)'}
-        elif site:
-            res['steps']['site'] = site
-        elif a.site_outcome in ('skipped', ''):
-            res['steps']['site'] = {'status': 'skipped'}
-    if a.job_status != 'success' and not res.get('error') and not any(v.get('status') == 'failed' for v in res['steps'].values()):
-        res['error'] = f'Il run di GitHub è finito come «{a.job_status}» (vedi il run)'
-    failed = bool(res.get('error')) or any(v.get('status') == 'failed' for v in res['steps'].values())
-    m = res.get('meta') or meta(a.sha)
-    payload = {'version': m.get('version'), 'title_it': m.get('title_it'), 'sha': a.sha, 'base_sha': (res.get('plan') or {}).get('base'),
-               'status': 'failed' if failed else 'ok', 'steps': res['steps'], 'error': res.get('error'),
-               'after_it': m.get('after_it') or [], 'prompts': (res.get('plan') or {}).get('prompts') or [], 'run_url': a.run_url,
-               'warnings': (res.get('plan') or {}).get('warnings') or []}
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
     try:
+        res = json.load(open(a.result)) if a.result and os.path.exists(a.result) else {'steps': {}}
+        if a.site:
+            site = json.load(open(a.site)) if os.path.exists(a.site) else None
+            if a.site_outcome == 'failure':
+                res['steps']['site'] = {'status': 'failed', 'error': 'Pubblicazione su GitHub Pages non riuscita (vedi il run)'}
+            elif site:
+                res['steps']['site'] = site
+            elif a.site_outcome in ('skipped', ''):
+                res['steps']['site'] = {'status': 'skipped'}
+        if a.job_status != 'success' and not res.get('error') and not any(v.get('status') == 'failed' for v in res['steps'].values()):
+            res['error'] = f'Il run di GitHub è finito come «{a.job_status}» (vedi il run)'
+        failed = bool(res.get('error')) or any(v.get('status') == 'failed' for v in res['steps'].values())
+        m = res.get('meta') or meta(commit_of(a.sha) or a.sha)
+        payload = {'version': m.get('version'), 'title_it': m.get('title_it'), 'sha': commit_of(a.sha) or a.sha, 'base_sha': (res.get('plan') or {}).get('base'),
+                   'status': 'failed' if failed else 'ok', 'steps': res['steps'], 'error': res.get('error'),
+                   'after_it': m.get('after_it') or [], 'prompts': (res.get('plan') or {}).get('prompts') or [], 'run_url': a.run_url,
+                   'warnings': (res.get('plan') or {}).get('warnings') or []}
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         sb = Supabase()
         found = sb.sql("select to_regprocedure('fabula.release_record(jsonb)') is not null as ok")
         if not (found and found[0].get('ok')):
-            print('record: fabula.release_record() is not on the database yet; nothing written')
-            return 0
+            print('record: fabula.release_record() is not on the database; nothing written')
+            return 0 if failed else 2          # an «ok» release must be recorded: it is what makes the commit live
         lit = json.dumps(payload, ensure_ascii=False).replace("'", "''")
         sb.sql(f"select fabula.release_record('{lit}'::jsonb) as id")
         print('record: written')
-    except Stop as e:
-        print('record: could not write the result (the run status on GitHub stays the reference) · ' + str(e))
-    return 0
+        return 0
+    except Exception as e:      # noqa: BLE001
+        print(f'record: could not write the result · {type(e).__name__}: {e}')
+        if os.environ.get('RUNNER_TEMP'):
+            json.dump({'error': f'risultato non registrato · {e}'[:400]}, open(os.path.join(os.environ['RUNNER_TEMP'], 'release-blocked.json'), 'w'))
+        return 2
 
 
 def cmd_editor_script(a):
     """Fallback without the pipeline: the SQL Editor script for the migrations after --live-last (read it from the live database)."""
-    sha = commit_of(a.sha) or a.sha
+    sha = commit_of(a.sha)
     live = [v for v in migrations_at(sha) if v <= a.live_last]
     if a.live_last not in live:
         raise Stop(f'{a.live_last} non è una migrazione del repo')
@@ -588,10 +793,14 @@ def _output(k, v):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = ap.add_subparsers(dest='cmd', required=True)
-    s = sub.add_parser('plan'); s.add_argument('--sha', default='HEAD'); s.add_argument('--out')
-    s = sub.add_parser('rehearse'); s.add_argument('--sha', default='HEAD'); s.add_argument('--db', default='release_rehearsal')
-    s = sub.add_parser('check'); s.add_argument('--sha', default='HEAD')
-    s = sub.add_parser('deploy'); s.add_argument('--sha', default='HEAD'); s.add_argument('--out', default='release-result.json')
+    s = sub.add_parser('live'); s.add_argument('--source', choices=['public', 'api'], default='public')
+    s = sub.add_parser('plan'); s.add_argument('--sha', default='HEAD'); s.add_argument('--live', default=''); s.add_argument('--out')
+    s = sub.add_parser('rehearse'); s.add_argument('--sha', default='HEAD'); s.add_argument('--live', default=''); s.add_argument('--db', default='release_rehearsal')
+    s = sub.add_parser('blocked'); s.add_argument('--sha', default='HEAD'); s.add_argument('--run-url', default='')
+    s.add_argument('--stage', choices=['plan', 'apply', 'record'], default='plan')
+    s = sub.add_parser('check'); s.add_argument('--sha', default='HEAD'); s.add_argument('--live', default='')
+    s.add_argument('--out', default='release-result.json')
+    s = sub.add_parser('deploy'); s.add_argument('--sha', default='HEAD'); s.add_argument('--live', default=''); s.add_argument('--out', default='release-result.json')
     s = sub.add_parser('site-check'); s.add_argument('--url', required=True); s.add_argument('--out', default='release-site.json')
     s.add_argument('--tries', type=int, default=18); s.add_argument('--wait', type=float, default=10)
     s = sub.add_parser('record'); s.add_argument('--sha', default='HEAD'); s.add_argument('--result', default='release-result.json')
@@ -601,11 +810,13 @@ def main(argv=None):
     s.add_argument('--out', default='release-sql-editor.sql')
     a = ap.parse_args(argv)
     try:
-        return {'plan': cmd_plan, 'rehearse': cmd_rehearse, 'check': cmd_check, 'deploy': cmd_deploy, 'site-check': cmd_site_check,
-                'record': cmd_record, 'editor-script': cmd_editor_script}[a.cmd](a)
+        return {'live': cmd_live, 'plan': cmd_plan, 'rehearse': cmd_rehearse, 'blocked': cmd_blocked, 'check': cmd_check,
+                'deploy': cmd_deploy, 'site-check': cmd_site_check, 'record': cmd_record, 'editor-script': cmd_editor_script}[a.cmd](a)
     except Stop as e:
         print('STOP: ' + str(e), file=sys.stderr)
         _summary(f'\n**STOP**: {e}\n')
+        if os.environ.get('RUNNER_TEMP') and not os.path.exists(os.path.join(os.environ['RUNNER_TEMP'], 'release-blocked.json')):
+            json.dump({'error': str(e)}, open(os.path.join(os.environ['RUNNER_TEMP'], 'release-blocked.json'), 'w'))
         return 2
 
 

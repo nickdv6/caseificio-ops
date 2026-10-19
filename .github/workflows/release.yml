@@ -1,13 +1,17 @@
 # v1.08: the release pipeline (RELEASING.md). Merging into main is the release: when CI is green on main, this workflow
-#   1. plan      (no secrets) lists what changes since the commit that is live (git tag «live»), and rehearses the database part:
-#                a scratch database built at the live commit gets the release script in one transaction. Nothing to deploy (docs,
-#                tests, tools only) → it stops here, nobody is asked anything. A STOP or a failed rehearsal → red, nothing asked.
-#   2. apply     waits for Nick's approval of the «live» environment (GitHub app: «Review deployments» → Approve), then deploys the
-#                server functions and applies the migrations (release.json says which first), publishes fabula-tablet on GitHub
-#                Pages (app.bubalina.it), checks the app answers with the new version, writes the result in the database (Bot feed
-#                «Rilasci», Telegram if it stopped) and moves the tag «live» to the released commit, only when everything worked.
-# Secrets: SUPABASE_ACCESS_TOKEN, only in the «live» environment and only on the two steps that call Supabase. Runs only for pushes
-# to main of this repository (never for pull requests or forks). Actions pinned to a commit (the repo is public).
+#   1. plan      (no secrets) reads the live commit from the database (public.fabula_live_release(), the publishable key), lists
+#                what changes since then, and rehearses the database part: a scratch database built at the live commit gets the
+#                release script in one transaction. Nothing to deploy (docs, tests, tools only) → it stops here, nobody is asked.
+#                A STOP or a failed rehearsal → red, nobody is asked, and the Bot feed / Telegram say so («bloccato prima
+#                dell'approvazione», through the outside watcher's report function and its backup token).
+#   2. apply     waits for Nick's approval of the «live» environment (GitHub app: «Review deployments» → Approve), then reads the
+#                live commit again (another release may have finished meanwhile), installs the Supabase CLI from a checked download,
+#                deploys the server functions and applies the migrations (release.json says which first), publishes fabula-tablet on
+#                GitHub Pages (app.bubalina.it), checks the app answers with the new version, and writes the result in the
+#                database: an «ok» row is what makes this commit the live one (Bot feed «Rilasci», Telegram if it stopped).
+# Secrets: SUPABASE_ACCESS_TOKEN only in the «live» environment and only on the steps that call Supabase; BACKUP_EXPORT_TOKEN only
+# on the steps that report a blocked release. Runs only for pushes to main of this repository (never for pull requests or forks).
+# Actions pinned to a commit (the repo is public). No step writes to the repository.
 name: Release
 run-name: "Release · ${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title || format('manual {0}', inputs.sha || 'main') }}"
 on:
@@ -35,6 +39,8 @@ jobs:
       sha: ${{ steps.sha.outputs.sha }}
       anything: ${{ steps.plan.outputs.anything }}
       version: ${{ steps.plan.outputs.version }}
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -47,9 +53,15 @@ jobs:
           sha=$(git rev-parse --verify 'HEAD^{commit}')
           git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: The live commit (from the database)
+        id: live
+        run: python3 tools/release/release.py live --source public
       - name: What changes since the live commit
         id: plan
-        run: python3 tools/release/release.py plan --sha "${{ steps.sha.outputs.sha }}"
+        env:
+          LIVE: ${{ steps.live.outputs.live }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: python3 tools/release/release.py plan --sha "$SHA" --live "$LIVE"
       - name: Postgres 16 for the rehearsal
         if: steps.plan.outputs.anything == 'true' && steps.plan.outputs.database == 'true'
         run: |
@@ -59,7 +71,16 @@ jobs:
           sudo pg_ctlcluster 16 main start || true
       - name: Rehearsal of the database part on a copy of the live commit
         if: steps.plan.outputs.anything == 'true' && steps.plan.outputs.database == 'true'
-        run: sudo -E python3 tools/release/release.py rehearse --sha "${{ steps.sha.outputs.sha }}"
+        env:
+          LIVE: ${{ steps.live.outputs.live }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: sudo -E python3 tools/release/release.py rehearse --sha "$SHA" --live "$LIVE"
+      - name: Tell the Bot feed the release was blocked before the approval
+        if: failure() && steps.sha.outcome == 'success'
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: python3 tools/release/release.py blocked --stage plan --sha "$SHA" --run-url "$RUN_URL"
 
   apply:
     needs: plan
@@ -73,7 +94,7 @@ jobs:
       name: live
       url: ${{ steps.pages.outputs.page_url }}
     permissions:
-      contents: write      # the tag «live»
+      contents: read
       pages: write         # GitHub Pages
       id-token: write      # GitHub Pages
     env:
@@ -85,17 +106,31 @@ jobs:
           ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: The live commit, read again
+        id: live
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: python3 tools/release/release.py live --source api
       - name: Still the newest release?
         id: check
+        env:
+          LIVE: ${{ steps.live.outputs.live }}
+        run: python3 tools/release/release.py check --sha "$SHA" --live "$LIVE" --out "$RUNNER_TEMP/release-result.json"
+      - name: Supabase CLI 2.118.0 (checked download, no secret in this step)
+        if: steps.check.outputs.functions == 'true'
         run: |
-          git fetch --force origin 'refs/tags/live:refs/tags/live' 2>/dev/null || true
-          python3 tools/release/release.py check --sha "$SHA"
+          curl -fsSL -o "$RUNNER_TEMP/supabase.tgz" https://github.com/supabase/cli/releases/download/v2.118.0/supabase_2.118.0_linux_amd64.tar.gz
+          echo "f6089a86fb9d9221c958193a277338daddd6822f706929943812fa32e106c86d  $RUNNER_TEMP/supabase.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/sbcli" && tar -xzf "$RUNNER_TEMP/supabase.tgz" -C "$RUNNER_TEMP/sbcli" supabase
+          "$RUNNER_TEMP/sbcli/supabase" --version
+          echo "SUPABASE_CLI=$RUNNER_TEMP/sbcli/supabase" >> "$GITHUB_ENV"
       - name: Server functions and database
         id: deploy
         if: steps.check.outputs.go == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: python3 tools/release/release.py deploy --sha "$SHA" --out "$RUNNER_TEMP/release-result.json"
+          LIVE: ${{ steps.live.outputs.live }}
+        run: python3 tools/release/release.py deploy --sha "$SHA" --live "$LIVE" --out "$RUNNER_TEMP/release-result.json"
       - name: Package the app
         id: pack
         if: steps.deploy.outcome == 'success' && steps.deploy.outputs.site == 'true'
@@ -111,8 +146,9 @@ jobs:
         env:
           PAGE_URL: ${{ steps.pages.outputs.page_url }}
         run: python3 tools/release/release.py site-check --url "$PAGE_URL" --out "$RUNNER_TEMP/release-site.json"
-      - name: Record the result in the database
-        if: always() && steps.check.outputs.go == 'true'
+      - name: Record the result in the database (an «ok» row makes this commit the live one)
+        id: record
+        if: always() && (steps.check.outputs.go == 'true' || steps.check.outputs.stop == 'true')
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SITE_OUTCOME: ${{ steps.pages.outcome }}
@@ -120,11 +156,11 @@ jobs:
         run: >-
           python3 tools/release/release.py record --sha "$SHA" --result "$RUNNER_TEMP/release-result.json"
           --site "$RUNNER_TEMP/release-site.json" --site-outcome "$SITE_OUTCOME" --job-status "$JOB_STATUS" --run-url "$RUN_URL"
-      - name: Move the tag «live» to this commit
-        if: success() && steps.check.outputs.go == 'true'
+      - name: Tell the Bot feed when nothing could be recorded (the token, Supabase not answering)
+        if: >-
+          failure() &&
+          ((steps.check.outputs.go != 'true' && steps.check.outputs.stop != 'true') || steps.record.outcome == 'failure')
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          git tag -f live "$SHA"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" refs/tags/live
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          STAGE: ${{ steps.record.outcome == 'failure' && 'record' || 'apply' }}
+        run: python3 tools/release/release.py blocked --stage "$STAGE" --sha "$SHA" --run-url "$RUN_URL"

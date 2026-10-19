@@ -9,6 +9,12 @@
 --   * fabula.release_record(jsonb): called by the pipeline at the end (database role only). It writes the row and a message in the Bot
 --     feed («Rilasci»): done (info, or warn when something is left to do by hand: steps of release.json, bot prompts to update), or
 --     stopped (alert: Telegram, with what already changed and what did not).
+--   * public.fabula_live_release(): the commit that is live (the last «ok» release), read by the workflow's plan job with the
+--     publishable key, without any secret (the repo is public; a commit id is not a secret). Before v1.08 the plan starts from
+--     tools/release/baseline.txt. (A git tag «live» moved by the workflow was the first idea: GitHub refuses a GITHUB_TOKEN that moves
+--     a ref across workflow-file changes, review of 15/10.)
+--   * public.fabula_outside_report(token, 'release', …): a release stopped before anyone was asked (plan or rehearsal failed) posts an
+--     alert «Rilascio … bloccato prima dell'approvazione», with the backup token the outside watcher already uses.
 --   * Panoramica → Sistema «Rilasci automatici» (infra_checks 'release'): the last release, green when it went through.
 --   * The drift texts say what to do now: a migration on GitHub but not on the database, or an app not yet published, means a release
 --     is waiting for the approval on GitHub (no more «SQL Editor» or «guarda Netlify»); a migration on the database but not on GitHub
@@ -31,7 +37,7 @@ create table if not exists fabula.releases (
   message_id bigint,
   created_at timestamptz not null default now()
 );
-comment on table fabula.releases is 'v1.08: one row per automatic release (tools/release/release.py record → release_record). steps = {functions|database|site: {status ok|skipped|failed|warn, names|versions|sw, error}}; base_sha = what was live before; the git tag «live» on GitHub moves to sha only when status = ok.';
+comment on table fabula.releases is 'v1.08: one row per automatic release (tools/release/release.py record → release_record). steps = {functions|database|site: {status ok|skipped|failed|warn, names|versions|sw, error}}; base_sha = what was live before; the last row with status ok is the commit that is live (public.fabula_live_release()).';
 create index if not exists releases_recent on fabula.releases (id desc);
 alter table fabula.releases enable row level security;
 revoke all on fabula.releases from public, anon, authenticated;
@@ -101,7 +107,7 @@ begin
                    case when cardinality(v_todo) > 0 then '; ' || cardinality(v_todo) || ' step(s) left by hand' else '' end);
   else
     v_todo := array['Apri il rilascio su GitHub e leggi dove si è fermato' || coalesce(' (' || v_run || ')', ''),
-                    'Chiedi a Claude di correggerlo: poi il rilascio si riapprova da GitHub (Actions → Release → «Re-run»)'];
+                    'Chiedi a Claude di correggerlo: la correzione arriva come nuovo rilascio da approvare (Re-run su GitHub solo se la causa era il token o la rete)'];
     v_title := left(format('Rilascio %s fermato', v_ver) || coalesce(' al passo ' || case v_failed when 'functions' then '«funzioni del server»'
                                                                                          when 'database' then '«database»' when 'site' then '«app del tablet»'
                                                                                          else v_failed end, ''), 70);
@@ -109,7 +115,7 @@ begin
     v_brief := v_brief || ('Errore: ' || coalesce(v_err, (select v->>'error' from jsonb_each(s) e(k, v) where v->>'error' is not null limit 1), 'vedi il rilascio su GitHub'));
     v_brief := v_brief || case when cardinality(v_done) > 0 then 'Già in produzione: ' || array_to_string(v_done, ' · ')
                                else 'Nessuna modifica è arrivata in produzione' end;
-    v_en := format('EN — Release %s stopped%s: nothing else changed; open the GitHub run, fix, and re-run it.', v_ver,
+    v_en := format('EN — Release %s stopped%s: nothing else changed; open the GitHub run; the fix comes as a new release to approve.', v_ver,
                    coalesce(' at the ' || v_failed || ' step', ''));
   end if;
   if nullif(btrim(p->>'title_it'), '') is not null then v_brief := v_brief || btrim(p->>'title_it'); end if;
@@ -128,6 +134,48 @@ begin
 end $$;
 revoke all on function fabula.release_record(jsonb) from public, anon, authenticated;
 grant execute on function fabula.release_record(jsonb) to service_role;
+
+-- the live commit for the workflow's plan job (no secret): the last release that went through
+create or replace function public.fabula_live_release() returns jsonb
+language sql stable security definer set search_path = pg_catalog, fabula, public as $$
+  select (select jsonb_build_object('sha', r.sha, 'version', r.version, 'at', r.created_at)
+            from fabula.releases r where r.status = 'ok' order by r.id desc limit 1)
+$$;
+comment on function public.fabula_live_release() is 'v1.08: the commit that is live (the last «ok» row of fabula.releases), for the Release workflow''s plan job with the publishable key; null before the first automatic release.';
+revoke all on function public.fabula_live_release() from public;
+grant execute on function public.fabula_live_release() to anon, authenticated, service_role;
+insert into fabula.security_accepted (key, reason) values
+  ('anon_security_definer_function_executable:public.fabula_live_release()', 'by design (v1.08): the Release workflow reads the live commit with the publishable key; returns the last released commit id, version and date (the repo is public), nothing else'),
+  ('authenticated_security_definer_function_executable:public.fabula_live_release()', 'by design (v1.08): same as for anon, the live commit id only')
+on conflict (key) do update set reason = excluded.reason;
+
+-- a release that stopped before anyone was asked (the plan or the rehearsal failed): an alert in «Rilasci»
+create or replace function fabula.release_blocked(d jsonb) returns bigint
+language plpgsql security definer set search_path = fabula, public as $$
+declare v_ver text; v_err text; v_run text := nullif(d->>'run_url', '');
+begin
+  if v_run is not null and v_run !~ '^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+' then v_run := null; end if;
+  v_ver := coalesce(nullif(btrim(d->>'version'), ''), nullif(left(d->>'sha', 7), ''), '?');
+  v_err := coalesce(nullif(btrim(left(d->>'error', 500)), ''), 'il piano del rilascio non è riuscito');
+  -- stage «plan»: nobody was asked; «apply»: approved, but stopped before changing anything (the token, Supabase not answering);
+  -- «record»: the release ran, but its result could not be written (the next release starts again from the last one recorded)
+  return fabula.post_bot_message('rilascio', 'alert',
+    left(format(case d->>'stage' when 'apply' then 'Rilascio %s fermato prima di cambiare qualcosa'
+                                 when 'record' then 'Rilascio %s: esito non registrato'
+                                 else 'Rilascio %s bloccato prima dell''approvazione' end, v_ver), 70),
+    '**Da fare**' || E'\n'
+    || '1. Apri il rilascio su GitHub' || coalesce(' (' || v_run || ')', '') || E'\n'
+    || case when d->>'stage' = 'record'
+            then '2. Dillo a Claude: il prossimo rilascio riparte dall''ultimo registrato e rifà solo quello che manca'
+            else '2. Chiedi a Claude di correggerlo: la correzione arriva come nuovo rilascio da approvare' end || E'\n\n'
+    || '**In breve**' || E'\n' || '- Errore: ' || v_err || E'\n'
+    || case when d->>'stage' = 'record' then '- Funzioni, database e app possono essere già aggiornati: lo dice il run su GitHub'
+            else '- Nessuna modifica è arrivata in produzione' end || E'\n\n'
+    || format(case d->>'stage' when 'apply' then 'EN — Release %s stopped before changing anything (token or Supabase); nothing changed.'
+                               when 'record' then 'EN — Release %s ran but its result could not be recorded; check the GitHub run.'
+                               else 'EN — Release %s was stopped before the approval (plan or rehearsal failed); nothing changed.' end, v_ver));
+end $$;
+revoke all on function fabula.release_blocked(jsonb) from public, anon, authenticated;
 
 -- ============================== patches: where the messages go, the Sistema checks ==============================
 do $mig$
@@ -179,10 +227,25 @@ $s$);
                                case when x.steps #>> '{database,status}' = 'ok' then 'database' end,
                                case when x.steps #>> '{site,status}' in ('ok', 'warn') then 'app ' || coalesce(x.steps #>> '{site,sw}', '') end), ''), '')
                      else 'Rilascio ' || x.version || ' fermato il ' || to_char(x.created_at at time zone 'Europe/Rome', 'DD/MM HH24:MI') || ': '
-                          || left(coalesce(x.error, 'vedi il rilascio su GitHub'), 160) || ' · da correggere e riapprovare su GitHub' end)
+                          || left(coalesce(x.error, 'vedi il rilascio su GitHub'), 160) || ' · la correzione arriva come nuovo rilascio' end)
     from (select 1) one left join lateral (select * from fabula.releases order by id desc limit 1) x on true));
   return v_out;$s$);
   if n = d then raise exception 'v108a: infra_checks return pattern not found'; end if;
+  execute n;
+
+  -- GitHub's reports: a release blocked before the approval
+  d := pg_get_functiondef('public.fabula_outside_report(text,text,jsonb)'::regprocedure);
+  n := replace(d, $s$  if p_kind is null or p_kind not in ('watcher', 'offsite_backup', 'restore_drill') then$s$,
+                  $s$  if p_kind is null or p_kind not in ('watcher', 'offsite_backup', 'restore_drill', 'release') then$s$);
+  if n = d then raise exception 'v108a: fabula_outside_report kinds pattern not found'; end if;
+  d := n;
+  n := replace(d, $s$  if p_kind = 'restore_drill' then$s$, $s$  if p_kind = 'release' then                 -- v1.08: the plan or the rehearsal stopped before anyone was asked
+    perform fabula.release_blocked(v_detail);
+    return jsonb_build_object('ok', true);
+  end if;
+
+  if p_kind = 'restore_drill' then$s$);
+  if n = d then raise exception 'v108a: fabula_outside_report branch pattern not found'; end if;
   execute n;
 
   -- Panoramica → Sistema and the «Perché?» of the system checks: the new line

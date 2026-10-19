@@ -1,1 +1,1 @@
-298e2f41c5a6d46ce47bfdc682c7230972a74c0c  v1.07 on main, live on 15/10/2026: database 20261015140100, functions as deployed by hand (checked 15/10), site perla-v74 on Netlify. The first automatic release starts from here; after it, the git tag «live» says what is live.
+298e2f41c5a6d46ce47bfdc682c7230972a74c0c  v1.07 on main, live on 15/10/2026: database 20261015140100, functions as deployed by hand (checked 15/10), site perla-v74 on Netlify. The first automatic release starts from here; after it, the last «ok» row of fabula.releases says what is live.

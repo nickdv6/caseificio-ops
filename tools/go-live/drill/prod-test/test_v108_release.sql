@@ -69,8 +69,10 @@ select pg_temp.ck('…with the error, what already changed, and the link to the 
   and :'m3_body' like '%https://github.com/nickdv6/caseificio-ops/actions/runs/1003%', :'m3_body');
 select pg_temp.ck('…and it goes to Telegram as a system message («infra»)',
   exists (select 1 from fabula.notify_outbox where title = 'Rilascio v1.10 fermato al passo «database»' and topic = 'infra'));
-select pg_temp.ck('Sistema «Rilasci automatici» after a stopped release: red, says to correct and approve again',
-  (fabula.infra_checks() -> 'release' ->> 'done') = 'false' and (fabula.infra_checks() -> 'release' ->> 'detail') like 'Rilascio v1.10 fermato il % · da correggere e riapprovare su GitHub',
+select pg_temp.ck('…the fix comes as a new release to approve (Re-run only for the token or the network)',
+  :'m3_body' like '%la correzione arriva come nuovo rilascio da approvare (Re-run su GitHub solo se la causa era il token o la rete)%', :'m3_body');
+select pg_temp.ck('Sistema «Rilasci automatici» after a stopped release: red, the fix comes as a new release',
+  (fabula.infra_checks() -> 'release' ->> 'done') = 'false' and (fabula.infra_checks() -> 'release' ->> 'detail') like 'Rilascio v1.10 fermato il % · la correzione arriva come nuovo rilascio',
   fabula.infra_checks() -> 'release' ->> 'detail');
 select fabula.release_record(jsonb_build_object('version', 'v1.10', 'sha', repeat('e', 40), 'status', 'failed', 'error', 'Funzione farm-order non pubblicata · bundle failed',
   'steps', jsonb_build_object('functions', jsonb_build_object('status', 'failed', 'error', 'bundle failed')))) r4 \gset
@@ -83,6 +85,39 @@ select pg_temp.ck('no version → the short commit; a link that is not a GitHub 
 select pg_temp.ck('a missing or wrong commit is refused', pg_temp.err($$select fabula.release_record('{"status":"ok","sha":"123"}'::jsonb)$$) like 'release_record: sha%');
 select fabula.release_record(jsonb_build_object('version', 'v1.11-' || repeat('x', 80), 'sha', repeat('a', 40), 'status', 'failed', 'steps', '{"database":{"status":"failed"}}'::jsonb)) r6 \gset
 select pg_temp.ck('a title never goes over 70 characters', (select length(title) <= 70 from fabula.bot_messages where id = (select message_id from fabula.releases where id = :r6)));
+
+-- ============================== the live commit, without secrets ==============================
+set role anon;
+select public.fabula_live_release()::text lr_anon \gset
+reset role;
+select pg_temp.ck('public.fabula_live_release() (anon, the plan job): the last release that went through, not the last row',
+  (:'lr_anon'::jsonb ->> 'sha') = repeat('c', 40) and (:'lr_anon'::jsonb ->> 'version') = 'v1.09' and :'lr_anon'::jsonb ? 'at'
+  and (select count(*) from fabula.releases where id > (select id from fabula.releases where sha = repeat('c', 40))) > 0, :'lr_anon');
+select pg_temp.ck('…and nothing else: three keys', (select count(*) from jsonb_object_keys(:'lr_anon'::jsonb)) = 3, :'lr_anon');
+
+-- ============================== a release blocked before the approval (the watcher's report function) ==============================
+select vault.create_secret('test-backup-token-108', 'backup_export_token') is not null as secret_set \gset
+set role anon;
+select pg_temp.err($$select public.fabula_outside_report('wrong', 'release', '{"version":"v1.12"}'::jsonb)$$) ob_wrong \gset
+select public.fabula_outside_report('test-backup-token-108', 'release',
+  '{"ok":false,"stage":"plan","version":"v1.12","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","error":"prova generale fallita: boom","run_url":"https://github.com/nickdv6/caseificio-ops/actions/runs/77"}'::jsonb)::text ob_ok \gset
+reset role;
+select pg_temp.ck('a wrong token is refused', :'ob_wrong' = 'forbidden', :'ob_wrong');
+select severity, title, body from fabula.bot_messages where agent = 'rilascio' order by created_at desc, id desc limit 1 \gset mb_
+select pg_temp.ck('kind «release»: an alert «bloccato prima dell''approvazione» with the reason and the run, nothing recorded as a release',
+  :'ob_ok'::jsonb ->> 'ok' = 'true' and :'mb_severity' = 'alert' and :'mb_title' = 'Rilascio v1.12 bloccato prima dell''approvazione'
+  and :'mb_body' like '%Errore: prova generale fallita: boom%' and :'mb_body' like '%actions/runs/77%'
+  and not exists (select 1 from fabula.releases where version = 'v1.12'), :'mb_title' || ' / ' || :'mb_body');
+select pg_temp.ck('…on Telegram (infra)', exists (select 1 from fabula.notify_outbox where title = 'Rilascio v1.12 bloccato prima dell''approvazione' and topic = 'infra'));
+select fabula.release_blocked('{"stage":"apply","version":"v1.13","error":"Supabase HTTP 401: token non valido o scaduto"}'::jsonb) bl2 \gset
+select pg_temp.ck('stage «apply» (approved, stopped before changing anything): says so',
+  (select title from fabula.bot_messages where id = :bl2) = 'Rilascio v1.13 fermato prima di cambiare qualcosa');
+select fabula.release_blocked('{"stage":"record","version":"v1.14","error":"risultato non registrato · Supabase: la risposta non è arrivata"}'::jsonb) bl3 \gset
+select title, body from fabula.bot_messages where id = :bl3 \gset b3_
+select pg_temp.ck('stage «record» (it ran, the result could not be written): «esito non registrato», may have changed things',
+  :'b3_title' = 'Rilascio v1.14: esito non registrato' and :'b3_body' like '%possono essere già aggiornati%'
+  and :'b3_body' like '%riparte dall''ultimo registrato%' and :'b3_body' not like '%Nessuna modifica è arrivata%', :'b3_title' || ' / ' || :'b3_body');
+select pg_temp.ck('the other kinds still work (watcher)', public.fabula_outside_report('test-backup-token-108', 'watcher', '{"ok":true,"summary":"tutto ok"}'::jsonb) ->> 'ok' = 'true');
 
 -- ============================== the drift texts follow the pipeline ==============================
 insert into fabula.infra_status (key, ok, data, checked_at, last_ok_at) values
