@@ -35,9 +35,15 @@ release runs at a time, so the newer one waits and is asked after.
 Do these in order (about 15 minutes):
 
 1. **Supabase token for GitHub.** Supabase → Account → **Access Tokens** (https://supabase.com/dashboard/account/tokens):
-   1. **Generate new token**, named «GitHub release», with an expiry of about a year. Put a reminder in your calendar a week before.
-   2. Copy it (it is shown once).
-   - The token opens every project of your Supabase account, not only Caseificio. GitHub keeps it encrypted and gives it only to the release steps you approve.
+   1. Create a **scoped** token (not «Create legacy token»), named «GitHub release».
+   2. **Resources:** only the Caseificio project.
+   3. **Permissions**, nothing else:
+      - **Database: Read-write**. The release runs the migrations and records the result through the Management API's «Run a query».
+      - **Edge Functions: Read-write**. It deploys the server functions and checks them afterwards.
+   4. **Expiry:** about a year (the longest offered). Put a reminder in your calendar a week before.
+   5. Copy it (it is shown once).
+   - GitHub keeps it encrypted and gives it only to the release steps you approve.
+   - If a permission is missing, the first release stops before changing anything, and the error lists the missing permission: make a new token with it and replace the secret in step 2.
    - When it expires, a release stops with «token non valido o scaduto»: make a new one and replace the secret in step 2.
 2. **GitHub environment «live»**, the approval step. Repo nickdv6/caseificio-ops → **Settings** → **Environments** → **New environment**:
    1. Name: `live` → **Configure environment**.
