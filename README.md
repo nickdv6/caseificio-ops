@@ -22,31 +22,43 @@ Releases (v1.08): merging into `main` is the release, after one approval on GitH
 Project doc `claude/audit-fixes-v108-2026-10-15.md`; how to use it: `RELEASING.md`. Until v1.07 each release was a list of manual
 steps for Nick (temporary Supabase token and CLI deploy from the Mac, SQL Editor paste, git merge and push, Netlify deploy at 15 of
 the free plan's 300 monthly credits, the whole site paused at zero as on 14/10).
-- **Workflow** `.github/workflows/release.yml`, after CI passes on `main` (pushes of this repo only): job `plan` (no secrets) lists what
-  changed since the git tag `live` (`tools/release/baseline.txt` = 298e2f4, v1.07, before the first run) and rehearses the database part
-  on a scratch Postgres built at the live commit (`replay.sh` now takes `MIGRATIONS_DIR`); nothing to deploy → nobody is asked. Job
-  `apply` waits for the approval of the environment `live` (Nick, `main` only; secret `SUPABASE_ACCESS_TOKEN` on two steps), then
-  `tools/release/release.py` deploys the changed server functions (`supabase@2.118.0 functions deploy --use-api`, `verify_jwt` from
-  `config.toml`, checked on Supabase) and the new migrations (one transaction through the Management API, the SQL Editor scripts'
-  guard; the live history is read before anything changes: a live version GitHub lacks stops the release), in `release.json`'s order;
-  publishes `fabula-tablet/` on GitHub Pages (app.bubalina.it) and checks `sw.js`; records the result (`fabula.release_record`); moves
-  the tag `live` only when everything worked.
+- **Workflow** `.github/workflows/release.yml`, after CI passes on `main` (pushes of this repo only). Job `plan` (no Supabase secret)
+  reads the live commit from the database (`public.fabula_live_release()` with the publishable key; `tools/release/baseline.txt` =
+  298e2f4, v1.07, before the first run), lists what changed since then and rehearses the database part on a scratch Postgres built at
+  the live commit (`replay.sh` takes `MIGRATIONS_DIR`); nothing to deploy → nobody is asked; a STOP or a failed rehearsal → red and
+  «bloccato prima dell'approvazione» in the Bot feed (through `fabula_outside_report`, kind `release`, with `BACKUP_EXPORT_TOKEN`).
+  Job `apply` waits for the approval of the environment `live` (Nick, `main` only, secret `SUPABASE_ACCESS_TOKEN`), reads the live
+  commit again through the Management API, installs Supabase CLI 2.118.0 from a sha256-checked download in a step with no secret, then
+  `tools/release/release.py` deploys the changed server functions (`functions deploy --use-api`, `verify_jwt` from `config.toml`,
+  checked on Supabase) and the new migrations, in `release.json`'s order; publishes `fabula-tablet/` on GitHub Pages (app.bubalina.it)
+  and checks `sw.js`; records the result (`fabula.release_record`). An «ok» row is what makes the commit live: no git tag, nothing
+  written to the repo. A result that cannot be recorded is reported as «esito non registrato».
+- **The database step** keeps the SQL Editor scripts' rules: the live history is read first (a live version GitHub lacks stops the
+  release); every new file goes in ONE transaction through the Management API with a guard that refuses a changed history or a second
+  run; each file starts from the default `search_path` (as in CI, one session per file); a marker set after `begin` must still be set
+  before the history rows, so a file that ends the transaction itself fails the release and its rehearsal; the plan refuses `begin`,
+  `commit`, `end`, `abort`, `savepoint`, `vacuum`, `concurrently`, psql backslash commands and the like before anyone is asked
+  (comments, strings and `$tag$` bodies are skipped). A lost answer (timeout, cut connection) is settled by reading the history.
 - **`tools/release/release.json`** per version: `version`, `title_it`, `order` (functions/database), `after_it` (steps for people,
-  in the message), `force` (parts to deploy without a git change, only in the release that writes it: v1.08 = the first Pages publish).
-  `release.py editor-script --live-last <v>` still writes a SQL Editor script when the pipeline is not available.
+  in the message), `force` (parts to deploy without a git change, kept until a release that carries it goes live: v1.08 = the first
+  Pages publish). `release.py editor-script --live-last <v>` still writes a SQL Editor script when the pipeline is not available.
 - **Migration `v108a`:** `fabula.releases` (read: Sistema «vede»); `release_record(jsonb)` (database role only) writes the row and a
   message in the Bot feed «Rilasci» (agent `rilascio`, area sistema, opens Panoramica): «Rilascio v… fatto» (info; warn with «Da fare»
   for `after_it`, bot prompts to update, an app that still answers with the old version) or «Rilascio v… fermato al passo …» (alert →
-  Telegram `infra`, with the error, what already changed and the run). Panoramica → Sistema «Rilasci automatici» (`infra_checks`
-  key `release`). The drift texts follow the pipeline: a migration on GitHub but not live = a release waiting for the approval; an app
-  not yet published = approve the release; a migration live but not on GitHub = applied outside the release, its file goes on main.
+  Telegram `infra`, with the error, what already changed and the run; the fix comes as a new release). `release_blocked(jsonb)`:
+  «bloccato prima dell'approvazione», «fermato prima di cambiare qualcosa», «esito non registrato». `public.fabula_live_release()`
+  (anon: the last ok release's commit, version and date only). Panoramica → Sistema «Rilasci automatici» (`infra_checks` key
+  `release`). The drift texts follow the pipeline: a migration on GitHub but not live = a release waiting for the approval; an app not
+  yet published = approve the release; a migration live but not on GitHub = applied outside the release, its file goes on main.
 - **Function `invite-user`:** the invite and WhatsApp links use `infra.site_url` from the database (the same address as every other
   link), so moving the app is one setting (v1.08b).
-- Tests: `prod-test/test_v108_release.sql` 28/28; `tools/release/test_release.py` (50 checks, in CI): plans on small git repos, the
-  script on a scratch history (second run refused, an error leaves nothing, a changed history stops it), the rehearsal, deploy and
-  record against a fake Management API and CLI (order, `--no-verify-jwt`, a failing function or migration, a live version GitHub lacks,
-  a wrong or missing token, a superseded commit, the site check). `test_v105_bots_ops.sql` and `infra-test/test_infra.sql` updated for
-  the new texts.
+- Tests: `prod-test/test_v108_release.sql` 37/37; `tools/release/test_release.py` (80 checks, in CI): plans on small git repos (also
+  `_shared` and root files, `verify_jwt`, `force` across releases, superseded/diverged, removed or badly named migrations), the lint
+  (14 ways to end the transaction), the script on a scratch history (second run refused, an error leaves nothing, a changed history
+  stops it, the marker, `search_path` per file), the rehearsal, deploy and record against a fake Management API and CLI (order,
+  `--no-verify-jwt`, a failing function or migration, a live version GitHub lacks, a wrong or missing token, a superseded commit, a
+  late or lost answer), the live commit read both ways, the blocked and unrecorded reports, the site check. `test_v105_bots_ops.sql`
+  and `infra-test/test_infra.sql` updated for the new texts.
 
 ## «Prima dell'avvio»: quiet bots before the dairy works (v1.07)
 Found live on 15/10/2026 (project docs `claude/golive-rescore-2026-10-15.md`, `claude/audit-fixes-v107-2026-10-15.md`): every day the
