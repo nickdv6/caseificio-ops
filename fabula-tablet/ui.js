@@ -126,6 +126,7 @@
         <div class="err" id="ui-pwerr" role="alert"></div>
         <div class="row" style="gap:8px;justify-content:flex-end;margin-top:10px"><button type="button" class="btn sec" id="ui-pwno">Annulla</button><button type="button" class="btn" id="ui-pwok">Cambia password</button></div></form>`;
       document.body.append(d);
+      if (!d.showModal) { d.showModal = () => d.setAttribute('open', ''); d.close = () => d.removeAttribute('open'); }   // review L10: old browsers
       $('ui-pwno').onclick = () => d.close();
       $('ui-pwok').onclick = async () => {
         const a = $('ui-pw0').value, b = $('ui-pw1').value, c = $('ui-pw2').value, e = $('ui-pwerr'); e.textContent = '';
@@ -135,7 +136,7 @@
         if (a === b) return e.textContent = 'Scegli una password diversa da quella attuale.';
         const ok = $('ui-pwok'); ok.disabled = true;
         try {
-          const { data: { session } } = await sb.auth.getSession(); const email = session && session.user && session.user.email;
+          const { data: { user } } = await sb.auth.getUser(); const email = user && user.email;   // review L4: the login's e-mail now, not the stored one
           if (!email) return e.textContent = 'Sessione scaduta: esci e rientra, poi riprova.';
           const chk = await sb.auth.signInWithPassword({ email, password: a });
           if (chk.error) return e.textContent = /invalid/i.test(chk.error.message) ? 'La password attuale non è corretta.' : chk.error.message;
@@ -148,7 +149,7 @@
       d.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.matches('input')) { ev.preventDefault(); $('ui-pwok').click(); } });
     }
     ['ui-pw0', 'ui-pw1', 'ui-pw2'].forEach(i => { $(i).value = ''; }); $('ui-pwerr').textContent = '';
-    if (d.showModal) d.showModal(); else d.setAttribute('open', ''); $('ui-pw0').focus();
+    d.showModal(); $('ui-pw0').focus();
   }
 
   // ---------- login + access ----------

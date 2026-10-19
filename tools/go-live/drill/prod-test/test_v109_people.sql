@@ -42,8 +42,10 @@ select pg_temp.ck('a newer link replaces the older one',
   fabula.access_link_check(pg_temp.h('tokA1')) ->> 'reason' = 'replaced' and (fabula.access_link_check(pg_temp.h('tokA2')) ->> 'ok')::boolean);
 select pg_temp.ck('a password link for someone who already has a password',
   fabula.access_link_new('00000000-0000-4000-b000-0000000109b0', pg_temp.h('tokB1'), null) ->> 'purpose' = 'reset');
-select pg_temp.ck('no link for a person without e-mail or switched off',
-  pg_temp.err($$select fabula.access_link_new((select id from fabula.staff where full_name = 'Mario Titolare'), 'zz', null)$$) is not null);
+insert into fabula.staff (id, full_name, role, app_role, email, active) values ('00000000-0000-4000-b000-0000000109d1', 'Delia Spenta', 'operaio', 'produzione', 'delia109@example.it', false);
+select pg_temp.ck('no link for someone switched off: «prima riattivala»',
+  pg_temp.err($$select fabula.access_link_new('00000000-0000-4000-b000-0000000109d1', '$$ || pg_temp.h('tokDelia') || $$', null)$$) ilike '%riattiva%');
+select pg_temp.ck('…nor with a malformed hash', pg_temp.err($$select fabula.access_link_new('00000000-0000-4000-b000-0000000109aa', 'zz', null)$$) ilike '%non valido%');
 insert into fabula.staff (id, full_name, role, app_role, email, active) values ('00000000-0000-4000-b000-0000000109d0', 'Dario Senzamail', 'operaio', 'produzione', null, true);
 select pg_temp.ck('…without e-mail: «Manca l''email»',
   pg_temp.err($$select fabula.access_link_new('00000000-0000-4000-b000-0000000109d0', '$$ || pg_temp.h('tokD') || $$', null)$$) ilike '%manca l''email%');
@@ -57,10 +59,17 @@ select fabula.access_link_unclaim((:'c1'::jsonb ->> 'link_id')::uuid) as un \gse
 select pg_temp.ck('if the password could not be set the link works again', :'un'::boolean and (fabula.access_link_check(pg_temp.h('tokA2')) ->> 'ok')::boolean);
 select fabula.access_link_claim(pg_temp.h('tokA2')) as c2 \gset
 insert into auth.users (id, email, email_confirmed_at, encrypted_password) values ('00000000-0000-4000-a000-0000000109aa', 'anna109@example.it', now(), 'x');
-select fabula.access_link_done((:'c2'::jsonb ->> 'link_id')::uuid, '00000000-0000-4000-a000-0000000109aa') as dn \gset
-select pg_temp.ck('done: the person is linked to the new login', (:'dn'::jsonb ->> 'ok')::boolean and (:'c2'::jsonb ->> 'claimed')::boolean
+select pg_temp.ck('review H1: a link never binds a login that belongs to someone else (Bruna''s): P0409',
+  pg_temp.err($$select fabula.access_link_bind('$$ || (:'c2'::jsonb ->> 'link_id') || $$', '00000000-0000-4000-a000-0000000109b1')$$) ilike '%altra persona%'
+  and (select auth_user_id from fabula.staff where id = '00000000-0000-4000-b000-0000000109aa') is null);
+select fabula.access_link_bind((:'c2'::jsonb ->> 'link_id')::uuid, '00000000-0000-4000-a000-0000000109aa') as dn \gset
+select pg_temp.ck('bind: the person is linked to the new login', (:'dn'::jsonb ->> 'ok')::boolean and (:'c2'::jsonb ->> 'claimed')::boolean
   and (select auth_user_id from fabula.staff where id = '00000000-0000-4000-b000-0000000109aa') = '00000000-0000-4000-a000-0000000109aa');
+select fabula.access_link_claim(pg_temp.h('tokB1')) as cb1 \gset
 select fabula.access_link_new('00000000-0000-4000-b000-0000000109b0', pg_temp.h('tokB2'), null) is not null as b2 \gset
+select fabula.access_link_unclaim((:'cb1'::jsonb ->> 'link_id')::uuid) as unb \gset
+select pg_temp.ck('a failed save never reopens a link once a newer one was made (two working links)', not :'unb'::boolean
+  and fabula.access_link_check(pg_temp.h('tokB1')) ->> 'reason' = 'used');
 update fabula.staff_access_links set expires_at = now() - interval '1 minute' where token_hash = pg_temp.h('tokB2');
 select pg_temp.ck('an expired link says so, and cannot be used', fabula.access_link_check(pg_temp.h('tokB2')) ->> 'reason' = 'expired'
   and not (fabula.access_link_claim(pg_temp.h('tokB2')) ->> 'claimed')::boolean);
@@ -169,14 +178,25 @@ select pg_temp.ck('the change log names who did it',
   exists (select 1 from fabula.audit_log where table_name = 'staff' and row_key = '00000000-0000-4000-b000-0000000109c0' and actor = 'Mario Titolare'),
   (select string_agg(actor, ',') from fabula.audit_log where table_name = 'staff' and row_key = '00000000-0000-4000-b000-0000000109c0'));
 
+select pg_temp.ck('review L5: names and e-mails are plain text in the mentions (a «\» or «_» neither breaks nor widens the search)',
+  pg_temp.err($$select fabula._staff_mentions('Nome Strano\', 'a_b@example.it')$$) is null
+  and fabula._staff_mentions('Carlo_Uscente', null) = '[]'::jsonb);
+
 -- ---------------------------------------------------------------- 6. stale shifts close by themselves
-insert into fabula.shifts (staff_id, clock_in) values ('00000000-0000-4000-b000-0000000109b0', now() - interval '13 hours'),
-                                                      ('00000000-0000-4000-b000-0000000109e0', now() - interval '2 hours');
+insert into fabula.shifts (staff_id, clock_in) values ('00000000-0000-4000-b000-0000000109b0', now() - interval '25 hours'),
+                                                      ('00000000-0000-4000-b000-0000000109e0', now() - interval '13 hours');
 select fabula.close_stale_shifts() as stale \gset
-select pg_temp.ck('a shift open past labor.max_shift_hours (12) closes by itself at 12 h; a recent one stays open',
-  :'stale'::int = 1
-  and (select hours = 12 and notes ilike '%dimenticato%' from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000109b0')
-  and (select clock_out is null from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000109e0'));
+select pg_temp.ck('a shift left open closes by itself at 12 h (labor.max_shift_hours) once 12 more hours have passed',
+  :'stale'::int = 1 and (select hours = 12 and notes ilike '%dimenticato%' from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000109b0'));
+select pg_temp.ck('review M1: a 13 h-old shift stays open, so a badge-out queued offline (up to 12 h late) still lands with its own time',
+  (select clock_out is null from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000109e0'));
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-0000000109a1","role":"authenticated"}', false);
+set role authenticated;
+select fabula.badge_out(null, '00000000-0000-4000-b000-0000000109e0', now() - interval '5 hours') as bo \gset
+reset role;
+select set_config('request.jwt.claims', '', false);
+select pg_temp.ck('…the queued badge-out of 5 hours ago closes it at 8 h', :'bo'::jsonb ->> 'action' = 'out'
+  and (select hours = 8 from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000109e0'), :'bo');
 select pg_temp.ck('…every hour (scheduled job, in the expected list)',
   exists (select 1 from cron.job where jobname = 'fabula_close_stale_shifts' and schedule = '7 * * * *')
   and exists (select 1 from fabula.cron_jobs_expected where jobname = 'fabula_close_stale_shifts'));

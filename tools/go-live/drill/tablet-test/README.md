@@ -221,7 +221,10 @@ and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.
     greeting, password checks, a password Supabase finds too common, save → login created and linked, Telegram, the profile's page, the
     link used and replaced; «Disattiva» lists, then closes shift and future rota and blocks the login, with a summary; «Riattiva»;
     «Cambia password» in a casaro's menu; the rota editor (night shift only when ticked, break, area, «Anche questi giorni», riposo,
-    saved and shown again, the week label, the unsaved-week question). Expect `FAILURES: none` (31 checks).
+    saved and shown again, the week label, the unsaved-week question); review fixes: an e-mail that is someone else's login is refused
+    when adding, and a link made by hand for it cannot set that login's password; a dead link tells nothing about the person; the link
+    leaves the address bar at once; a «nuova password» link sets the same login; «Cambia password» with the right password.
+    Expect `FAILURES: none` (43 checks).
 
 Last run 15/10/2026 (v1.07), same setup with the 197 migrations, all 25 suites in the usual order (the 24 above with v106_e2e after
 v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same database once the local server restarted):

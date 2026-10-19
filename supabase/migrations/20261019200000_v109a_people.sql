@@ -7,7 +7,8 @@
 --      changes the login e-mail too); a plain edit of the row is refused instead of leaving two different addresses.
 --   4. C-14: switching someone off closes their open shift, removes their future rota, cancels their links, Telegram and PIN, and
 --      lists the settings and deadlines that still name them. Shifts left open past labor.max_shift_hours close by themselves
---      every hour (the setting always said so; it only happened at the person's next badge scan).
+--      (checked every hour, 12 hours after that, so a queued offline badge-out still lands; before, it happened only at the
+--      person's next badge scan).
 --   5. Telegram links for someone's phone last auth.link_days too (they lasted 24 hours).
 
 -- ============================================================================================================================
@@ -101,19 +102,26 @@ end $$;
 -- the password could not be set: the link works again
 create or replace function fabula.access_link_unclaim(p_link_id uuid)
 returns boolean language sql security definer set search_path = fabula, public as $$
-  with u as (update fabula.staff_access_links set used_at = null
-              where id = p_link_id and used_at > now() - interval '10 minutes' and revoked_at is null returning 1)
+  with u as (update fabula.staff_access_links l set used_at = null
+              where l.id = p_link_id and l.used_at > now() - interval '10 minutes' and l.revoked_at is null
+                and not exists (select 1 from fabula.staff_access_links n where n.staff_id = l.staff_id and n.created_at > l.created_at)
+             returning 1)
   select exists (select 1 from u)
 $$;
 
--- the password is set: the person is linked to that login
-create or replace function fabula.access_link_done(p_link_id uuid, p_auth_user_id uuid)
+-- the login the link will set the password of, linked to the person BEFORE anything is written to it (review H1): a login that
+-- belongs to someone else is refused (errcode P0409), so a link can never set another person's password
+create or replace function fabula.access_link_bind(p_link_id uuid, p_auth_user_id uuid)
 returns jsonb language plpgsql security definer set search_path = fabula, public as $$
-declare v_staff uuid;
+declare v_staff uuid; v_other text;
 begin
-  select staff_id into v_staff from fabula.staff_access_links where id = p_link_id and used_at is not null;
+  select staff_id into v_staff from fabula.staff_access_links where id = p_link_id and used_at is not null and revoked_at is null;
   if v_staff is null then raise exception 'Link non trovato' using errcode = 'P0002'; end if;
   if not exists (select 1 from auth.users where id = p_auth_user_id) then raise exception 'Account non trovato' using errcode = 'P0002'; end if;
+  select full_name into v_other from fabula.staff where auth_user_id = p_auth_user_id and id <> v_staff;
+  if v_other is not null then
+    raise exception 'Questa email è già l''accesso di un''altra persona' using errcode = 'P0409';
+  end if;
   update fabula.staff set auth_user_id = p_auth_user_id where id = v_staff and auth_user_id is distinct from p_auth_user_id;
   update fabula.staff_access_links set revoked_at = now(), revoked_why = 'password già scelta'
    where staff_id = v_staff and id <> p_link_id and used_at is null and revoked_at is null;
@@ -124,9 +132,9 @@ revoke all on function fabula.access_link_new(uuid, text, uuid) from public, ano
 revoke all on function fabula.access_link_check(text) from public, anon, authenticated;
 revoke all on function fabula.access_link_claim(text) from public, anon, authenticated;
 revoke all on function fabula.access_link_unclaim(uuid) from public, anon, authenticated;
-revoke all on function fabula.access_link_done(uuid, uuid) from public, anon, authenticated;
+revoke all on function fabula.access_link_bind(uuid, uuid) from public, anon, authenticated;
 grant execute on function fabula.access_link_new(uuid, text, uuid), fabula.access_link_check(text), fabula.access_link_claim(text),
-  fabula.access_link_unclaim(uuid), fabula.access_link_done(uuid, uuid) to service_role;
+  fabula.access_link_unclaim(uuid), fabula.access_link_bind(uuid, uuid) to service_role;
 
 -- ============================================================================================================================
 -- 3. Login state: the app's own links count as well as Supabase's e-mails
@@ -212,16 +220,17 @@ end $$;
 -- settings and open deadlines that still name the person (shown, never changed by itself)
 create or replace function fabula._staff_mentions(p_name text, p_email text)
 returns jsonb language sql stable security definer set search_path = fabula, public as $$
+  -- strpos, not ILIKE: «_» or «\» in a name or an e-mail are plain characters (review L5)
   select coalesce(jsonb_agg(m order by m->>'kind', m->>'what'), '[]'::jsonb) from (
     select jsonb_build_object('kind', 'parametro', 'what', coalesce(description, key), 'where', 'Configurazione → Parametri') as m
       from fabula.settings
      where coalesce(data_type, 'text') = 'text' and length(coalesce(p_name, '')) >= 3
-       and (value ilike '%' || p_name || '%' or (p_email is not null and value ilike '%' || p_email || '%'))
+       and (strpos(lower(value), lower(p_name)) > 0 or (coalesce(p_email, '') <> '' and strpos(lower(value), lower(p_email)) > 0))
     union all
     select jsonb_build_object('kind', 'scadenza', 'what', subject_it, 'where', 'Configurazione → Macchine e scadenze')
       from fabula.compliance_deadlines
      where done_on is null and length(coalesce(p_name, '')) >= 3
-       and (coalesce(responsible, '') ilike '%' || p_name || '%' or coalesce(contact, '') ilike '%' || p_name || '%')) z
+       and (strpos(lower(coalesce(responsible, '')), lower(p_name)) > 0 or strpos(lower(coalesce(contact, '')), lower(p_name)) > 0)) z
 $$;
 
 -- «Disattiva»: one transaction. The login itself is blocked by the server function (invite-user) right after.
@@ -264,14 +273,16 @@ revoke all on function fabula.staff_offboard(uuid) from public, anon;
 grant execute on function fabula.staff_offboard_preview(uuid), fabula.staff_offboard(uuid) to authenticated, service_role;
 grant execute on function fabula._staff_mentions(text, text) to service_role;
 
--- shifts left open past labor.max_shift_hours close by themselves (every hour), as the setting says
+-- shifts left open past labor.max_shift_hours close by themselves (every hour), as the setting says. They close at clock-in +
+-- max hours, but only 12 hours after that: badge_out accepts a tablet's queued scan up to 12 hours late with its own time, and a
+-- shift closed earlier would turn that real badge-out into «nessun turno aperto» and the shift into max hours (review M1)
 create or replace function fabula.close_stale_shifts()
 returns integer language plpgsql security definer set search_path = fabula, public as $$
 declare v_max numeric := fabula.setting_num('labor.max_shift_hours', 12); n int;
 begin
   update fabula.shifts set clock_out = clock_in + make_interval(hours => v_max::int),
          notes = concat_ws(' · ', notes, 'chiuso automaticamente (badge dimenticato)')
-   where clock_out is null and clock_in < now() - make_interval(hours => v_max::int);
+   where clock_out is null and clock_in < now() - make_interval(hours => v_max::int + 12);
   get diagnostics n = row_count;
   return n;
 end $$;

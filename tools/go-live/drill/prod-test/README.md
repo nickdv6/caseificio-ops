@@ -283,5 +283,7 @@ the table or the functions; login states (da_invitare, invitato with who made it
 `staff_logins` answers only the titolare; C-13 the guard on the e-mail of someone with a login (case is not a change; the service role
 may); C-14 only a user manager switches off, never himself, the preview, then shift closed, future rota removed (today kept), link
 revoked, Telegram unlinked, PIN removed, mentions listed, «In turno» without them, the change log names who; stale shifts close at 12 h
-every hour (job expected); a Telegram link for someone else lasts 7 days; no new security finding. 19/10/2026: 45/45 PASS on a fresh
+every hour, but only 12 hours after (a queued offline badge-out still lands at its own time); a login of someone else is never bound
+(P0409); a failed save never reopens a link once a newer one exists; mentions treat «\» and «_» as text; a Telegram link for someone
+else lasts 7 days; no new security finding. 19/10/2026: 51/51 PASS on a fresh
 replay of the 200 migrations. The browser side: `tablet-test/v109_e2e.py`.

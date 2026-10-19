@@ -502,7 +502,7 @@
       <div class="status">vale fino a ${esc(until)} · una volta sola · un link mandato prima non vale più · non è partita nessuna email: mandalo tu</div>
       <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input readonly style="flex:1;min-width:200px" value="${esc(r.link)}" aria-label="Link di accesso"><button class="btn sm sec" type="button" data-copy>Copia</button></div>
       <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><a class="btn sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">Manda su WhatsApp</a>
-        <a class="btn sm sec" style="text-decoration:none" href="mailto:${esc(email)}?subject=${encodeURIComponent(subject)}&amp;body=${encodeURIComponent(text)}">Manda per email</a></div>
+        <a class="btn sm sec" style="text-decoration:none" href="mailto:${esc(email.replace(/[?&#%]/g, encodeURIComponent))}?subject=${encodeURIComponent(subject)}&amp;body=${encodeURIComponent(text)}">Manda per email</a></div>
       <details style="margin-top:6px"><summary class="status">Testo del messaggio</summary><pre style="white-space:pre-wrap;font:inherit;margin:4px 0">${esc(text)}</pre></details></div>`;
     box.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(r.link); toast('Link copiato'); } catch { box.querySelector('input').select(); } };
     box.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -535,10 +535,11 @@
       link_scaduto: ['ko', `il link è scaduto senza essere usato${L && L.link_expires_at ? ' (' + fmtWhen(L.link_expires_at) + ')' : ''}: mandagliene uno nuovo`],
       senza_password: ['ko', 'ha aperto un link ma non ha scelto la password: mandagliene uno nuovo'],
       da_invitare: ['wn', 'non ha ancora un accesso: mandagli il link'], senza_email: ['', 'senza email: sul tablet usa badge e PIN, in console non entra'],
-      disattivato: ['', 'disattivato: non entra più'], account: ['', 'account creato'] }[st] || ['', st];
+      disattivato: ['ko', p.active ? 'accesso ancora bloccato: tocca «Riattiva»' : 'disattivato: non entra più'], account: ['', 'account creato'] }[st] || ['', st];
     const ck = (ok, txt, title) => `<span class="ck ${ok ? 'ok' : 'todo'}" title="${esc(title)}">${ok ? '✓ ' : ''}${txt}</span>`;
+    const blocked = admin && p.active && L && L.state === 'disattivato';   // active, but the login is still blocked (a «Riattiva» that failed)
     const checks = !p.active ? '' : [
-      ck(st === 'attivo', 'Accesso', ACC[1]),
+      admin ? ck(st === 'attivo', 'Accesso', ACC[1]) : '',
       admin ? ck(tg && tg.linked, 'Telegram', tg && tg.linked ? 'collegato: riceve gli allarmi sul telefono' : 'non collegato: gli allarmi gli arrivano solo nell\'app') : '',
       admin ? ck(pin, 'PIN', pin ? 'PIN del tablet impostato' : 'senza PIN: sul tablet si sceglie solo col badge') : '',
       ck(!todo, todo ? `Formazione: ${todo} da fare` : 'Formazione', todo ? 'corsi HACCP mancanti o scaduti (Console → Personale)' : 'corsi in regola')].join('');
@@ -578,7 +579,7 @@
         if (p.auth_user_id && p.email && v !== p.email.toLowerCase() && !confirm(`Cambia anche l'email con cui ${first} entra: da ora entra con ${v} (la password resta la stessa). Confermi?`)) return;
         ok.disabled = true;
         try { const r = await callUsers({ action: 'update_email', staff_id: p.id, email: v }); UI.clean(w);
-          toast(r.unchanged ? 'Nessuna modifica' : r.login_changed ? `Email cambiata: ${first} ora entra con ${v}` : 'Email salvata'); loadUsers(); }
+          toast(r.unchanged ? 'Nessuna modifica' : r.login_changed ? `Email cambiata: ${first} ora entra con ${v}` : 'Email salvata'); UI.after(loadUsers); }
         catch (err) { toast(err.message || String(err), 'err'); } finally { ok.disabled = false; }
       };
       no.onclick = () => { UI.clean(w); renderEmail(); };
@@ -617,6 +618,9 @@
     if (p.active && p.badge_code) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.textDecoration = 'none'; a.target = '_blank'; a.textContent = 'Badge';
       a.title = 'Stampa il badge QR da passare sul tablet'; a.href = 'labels.html?' + new URLSearchParams({ l: badgeLine(p) }); acts.append(a); }
     if (admin && !self) {
+      if (blocked) b('Riattiva', '', async () => {
+        await callUsers({ action: 'reactivate', staff_id: p.id }); toast(`Accesso di ${p.full_name} sbloccato`); UI.after(loadUsers);
+      });
       if (p.active) b('Disattiva', 'warn', async () => {
         const { data: pv, error } = await sb.rpc('staff_offboard_preview', { p_staff_id: p.id }); if (error) throw error;
         const lines = [`Disattivare ${p.full_name}?`, '', '• Non potrà più entrare nell\'app, e sul tablet non comparirà più'];
@@ -629,11 +633,11 @@
         lines.push('', 'Si può riattivare in qualsiasi momento.');
         if (!confirm(lines.join('\n'))) return;
         const r = await callUsers({ action: 'deactivate', staff_id: p.id });
-        await loadUsers(); showOffboard(r.summary || { full_name: p.full_name }); toast(`${p.full_name} disattivato`);
+        await loadUsers(); showOffboard(r.summary || { full_name: p.full_name }); toast(r.warning || `${p.full_name} disattivato`, r.warning ? 'err' : '');
       });
       else b('Riattiva', 'sec', async () => {
         await callUsers({ action: 'reactivate', staff_id: p.id });
-        toast(`${p.full_name} riattivato: se serve mandagli un link di accesso, poi ricollega Telegram e il PIN`); loadUsers();
+        toast(`${p.full_name} riattivato: se serve mandagli un link di accesso, poi ricollega Telegram e il PIN`); UI.after(loadUsers);
       });
     }
     return c;

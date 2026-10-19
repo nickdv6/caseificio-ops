@@ -79,6 +79,16 @@ Deno.serve(async (req) => {
     return { link: `${SITE}/benvenuto.html#invito=${token}`, site: SITE, expires_at: data.expires_at, purpose: data.purpose, first_name: data.first_name,
              role_name: data.role_name, home: data.home, email: data.email, company: data.company };
   };
+  // review H1: an e-mail whose login already belongs to someone else is refused (the link would otherwise set that person's password)
+  const loginOwner = async (email: string, exceptStaff?: string) => {
+    const u = await findAuthUser(email);
+    if (!u) return null;
+    let q = admin.from("staff").select("id, full_name").eq("auth_user_id", u.id);
+    if (exceptStaff) q = q.neq("id", exceptStaff);
+    const { data } = await q.maybeSingle();
+    return data ? { user: u, staff: data } : null;
+  };
+  const TAKEN = (name: string) => json({ error: `Questa email è già l'accesso di ${name}: scegline un'altra` }, 409);
   // audit C-15: someone switched off comes back with «Riattiva» (which also unblocks the login), not with a new invite
   const OFF = (id: string) => json({ error: "Questa persona è disattivata: usa «Riattiva» nella sua scheda", staff_id: id, inactive: true }, 409);
 
@@ -95,6 +105,8 @@ Deno.serve(async (req) => {
         const { data: ex } = await admin.from("staff").select("id, full_name, active").eq("email", email).maybeSingle();
         if (ex && !ex.active) return OFF(ex.id);
         if (ex) return json({ error: `Questa email è già di ${ex.full_name}: usa la sua scheda`, staff_id: ex.id }, 409);
+        const own = await loginOwner(email);
+        if (own) return TAKEN(own.staff.full_name);
       }
       const job_role = String(body.job_role || JOB_FOR[app_role] || "operaio");
       const { data: staff, error } = await admin.from("staff").insert({ full_name, email, app_role, role: job_role, active: true }).select("id").single();
@@ -107,6 +119,8 @@ Deno.serve(async (req) => {
       if (!staff) return json({ error: "Persona non trovata" }, 404);
       if (!staff.active) return OFF(staff.id);
       if (!staff.email) return json({ error: "Manca l'email: aggiungila nella scheda (serve per entrare)" }, 400);
+      const own = await loginOwner(String(staff.email).toLowerCase(), staff.id);
+      if (own) return TAKEN(own.staff.full_name);
       return json({ ok: true, staff_id: staff.id, ...(await newLink(staff.id)) });
     }
 
@@ -119,6 +133,8 @@ Deno.serve(async (req) => {
       const { data: other } = await admin.from("staff").select("id, full_name").eq("email", email).neq("id", staff.id).maybeSingle();
       if (other) return json({ error: `Questa email è già di ${other.full_name}` }, 409);
       let was: string | null = null;
+      const own = await loginOwner(email, staff.id);
+      if (own) return TAKEN(own.staff.full_name);
       if (staff.auth_user_id) {
         const taken = await findAuthUser(email);
         if (taken && taken.id !== staff.auth_user_id) return json({ error: "Questa email ha già un altro account di accesso: scegline un'altra" }, 409);
@@ -219,7 +235,9 @@ Deno.serve(async (req) => {
       }
       if (staff.auth_user_id) {
         const { error: e2 } = await admin.auth.admin.updateUserById(staff.auth_user_id, { ban_duration: active ? "none" : "876000h" });
-        if (e2) throw e2;
+        if (e2 && active) throw e2;
+        // review L8: the person is already switched off (the app lets in active people only); say so instead of a bare error
+        if (e2) return json({ ok: true, active, summary, warning: "Disattivato, ma il blocco dell'accesso non è riuscito: tocca «Riattiva» e poi di nuovo «Disattiva»" });
       }
       return json({ ok: true, active, summary });
     }

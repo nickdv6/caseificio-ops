@@ -580,9 +580,13 @@
   const dbErr = e => { const m = String((e && e.message) || e); return /check constraint|invalid input syntax for type time|out of range/i.test(m) ? 'Orario non valido: controlla inizio, fine e pausa' : /row-level security|permission denied|42501/i.test(m) ? PERM.NOT_SAVED : m; };
   let rotaReq = 0;   // v0.60: fast ◀ ▶ clicks — only the latest week renders, so a late answer can't put last week's rota under this week's dates
   let rotaCells = [], rotaRecent = [], rotaAreas = [], rotaMax = 12;
+  // review L3: the break list always holds the value in use (a 20' break or one of the recent shifts is never turned into 0)
+  const breaks = sel => [...new Set([0, 15, 30, 45, 60, 90, 120, ...rotaRecent.map(r => r.break_min || 0), sel])].sort((a, b) => a - b)
+    .map(m => `<option value="${m}"${m === sel ? ' selected' : ''}>${m ? m + ' min' : 'nessuna'}</option>`).join('');
   function rotaEditor(cell, days, person) {
     let d = $('rota-dlg');
-    if (!d) { d = document.createElement('dialog'); d.id = 'rota-dlg'; d.className = 'ui-dialog rota-dlg'; document.body.append(d); }
+    if (!d) { d = document.createElement('dialog'); d.id = 'rota-dlg'; d.className = 'ui-dialog rota-dlg'; document.body.append(d);
+      if (!d.showModal) { d.showModal = () => d.setAttribute('open', ''); d.close = () => d.removeAttribute('open'); } }   // review L10: old browsers
     const c0 = cell.cur;
     const recent = rotaRecent.map((r, i) => `<button type="button" class="chip" data-recent="${i}">${hm(r.start_time)}–${hm(r.end_time)}${r.break_min ? ` /${r.break_min}'` : ''}${r.area ? ' ' + esc(r.area) : ''}</button>`).join('');
     d.innerHTML = `<form method="dialog" class="nodirty"><h3>${esc(person.full_name)} · ${esc(new Date(cell.date + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>
@@ -590,7 +594,7 @@
       <div class="r-sec">Orario</div>
       <div class="r-grid"><label>Inizio<input type="time" step="900" id="rd-a" value="${c0 && c0.kind === 'lavoro' ? hm(c0.start_time) : ''}"></label>
         <label>Fine<input type="time" step="900" id="rd-b" value="${c0 && c0.kind === 'lavoro' ? hm(c0.end_time) : ''}"></label>
-        <label>Pausa<select id="rd-p">${[0, 15, 30, 45, 60, 90, 120].map(m => `<option value="${m}"${(c0 && c0.kind === 'lavoro' ? c0.break_min || 0 : 0) === m ? ' selected' : ''}>${m ? m + ' min' : 'nessuna'}</option>`).join('')}</select></label>
+        <label>Pausa<select id="rd-p">${breaks(c0 && c0.kind === 'lavoro' ? c0.break_min || 0 : 0)}</select></label>
         <label>Reparto<input id="rd-r" list="rd-areas" autocomplete="off" placeholder="facoltativo" value="${c0 && c0.kind === 'lavoro' ? esc(c0.area || '') : ''}"><datalist id="rd-areas">${rotaAreas.map(a => `<option value="${esc(a)}">`).join('')}</datalist></label></div>
       <label class="r-night" id="rd-nl" hidden><input type="checkbox" id="rd-n"> finisce il giorno dopo (turno di notte)</label>
       <div class="r-hours" id="rd-h"></div>
@@ -666,7 +670,7 @@
         const cell = { p: p.id, date: x.date, id: e && e.id, orig: e, cur: e ? { kind: e.kind, start_time: e.start_time, end_time: e.end_time, break_min: e.break_min, area: e.area } : null };
         cell.paint = () => { btn.innerHTML = cellHTML(cell.cur); const ch = !sameCell(cell.cur, cell.orig); btn.classList.toggle('r-changed', ch);
           btn.setAttribute('aria-label', `${p.full_name}, ${x.d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric' })}: ${!cell.cur ? 'nessun turno' : cell.cur.kind === 'lavoro' ? hm(cell.cur.start_time) + ' – ' + hm(cell.cur.end_time) : KIND_L[cell.cur.kind]}${ch ? ' (modificato)' : ''}`);
-          if (rotaCells.some(c => !sameCell(c.cur, c.orig))) box.closest('[data-scope]').classList.add('dirty'); };
+          box.closest('[data-scope]').classList.toggle('dirty', rotaCells.some(c => !sameCell(c.cur, c.orig))); };   // back as it was = not dirty
         btn.onclick = () => rotaEditor(cell, days, p);
         td.append(btn); tr.append(td); rotaCells.push(cell); cell.paint();
       });

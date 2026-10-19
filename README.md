@@ -37,8 +37,13 @@ Staff onboarding, the next improvement after the release pipeline (re-score 15/1
   the welcome page use the company's name and the profile's page, not «La Perla» and the office Console.
 - **C-14 switch-off**: «Disattiva» lists what will happen (`staff_offboard_preview`), then `staff_offboard` in one transaction closes the
   open shift, removes the future rota (today is kept), cancels links, Telegram and PIN, and lists the settings and open deadlines that
-  still name the person; `invite-user` then blocks the login. Shifts open past `labor.max_shift_hours` close by themselves every hour
-  (`close_stale_shifts`, job `fabula_close_stale_shifts` at :07); the tablet's «In turno» lists active people only.
+  still name the person; `invite-user` then blocks the login. Shifts open past `labor.max_shift_hours` close by themselves, at that
+  length, 12 hours later (`close_stale_shifts`, job `fabula_close_stale_shifts` at :07: a badge-out queued offline is accepted up to
+  12 hours late with its own time and must still find the shift open); the tablet's «In turno» lists active people only.
+- **Review (one High fixed):** the link's login is chosen and bound to the person (`access_link_bind`, errcode P0409 for a login that
+  belongs to someone else) BEFORE its password is written; `add`, `access_link` and `update_email` refuse an e-mail that is someone
+  else's login. A dead link tells only why; the link leaves the address bar at once; a failed save never reopens a replaced link; a
+  blocked login is unblocked when the active person sets the password; the mentions use plain text matching.
 - **Telegram links** for someone's phone last `auth.link_days` too (they lasted 24 h).
 - **C-23** «Cambia password» (current, new, repeat) is in the user menu of every page that uses the shared shell; **C-20** «Esci» asks
   first when something is unsaved.
@@ -46,7 +51,7 @@ Staff onboarding, the next improvement after the release pipeline (re-score 15/1
   riposo/ferie/permesso/malattia, «Anche questi giorni»; an end before the start is a night shift only when ticked; changed cells are
   orange until «Salva settimana»; the week says «questa settimana» / «settimana prossima»; database errors in Italian. sw `perla-v76`.
 - Release order: database first, then the server functions (they call the new database functions).
-- Tests: `prod-test/test_v109_people.sql` 45/45; `tablet-test/v109_e2e.py` 31/31 (the real `invite-user` and `welcome` under Deno with
+- Tests: `prod-test/test_v109_people.sql` 51/51; `tablet-test/v109_e2e.py` 43/43 (the real `invite-user` and `welcome` under Deno with
   a fake Supabase auth); `operator_e2e.py` follows the cards; `test_v106_perche.sql` no longer pins the number of database jobs.
 
 ## The app moves to https://app.bubalina.it (v1.08b)

@@ -85,7 +85,9 @@ class Fake(BaseHTTPRequestHandler):
             else: uid = m.group(1)
             sets = []
             if 'password' in a: sets.append(f"encrypted_password = {q('set:' + a['password'])}")
-            if 'email' in a: sets.append(f"email = lower({q(a['email'])})")
+            if 'email' in a:
+                if sql1(f"select count(*) from auth.users where lower(email) = lower({q(a['email'])}) and id <> {q(uid)}") != '0': return self._send(422, {'code': 422, 'msg': 'A user with this email address has already been registered'})
+                sets.append(f"email = lower({q(a['email'])})")
             if a.get('email_confirm'): sets.append('email_confirmed_at = coalesce(email_confirmed_at, now())')
             if a.get('ban_duration') == 'none': sets.append('banned_until = null')
             elif a.get('ban_duration'): sets.append("banned_until = now() + interval '100 years'")
@@ -143,6 +145,9 @@ GIADA, GMAIL = f'Giada Prova{RUN}', f'giada{RUN}@test.it'
 BRUNA_U, BRUNA_S, BMAIL = f'00000000-0000-4000-a000-00000{RUN}b', f'10000000-0000-4000-a000-00000{RUN}b', f'bruna{RUN}@test.it'
 sql(f"insert into auth.users(id, email, email_confirmed_at, encrypted_password, last_sign_in_at) values ('{BRUNA_U}', '{BMAIL}', now(), 'set:vecchia123', now())")
 sql(f"insert into fabula.staff(id, full_name, auth_user_id, app_role, role, active, email) values ('{BRUNA_S}', 'Bruna Login{RUN}', '{BRUNA_U}', 'banco', 'commesso', true, '{BMAIL}')")
+CAPO_U, CAPO_S, CMAIL = f'00000000-0000-4000-a000-00000{RUN}c', f'10000000-0000-4000-a000-00000{RUN}c', f'capo{RUN}@test.it'
+sql(f"insert into auth.users(id, email, email_confirmed_at, encrypted_password, last_sign_in_at) values ('{CAPO_U}', '{CMAIL}', now(), 'set:CapoSegreto1', now())")
+sql(f"insert into fabula.staff(id, full_name, auth_user_id, app_role, role, active, email) values ('{CAPO_S}', 'Beppe Capo{RUN}', '{CAPO_U}', 'socio', 'partner', true, 'capo.vecchio{RUN}@test.it')")
 RITA = sql1(f"insert into fabula.staff(full_name, app_role, role, active) values ('Rita Rota{RUN}', 'produzione', 'operaio', true) returning id")
 SESS = {}   # the browser's sessions by user id
 def session_for(uid, email):
@@ -150,6 +155,10 @@ def session_for(uid, email):
             "user": {"id": uid, "email": email, "aud": "authenticated", "role": "authenticated"}}
 def handler_for(s):
     def handler(route):
+        try: return handler_(route)
+        except Exception as e:   # a page closed while its request was in flight
+            if 'closed' not in str(e): raise
+    def handler_(route):
         u = route.request.url; H = {'access-control-allow-origin': '*', 'access-control-allow-headers': '*'}
         for name, port in FN_PORT.items():
             if f'/functions/v1/{name}' in u:
@@ -216,6 +225,9 @@ try:
     # the same e-mail again
     ap.fill('#inv-name', 'Altra Giada'); ap.fill('#inv-email', GMAIL); ap.click('#inv-go'); ap.wait_for_timeout(2500)
     check('the same e-mail again: «già di Giada», and her card is shown', 'già di' in toast(ap) and sql1(f"select count(*) from fabula.staff where email = {q(GMAIL)}") == '1', toast(ap))
+    ap.fill('#inv-name', 'Intruso Prova'); ap.fill('#inv-email', CMAIL); ap.click('#inv-go'); ap.wait_for_timeout(3000)
+    check('review H1: an e-mail that is already someone else\'s login (even with a different e-mail on their row) is refused',
+          'accesso di Beppe Capo' in toast(ap) and sql1("select count(*) from fabula.staff where full_name = 'Intruso Prova'") == '0', toast(ap))
     # C-17 job role follows the profile; Titolare asks
     ap.evaluate(f"(() => {{ const s = {card(GIADA)}.querySelectorAll('.p-fields select'); s[0].value = 'produzione'; s[0].dispatchEvent(new Event('change', {{ bubbles: true }})); }})()")
     job = ap.evaluate(f"{card(GIADA)}.querySelectorAll('.p-fields select')[1].value")
@@ -236,12 +248,14 @@ try:
     click_in_card(ap, f'Bruna Login{RUN}', 'Link per nuova password'); ap.wait_for_timeout(3000)
     rt = ap.evaluate(f"(() => {{ const l = {card(f'Bruna Login{RUN}')}.querySelector('.linkbox'); return l ? l.innerText : ''; }})()")
     check('someone with a password gets «Link per una nuova password»', rt.startswith('Link per una nuova password'), rt[:80])
+    btoken = ap.evaluate(f"{card(f'Bruna Login{RUN}')}.querySelector('.linkbox input').value").split('#invito=', 1)[-1]
     ctx.close()
 
     # ================= the welcome page =================
     ctx, wp, _ = page_as(b, None, f'benvenuto.html#invito={token}', logs, width=390)
     wp.wait_for_selector('#form:not([hidden])', timeout=20000)
     sub, who = wp.evaluate("[document.getElementById('sub').textContent, document.getElementById('who').textContent]")
+    check('review L2: the link leaves the address bar as soon as the page opens', 'invito' not in wp.url, wp.url)
     check('the link greets her by name with the company and shows the e-mail she will sign in with', sub.startswith('Ciao Giada!') and COMPANY in sub and GMAIL in who, f'{sub} | {who}')
     wp.fill('#pw1', 'corta'); wp.fill('#pw2', 'corta'); wp.click('#go'); wp.wait_for_timeout(300)
     e1 = wp.evaluate("document.getElementById('err').textContent")
@@ -269,6 +283,37 @@ try:
     s2 = wp.evaluate("[document.getElementById('sub').textContent, !document.getElementById('form').hidden, document.getElementById('have').offsetParent !== null]")
     check('the same link again: «già stato usato», no form, only «Ho già la password: entra»', 'già stato usato' in s2[0] and not s2[1] and s2[2], s2)
     ctx.close()
+    def welcome(body):
+        req = urllib.request.Request(f'http://127.0.0.1:{FN_PORT["welcome"]}/', data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
+        except urllib.error.HTTPError as e: return json.loads(e.read() or b'{}')
+    dead = welcome({'action': 'info', 'token': token})
+    check('review L1: a used link says why, and nothing about the person (no name, no e-mail)', dead.get('reason') == 'used' and not dead.get('email') and not dead.get('full_name') and not dead.get('first_name'), dead)
+    # a password link for someone who has a login: the same login gets the new password
+    ctx, wp, _ = page_as(b, None, f'benvenuto.html#invito={btoken}', logs, width=390)
+    wp.wait_for_selector('#form:not([hidden])', timeout=20000)
+    bs = wp.evaluate("document.getElementById('sub').textContent")
+    wp.fill('#pw1', 'NuovaBruna2026'); wp.fill('#pw2', 'NuovaBruna2026'); wp.click('#go')
+    try: wp.wait_for_function("!document.getElementById('steps').hidden || document.getElementById('err').textContent", timeout=20000)
+    except Exception: pass
+    bl = sql1(f"select u.encrypted_password || '|' || (s.auth_user_id = '{BRUNA_U}') || '|' || (select count(*) from auth.users where email like 'bruna%{RUN}%') from fabula.staff s join auth.users u on u.id = s.auth_user_id where s.id = '{BRUNA_S}'")
+    check('a «nuova password» link: «scegli la nuova password», then the same login gets it (no second account) and she is in',
+          bs.startswith('Ciao Bruna, scegli la nuova password') and bl == 'set:NuovaBruna2026|true|1' and wp.evaluate("!document.getElementById('steps').hidden"), f'{bs} | {bl}')
+    wp.wait_for_timeout(1500); ctx.close()
+    # review H1: a link for a person whose e-mail is someone else's login (made by hand: the page refuses it)
+    evil = 'intruso' + RUN + 'y' * 40
+    sql(f"insert into fabula.staff(id, full_name, app_role, role, active, email) values ('10000000-0000-4000-a000-00000{RUN}e', 'Intrusa{RUN}', 'banco', 'commesso', true, '{CMAIL}')")
+    sql(f"insert into fabula.staff_access_links (staff_id, token_hash, purpose, expires_at) values ('10000000-0000-4000-a000-00000{RUN}e', encode(sha256(convert_to({q(evil)}, 'UTF8')), 'hex'), 'invite', now() + interval '1 day')")
+    ctx, wp, _ = page_as(b, None, f'benvenuto.html#invito={evil}', logs, width=390)
+    wp.wait_for_selector('#form:not([hidden])', timeout=20000)
+    wp.fill('#pw1', 'Attacco2026x'); wp.fill('#pw2', 'Attacco2026x'); wp.click('#go'); wp.wait_for_timeout(4000)
+    hv = sql1(f"select encrypted_password from auth.users where id = '{CAPO_U}'")
+    hs = wp.evaluate("document.getElementById('sub').textContent")
+    check('review H1: that link cannot set the password of the other person\'s login, and says why',
+          hv == 'set:CapoSegreto1' and 'altra persona' in hs and sql1(f"select auth_user_id is null from fabula.staff where id = '10000000-0000-4000-a000-00000{RUN}e'") == 't', f'{hv} | {hs}')
+    ctx.close()
+    sql(f"delete from fabula.staff_access_links where staff_id = '10000000-0000-4000-a000-00000{RUN}e'"); sql(f"update fabula.staff set active = false where id = '10000000-0000-4000-a000-00000{RUN}e'")
     # an older link, replaced by a newer one
     old = 'vecchio' + RUN + 'x' * 40
     sql(f"insert into fabula.staff_access_links (staff_id, token_hash, purpose, expires_at, revoked_at, revoked_why) select id, encode(sha256(convert_to({q(old)}, 'UTF8')), 'hex'), 'invite', now() + interval '6 days', now(), 'sostituito da un link nuovo' from fabula.staff where id = '{RITA}'")
@@ -308,6 +353,8 @@ try:
     cp.fill('#ui-pw0', 'sbagliata'); cp.fill('#ui-pw1', 'NuovaPass2026'); cp.fill('#ui-pw2', 'NuovaPass2026'); cp.click('#ui-pwok'); cp.wait_for_timeout(1500)
     pe = cp.evaluate("document.getElementById('ui-pwerr').textContent")
     check('C-23: «Cambia password» is in the menu of a profile without Configurazione, and a wrong current password is refused', 'non è corretta' in pe, pe)
+    cp.fill('#ui-pw0', 'Casaro2026'); cp.click('#ui-pwok'); cp.wait_for_timeout(1500)
+    check('…with the right one the password is changed and the dialog closes', 'Password cambiata' in toast(cp) and not cp.evaluate("document.getElementById('ui-pw').open"), toast(cp))
     ctx.close()
 
     # ================= B-26: the rota editor =================

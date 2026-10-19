@@ -98,7 +98,10 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
   }
 
   // ---------------------------------------------------------------- v1.09: the personal access link (#invito=…)
-  const INV = H.get('invito');
+  // review L2: the link leaves the address bar (and the history) at once; this tab keeps it until the password is saved
+  let INV = H.get('invito');
+  try { if (INV) { sessionStorage.setItem('perla_invito', INV); history.replaceState(null, '', location.pathname); } else if (!location.hash && !location.search) INV = sessionStorage.getItem('perla_invito'); } catch {}
+  const forget = () => { try { sessionStorage.removeItem('perla_invito'); } catch {} };
   if (INV) {
     const call = async body => {
       const r = await fetch(CFG.supabaseUrl + '/functions/v1/welcome', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: CFG.supabaseKey }, body: JSON.stringify(body) });
@@ -107,7 +110,8 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
       return j || {};
     };
     const why = i => ({
-      used: `Questo link è già stato usato${i.used_at ? ' il ' + fmtDay(i.used_at) : ''}: la password l'hai già scelta. Entra con la tua email${i.email ? ' (' + i.email + ')' : ''} e la password.`,
+      used: `Questo link è già stato usato${i.used_at ? ' il ' + fmtDay(i.used_at) : ''}: la password l'hai già scelta. Entra con la tua email e la password.`,
+      conflict: i.message || 'Questa email è già l\'accesso di un\'altra persona: chiedi al titolare di controllare la tua email.',
       replaced: 'Questo link è stato sostituito da uno più recente: apri l\'ultimo che hai ricevuto, oppure chiedi al titolare di mandartene uno nuovo.',
       expired: `Questo link è scaduto${i.expires_at ? ' ' + fmtDay(i.expires_at) : ''}: chiedi al titolare di mandartene uno nuovo.`,
       revoked: 'Questo link non è più attivo: chiedi al titolare.',
@@ -118,6 +122,7 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
     catch (e) { $('sub').textContent = navigator.onLine === false ? 'Nessuna connessione: riapri il link quando c\'è rete.' : e.message; return; }
     if (info.company) BRAND.set({ name: info.company });
     if (!info.ok) {
+      forget();
       $('sub').textContent = why(info);
       if (info.reason === 'used') onlyEnter(info.home);
       return;
@@ -128,8 +133,9 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
     let { data: { session } } = await sb.auth.getSession();
     const other = session && session.user && info.email && session.user.email && session.user.email.toLowerCase() !== info.email.toLowerCase() ? session.user.email : null;
     $('who').hidden = false;
-    $('who').innerHTML = `Entrerai sempre con la tua email: <b></b>${other ? `<br><small>Su questo dispositivo è collegato ${other}: quando salvi esce, ed entri tu.</small>` : ''}`;
+    $('who').innerHTML = `Entrerai sempre con la tua email: <b></b>${other ? '<br><small></small>' : ''}`;
     $('who').querySelector('b').textContent = info.email || '';
+    if (other) $('who').querySelector('small').textContent = `Su questo dispositivo è collegato ${other}: quando salvi esce, ed entri tu.`;
     $('form').hidden = false; $('pw1').focus();
     $('go').onclick = async () => {
       $('err').textContent = ''; const bad = checkPw(); if (bad) return $('err').textContent = bad;
@@ -137,8 +143,8 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
       let r;
       try { r = await call({ action: 'redeem', token: INV, password: $('pw1').value }); }
       catch (e) { $('go').disabled = false; return $('err').textContent = navigator.onLine === false ? 'Nessuna connessione: riprova quando c\'è rete (il link vale ancora).' : e.message; }
-      if (!r.ok) { $('go').disabled = false; if (r.reason === 'weak') return $('err').textContent = r.message; $('form').hidden = true; $('sub').textContent = why(r); if (r.reason === 'used') onlyEnter(info.home); return; }
-      history.replaceState(null, '', location.pathname);         // the link is used: it leaves the address bar
+      if (!r.ok) { $('go').disabled = false; if (r.reason === 'weak') return $('err').textContent = r.message; forget(); $('form').hidden = true; $('sub').textContent = why(r); if (r.reason === 'used') onlyEnter(info.home); return; }
+      forget();                                                   // the link is used
       if (session) await sb.auth.signOut({ scope: 'local' }).catch(() => {});
       const { error } = await sb.auth.signInWithPassword({ email: r.email, password: $('pw1').value });
       if (error) { $('sub').textContent = `Password salvata. Entra con la tua email (${r.email}) e la password.`; onlyEnter(info.home); return; }
