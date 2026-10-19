@@ -561,56 +561,125 @@
       data.map(x => `<tr><td>${fmtD(x.price_date)}</td><td>${esc(x.source)}</td><td>${esc(x.ref || '')}</td><td class="num">${x.qty != null ? num(x.qty, 0) : ''}</td><td class="num">${num(x.price_eur, 4)}</td><td class="num ${Number(x.change_pct) > 5 ? 'ko' : ''}">${x.change_pct != null ? (x.change_pct > 0 ? '+' : '') + num(x.change_pct, 1) + '%' : ''}</td></tr>`).join('');
     box.append(tbl);
   }  // ---------- Personale: weekly rota + hours/overtime ----------
+  // v1.09 (audit B-26): a cell is tapped, not typed. The editor offers the shifts used recently, riposo / ferie / permesso /
+  // malattia, or start and end with time pickers, the break and the area; «Anche» copies it to other days of the same person.
+  // An end before the start is a night shift only when ticked, so «15-05» typed for «05-15» can no longer become 14 h.
   const isoDay = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
   const mondayOf = d => { const x = new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
   let rotaMon = mondayOf(new Date()); rotaMon.setDate(rotaMon.getDate() + 7);
-  const KIND_L = { F: 'ferie', P: 'permesso', M: 'malattia', R: 'riposo' }, L_KIND = { ferie: 'F', permesso: 'P', malattia: 'M', riposo: 'R' };
-  const hm = t => t ? t.slice(0, 5).replace(/:00$/, '') : '';
-  const cellText = e => !e ? '' : e.kind !== 'lavoro' ? L_KIND[e.kind] : `${hm(e.start_time)}-${hm(e.end_time)}${e.break_min ? '/' + e.break_min : ''}${e.area ? ' ' + e.area : ''}`;
-  function parseCell(s) {
-    s = (s || '').trim(); if (!s) return null;
-    if (/^[FPMR]$/i.test(s)) return { kind: KIND_L[s.toUpperCase()], start_time: null, end_time: null, break_min: 0, area: null };
-    const m = s.match(/^(\d{1,2})(?:[:.](\d{2}))?\s*-\s*(\d{1,2})(?:[:.](\d{2}))?(?:\s*\/\s*(\d{1,3}))?(?:\s+(.+))?$/);
-    if (!m || +m[1] > 23 || +m[3] > 24) throw new Error(`Orario non valido: "${s}"`);
-    const t = (h, mi) => `${String(+h % 24).padStart(2, '0')}:${mi || '00'}`;
-    return { kind: 'lavoro', start_time: t(m[1], m[2]), end_time: t(m[3], m[4]), break_min: m[5] ? +m[5] : 0, area: m[6] ? m[6].trim() : null };
-  }
-  const cellHours = c => { if (!c || c.kind !== 'lavoro') return 0; const [a, b] = [c.start_time, c.end_time].map(x => +x.slice(0, 2) + +x.slice(3, 5) / 60); return Math.max(0, (b > a ? b - a : b + 24 - a) - c.break_min / 60); };
+  const KIND_L = { riposo: 'Riposo', ferie: 'Ferie', permesso: 'Permesso', malattia: 'Malattia' };
+  const hm = t => t ? t.slice(0, 5) : '';
+  const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+  const cellHours = c => { if (!c || c.kind !== 'lavoro') return 0; const a = toMin(c.start_time), b = toMin(c.end_time); return Math.max(0, ((b > a ? b - a : b + 1440 - a) - (c.break_min || 0)) / 60); };
+  const hLabel = h => { const m = Math.round(h * 60); return `${Math.floor(m / 60)} h${m % 60 ? ' ' + String(m % 60).padStart(2, '0') : ''}`; };
+  const sameCell = (a, b) => JSON.stringify(a ? [a.kind, hm(a.start_time), hm(a.end_time), a.break_min || 0, a.area || ''] : null) === JSON.stringify(b ? [b.kind, hm(b.start_time), hm(b.end_time), b.break_min || 0, b.area || ''] : null);
+  const cellHTML = c => !c ? '<span class="r-empty">+</span>' : c.kind !== 'lavoro' ? `<span class="r-kind r-${c.kind}">${KIND_L[c.kind] || c.kind}</span>`
+    : `<span class="r-time">${hm(c.start_time)}–${hm(c.end_time)}</span><small>${[c.break_min ? `pausa ${c.break_min}'` : '', c.area || ''].filter(Boolean).map(esc).join(' · ')}</small>`;
+  const weekWord = mon => { const n = Math.round((mondayOf(new Date(mon + 'T12:00:00')) - mondayOf(new Date())) / (7 * 864e5));
+    return n === 0 ? 'questa settimana' : n === 1 ? 'settimana prossima' : n === -1 ? 'settimana scorsa' : n > 1 ? `tra ${n} settimane` : `${-n} settimane fa`; };
+  const dbErr = e => { const m = String((e && e.message) || e); return /check constraint|invalid input syntax for type time|out of range/i.test(m) ? 'Orario non valido: controlla inizio, fine e pausa' : /row-level security|permission denied|42501/i.test(m) ? PERM.NOT_SAVED : m; };
   let rotaReq = 0;   // v0.60: fast ◀ ▶ clicks — only the latest week renders, so a late answer can't put last week's rota under this week's dates
+  let rotaCells = [], rotaRecent = [], rotaAreas = [], rotaMax = 12;
+  function rotaEditor(cell, days, person) {
+    let d = $('rota-dlg');
+    if (!d) { d = document.createElement('dialog'); d.id = 'rota-dlg'; d.className = 'ui-dialog rota-dlg'; document.body.append(d); }
+    const c0 = cell.cur;
+    const recent = rotaRecent.map((r, i) => `<button type="button" class="chip" data-recent="${i}">${hm(r.start_time)}–${hm(r.end_time)}${r.break_min ? ` /${r.break_min}'` : ''}${r.area ? ' ' + esc(r.area) : ''}</button>`).join('');
+    d.innerHTML = `<form method="dialog" class="nodirty"><h3>${esc(person.full_name)} · ${esc(new Date(cell.date + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>
+      ${recent ? `<div class="r-sec">Turni usati di recente</div><div class="r-chips">${recent}</div>` : ''}
+      <div class="r-sec">Orario</div>
+      <div class="r-grid"><label>Inizio<input type="time" step="900" id="rd-a" value="${c0 && c0.kind === 'lavoro' ? hm(c0.start_time) : ''}"></label>
+        <label>Fine<input type="time" step="900" id="rd-b" value="${c0 && c0.kind === 'lavoro' ? hm(c0.end_time) : ''}"></label>
+        <label>Pausa<select id="rd-p">${[0, 15, 30, 45, 60, 90, 120].map(m => `<option value="${m}"${(c0 && c0.kind === 'lavoro' ? c0.break_min || 0 : 0) === m ? ' selected' : ''}>${m ? m + ' min' : 'nessuna'}</option>`).join('')}</select></label>
+        <label>Reparto<input id="rd-r" list="rd-areas" autocomplete="off" placeholder="facoltativo" value="${c0 && c0.kind === 'lavoro' ? esc(c0.area || '') : ''}"><datalist id="rd-areas">${rotaAreas.map(a => `<option value="${esc(a)}">`).join('')}</datalist></label></div>
+      <label class="r-night" id="rd-nl" hidden><input type="checkbox" id="rd-n"> finisce il giorno dopo (turno di notte)</label>
+      <div class="r-hours" id="rd-h"></div>
+      <div class="r-sec">Oppure</div>
+      <div class="r-chips">${Object.entries(KIND_L).map(([k, l]) => `<button type="button" class="chip${c0 && c0.kind === k ? '" aria-pressed="true' : ''}" data-kind="${k}">${l}</button>`).join('')}<button type="button" class="chip" data-kind="">Nessun turno</button></div>
+      <div class="r-sec">Anche questi giorni</div>
+      <div class="r-days">${days.map(x => `<label><input type="checkbox" data-day="${x.date}"${x.date === cell.date ? ' checked disabled' : ''}> ${esc(new Date(x.date + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'short' }))}</label>`).join('')}</div>
+      <div class="err" id="rd-e" role="alert"></div>
+      <div class="row" style="gap:8px;justify-content:flex-end;margin-top:10px"><button type="button" class="btn sec" id="rd-no">Annulla</button><button type="button" class="btn" id="rd-ok">Applica</button></div></form>`;
+    const A = d.querySelector('#rd-a'), B = d.querySelector('#rd-b'), Pz = d.querySelector('#rd-p'), R = d.querySelector('#rd-r'), N = d.querySelector('#rd-n'), E = d.querySelector('#rd-e');
+    let kind = c0 && c0.kind !== 'lavoro' ? c0.kind : null;   // a chosen «Riposo»… (null = the times)
+    const work = () => ({ kind: 'lavoro', start_time: A.value, end_time: B.value, break_min: +Pz.value, area: R.value.trim() || null });
+    const show = () => {
+      const night = A.value && B.value && toMin(B.value) <= toMin(A.value);
+      d.querySelector('#rd-nl').hidden = !night; if (!night) N.checked = false;
+      const h = A.value && B.value && (!night || N.checked) ? cellHours(work()) : null;
+      d.querySelector('#rd-h').innerHTML = h == null ? (kind ? `Scelto: <b>${KIND_L[kind]}</b>` : '') : `<b>${hLabel(h)}</b> di lavoro${h > rotaMax ? ` <span class="ko">⚠ più di ${rotaMax} ore: controlla l'orario</span>` : ''}`;
+      d.querySelectorAll('[data-kind]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.kind === kind && !!kind)));
+    };
+    [A, B, Pz, R].forEach(x => x.addEventListener('input', () => { kind = null; show(); })); N.onchange = show;
+    d.querySelectorAll('[data-recent]').forEach(x => x.onclick = () => { const r = rotaRecent[+x.dataset.recent]; A.value = hm(r.start_time); B.value = hm(r.end_time); Pz.value = String(r.break_min || 0); R.value = r.area || ''; kind = null; N.checked = toMin(B.value) <= toMin(A.value); show(); });
+    d.querySelectorAll('[data-kind]').forEach(x => x.onclick = () => { kind = x.dataset.kind; if (kind) { A.value = ''; B.value = ''; } show(); if (!kind) apply(null); });
+    const apply = val => {
+      const targets = [cell.date, ...[...d.querySelectorAll('[data-day]:checked:not(:disabled)')].map(x => x.dataset.day)];
+      rotaCells.filter(x => x.p === cell.p && targets.includes(x.date)).forEach(x => { x.cur = val ? { ...val } : null; x.paint(); });
+      d.close(); rotaTotals(cell.p);
+    };
+    d.querySelector('#rd-ok').onclick = () => {
+      E.textContent = '';
+      if (kind) return apply({ kind, start_time: null, end_time: null, break_min: 0, area: null });
+      if (!A.value && !B.value) return apply(null);
+      if (!A.value || !B.value) return E.textContent = 'Scrivi inizio e fine del turno, oppure scegli Riposo, Ferie…';
+      if (toMin(B.value) <= toMin(A.value) && !N.checked) return E.textContent = 'La fine è prima dell\'inizio: se è un turno di notte spunta «finisce il giorno dopo», altrimenti correggi l\'orario.';
+      const w = work(); if (cellHours(w) <= 0) return E.textContent = 'La pausa è più lunga del turno.';
+      apply(w);
+    };
+    d.querySelector('#rd-no').onclick = () => d.close();
+    N.checked = !!(c0 && c0.kind === 'lavoro' && toMin(c0.end_time) <= toMin(c0.start_time));
+    show(); d.showModal(); (kind ? d.querySelector(`[data-kind="${kind}"]`) : A).focus();
+  }
+  let rotaTotals = () => {};
   async function loadRota() {
     const myReq = ++rotaReq;
     const mon = isoDay(rotaMon), sunD = new Date(rotaMon); sunD.setDate(sunD.getDate() + 6); const sun = isoDay(sunD);
-    $('rota-week').textContent = `${rotaMon.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – ${sunD.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    const from8 = new Date(rotaMon); from8.setDate(from8.getDate() - 56);
+    $('rota-week').textContent = `${rotaMon.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – ${sunD.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' })} · ${weekWord(mon)}`;
     const box = $('rota-grid'); box.innerHTML = '<div class="status">Carico…</div>'; UI.clean(box.closest('[data-scope]'));
-    const [{ data: people, error: e1 }, { data: rows, error: e2 }, { data: cfg }] = await Promise.all([
+    const [{ data: people, error: e1 }, { data: rows, error: e2 }, { data: cfg }, { data: past }] = await Promise.all([
       sb.from('staff').select('id, full_name, role, contract_hours_week').eq('active', true).order('full_name'),
       sb.from('rota_entries').select('*').gte('work_date', mon).lte('work_date', sun),
-      sb.from('settings').select('value').eq('key', 'labor.contract_hours_week').maybeSingle()]);
+      sb.from('settings').select('key, value').in('key', ['labor.contract_hours_week', 'labor.max_shift_hours']),
+      sb.from('rota_entries').select('start_time, end_time, break_min, area').eq('kind', 'lavoro').gte('work_date', isoDay(from8)).lte('work_date', sun).limit(1000)]);
     if (myReq !== rotaReq) return;
-    if (e1 || e2) { box.innerHTML = `<div class="empty">${esc((e1 || e2).message)}</div>`; return; }
-    const defH = Number(cfg?.value || 40);
-    const days = [...Array(7)].map((_, i) => { const d = new Date(rotaMon); d.setDate(d.getDate() + i); return d; });
+    if (e1 || e2) { box.innerHTML = `<div class="empty">${esc(dbErr(e1 || e2))}</div>`; return; }
+    const S = Object.fromEntries((cfg || []).map(r => [r.key, r.value]));
+    const defH = Number(S['labor.contract_hours_week'] || 40); rotaMax = Number(S['labor.max_shift_hours'] || 12);
+    // the six shifts used most in the last 8 weeks, and the areas used
+    const freq = {}; (past || []).forEach(r => { const k = [hm(r.start_time), hm(r.end_time), r.break_min || 0, r.area || ''].join('|'); freq[k] = (freq[k] || 0) + 1; });
+    rotaRecent = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => { const [s, e, b, a] = k.split('|'); return { start_time: s, end_time: e, break_min: +b, area: a || null }; });
+    rotaAreas = [...new Set(['produzione', 'banco', 'spedizioni', 'pulizie', ...(past || []).map(r => r.area).filter(Boolean)])];
+    const days = [...Array(7)].map((_, i) => { const d = new Date(rotaMon); d.setDate(d.getDate() + i); return { d, date: isoDay(d) }; });
     const byKey = {}; (rows || []).forEach(r => { byKey[r.staff_id + '|' + r.work_date] = r; });
     const tbl = document.createElement('table'); tbl.className = 'rota';
-    tbl.innerHTML = '<tr><th>Persona</th>' + days.map(d => `<th>${d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric' })}</th>`).join('') + '<th class="num">Ore</th></tr>';
-    const inputs = [];
+    const today = UI.romeISO();
+    tbl.innerHTML = '<tr><th>Persona</th>' + days.map(x => `<th${x.date === today ? ' class="r-today"' : ''}>${x.d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric' })}</th>`).join('') + '<th class="num">Ore</th></tr>';
+    rotaCells = []; const tots = {};
     (people || []).forEach(p => {
       const tr = document.createElement('tr'); const tdN = document.createElement('td'); tdN.innerHTML = `${esc(p.full_name)}<br><small>${esc(p.role)}</small>`; tr.append(tdN);
-      const tot = document.createElement('td'); tot.className = 'num';
-      const contract = Number(p.contract_hours_week || defH);
-      const recompute = () => { let h = 0, bad = false; inputs.filter(x => x.p === p.id).forEach(x => { try { h += cellHours(parseCell(x.i.value)); x.i.style.borderColor = ''; } catch { bad = true; x.i.style.borderColor = 'var(--warn)'; } }); tot.innerHTML = `${num(h, 1)}<br><small>/ ${num(contract, 0)}</small>`; tot.classList.toggle('ko', h > contract || bad); };
-      days.forEach(d => {
-        const key = p.id + '|' + isoDay(d); const td = document.createElement('td');
-        const i = document.createElement('input'); i.type = 'text'; i.style.width = '108px'; i.value = cellText(byKey[key]); i.placeholder = '—';
-        i.oninput = recompute; td.append(i); tr.append(td); inputs.push({ p: p.id, date: isoDay(d), i, orig: i.value, id: byKey[key]?.id });
+      const tot = document.createElement('td'); tot.className = 'num'; tots[p.id] = { el: tot, contract: Number(p.contract_hours_week || defH) };
+      days.forEach(x => {
+        const e = byKey[p.id + '|' + x.date] || null; const td = document.createElement('td');
+        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'r-cell';
+        const cell = { p: p.id, date: x.date, id: e && e.id, orig: e, cur: e ? { kind: e.kind, start_time: e.start_time, end_time: e.end_time, break_min: e.break_min, area: e.area } : null };
+        cell.paint = () => { btn.innerHTML = cellHTML(cell.cur); const ch = !sameCell(cell.cur, cell.orig); btn.classList.toggle('r-changed', ch);
+          btn.setAttribute('aria-label', `${p.full_name}, ${x.d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric' })}: ${!cell.cur ? 'nessun turno' : cell.cur.kind === 'lavoro' ? hm(cell.cur.start_time) + ' – ' + hm(cell.cur.end_time) : KIND_L[cell.cur.kind]}${ch ? ' (modificato)' : ''}`);
+          if (rotaCells.some(c => !sameCell(c.cur, c.orig))) box.closest('[data-scope]').classList.add('dirty'); };
+        btn.onclick = () => rotaEditor(cell, days, p);
+        td.append(btn); tr.append(td); rotaCells.push(cell); cell.paint();
       });
-      tr.append(tot); tbl.append(tr); recompute();
+      tr.append(tot); tbl.append(tr);
     });
+    rotaTotals = pid => { const t = tots[pid]; if (!t) return; const h = rotaCells.filter(c => c.p === pid).reduce((s, c) => s + cellHours(c.cur), 0);
+      t.el.innerHTML = `${num(h, 1)}<br><small>/ ${num(t.contract, 0)}</small>`; t.el.classList.toggle('ko', h > t.contract); };
+    Object.keys(tots).forEach(rotaTotals);
     box.innerHTML = ''; box.append(tbl);
     const { data: cover } = await sb.from('v_safety_cover').select('*').gte('work_date', mon).lte('work_date', sun);
     const cv = {}; (cover || []).forEach(c => { cv[c.work_date] = c; });
     const trc = document.createElement('tr');
-    trc.innerHTML = '<td><small>Primo soccorso · antincendio in turno</small></td>' + days.map(d => { const c = cv[isoDay(d)]; if (!c) return '<td></td>';
+    trc.innerHTML = '<td><small>Primo soccorso · antincendio in turno</small></td>' + days.map(x => { const c = cv[x.date]; if (!c) return '<td></td>';
       const miss = [c.first_aid ? '' : 'PS', c.fire_warden ? '' : 'AI'].filter(Boolean);
       return `<td><small class="${miss.length ? 'ko' : 'ok'}" title="${esc([c.first_aid_names && 'PS: ' + c.first_aid_names, c.fire_warden_names && 'AI: ' + c.fire_warden_names].filter(Boolean).join(' · '))}">${miss.length ? 'manca ' + miss.join(' + ') : 'PS ✓ AI ✓'}</small></td>`; }).join('') + '<td></td>';
     tbl.append(trc);
@@ -619,16 +688,15 @@
       const b = $('rota-save'); b.disabled = true;
       try {
         const ups = [], dels = [];
-        for (const x of inputs) {
-          if (x.i.value.trim() === x.orig.trim()) continue;
-          const c = parseCell(x.i.value);
-          if (!c) { if (x.id) dels.push(x.id); continue; }
-          ups.push({ staff_id: x.p, work_date: x.date, ...c, created_by: staff.id, updated_at: new Date().toISOString() });
-        }
+        rotaCells.filter(c => !sameCell(c.cur, c.orig)).forEach(c => {
+          if (!c.cur) { if (c.id) dels.push(c.id); return; }
+          ups.push({ staff_id: c.p, work_date: c.date, kind: c.cur.kind, start_time: c.cur.kind === 'lavoro' ? c.cur.start_time : null, end_time: c.cur.kind === 'lavoro' ? c.cur.end_time : null,
+            break_min: c.cur.kind === 'lavoro' ? c.cur.break_min || 0 : 0, area: c.cur.kind === 'lavoro' ? c.cur.area : null, created_by: staff.id, updated_at: new Date().toISOString() });
+        });
         if (ups.length) { const { error } = await sb.from('rota_entries').upsert(ups, { onConflict: 'staff_id,work_date' }); if (error) throw error; }
         if (dels.length) { const { data: gone, error } = await sb.from('rota_entries').delete().in('id', dels).select('id'); if (error) throw error; if ((gone || []).length < dels.length) throw new Error(PERM.NOT_SAVED); }
         UI.clean(b); toast(ups.length + dels.length ? `Turni salvati (${ups.length + dels.length})` : 'Nessuna modifica'); loadRota();
-      } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
+      } catch (err) { toast(dbErr(err), 'err'); } finally { b.disabled = false; }
     };
     loadHours(mon);
   }

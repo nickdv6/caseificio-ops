@@ -9,6 +9,14 @@
 // Redirect: the e-mail link opens benvenuto.html on the site (Supabase → Authentication → URL configuration must allow it).
 // v1.08: the site's address comes from the database (setting infra.site_url, the same one every other link uses), so moving the app
 // is one setting (v1.08b: app.bubalina.it); SITE_URL / the app's address are only fallbacks.
+// v1.09 «Persone» (staff onboarding):
+// POST { action: "add", full_name, email?, app_role, job_role? } → a new person; with an e-mail, also their personal access link
+// POST { action: "access_link", staff_id }   → the personal link benvenuto.html#invito=<token>: lasts auth.link_days (7), until a
+//        newer one is made, and is used up only when the password is saved (server function «welcome»). Only its sha256 is stored.
+//        No e-mail from Supabase: the owner sends it by WhatsApp or from his own mail app (no 24 h limit, no hourly e-mail limit).
+// POST { action: "update_email", staff_id, email } → (audit C-13) changes the person's e-mail AND the e-mail they sign in with.
+// «deactivate» now switches the person off with fabula.staff_offboard (audit C-14: open shift, future rota, links, Telegram, PIN),
+// then blocks the login. «invite» with the e-mail of someone switched off answers «usa Riattiva» (audit C-15).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -28,6 +36,9 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, "Content-Type": "application/json" } });
+const sha256hex = async (t: string) =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const JOB_FOR: Record<string, string> = { titolare: "owner", socio: "partner", resp_produzione: "casaro", produzione: "operaio", qualita: "operaio",
   spedizioni: "operaio", banco: "commesso", marketing: "consulente", amministrazione: "consulente", consulente: "consulente" };
 
@@ -59,8 +70,71 @@ Deno.serve(async (req) => {
     }
     return null;
   };
+  // v1.09: a personal access link (32 random bytes, base64url); the database keeps only its sha256
+  const newLink = async (staffId: string) => {
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    const token = btoa(String.fromCharCode(...raw)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const { data, error } = await admin.rpc("access_link_new", { p_staff_id: staffId, p_token_hash: await sha256hex(token), p_by: me?.staff_id ?? null });
+    if (error) throw error;
+    return { link: `${SITE}/benvenuto.html#invito=${token}`, site: SITE, expires_at: data.expires_at, purpose: data.purpose, first_name: data.first_name,
+             role_name: data.role_name, home: data.home, email: data.email, company: data.company };
+  };
+  // audit C-15: someone switched off comes back with «Riattiva» (which also unblocks the login), not with a new invite
+  const OFF = (id: string) => json({ error: "Questa persona è disattivata: usa «Riattiva» nella sua scheda", staff_id: id, inactive: true }, 409);
 
   try {
+    if (action === "add") {
+      const full_name = String(body.full_name ?? "").trim().replace(/\s+/g, " ");
+      const email = String(body.email ?? "").trim().toLowerCase() || null;
+      const app_role = String(body.app_role ?? "");
+      if (full_name.length < 3) return json({ error: "Scrivi nome e cognome" }, 400);
+      if (email && !EMAIL_RE.test(email)) return json({ error: "Email non valida" }, 400);
+      const { data: role } = await admin.from("app_roles").select("code").eq("code", app_role).maybeSingle();
+      if (!role) return json({ error: "Profilo sconosciuto" }, 400);
+      if (email) {
+        const { data: ex } = await admin.from("staff").select("id, full_name, active").eq("email", email).maybeSingle();
+        if (ex && !ex.active) return OFF(ex.id);
+        if (ex) return json({ error: `Questa email è già di ${ex.full_name}: usa la sua scheda`, staff_id: ex.id }, 409);
+      }
+      const job_role = String(body.job_role || JOB_FOR[app_role] || "operaio");
+      const { data: staff, error } = await admin.from("staff").insert({ full_name, email, app_role, role: job_role, active: true }).select("id").single();
+      if (error) throw error;
+      return json({ ok: true, staff_id: staff.id, ...(email ? await newLink(staff.id) : {}) });
+    }
+
+    if (action === "access_link") {
+      const { data: staff } = await admin.from("staff").select("id, email, active").eq("id", String(body.staff_id ?? "")).maybeSingle();
+      if (!staff) return json({ error: "Persona non trovata" }, 404);
+      if (!staff.active) return OFF(staff.id);
+      if (!staff.email) return json({ error: "Manca l'email: aggiungila nella scheda (serve per entrare)" }, 400);
+      return json({ ok: true, staff_id: staff.id, ...(await newLink(staff.id)) });
+    }
+
+    if (action === "update_email") {
+      const { data: staff } = await admin.from("staff").select("id, email, auth_user_id, full_name").eq("id", String(body.staff_id ?? "")).maybeSingle();
+      if (!staff) return json({ error: "Persona non trovata" }, 404);
+      const email = String(body.email ?? "").trim().toLowerCase();
+      if (!EMAIL_RE.test(email)) return json({ error: "Email non valida" }, 400);
+      if (email === String(staff.email ?? "").toLowerCase()) return json({ ok: true, unchanged: true });
+      const { data: other } = await admin.from("staff").select("id, full_name").eq("email", email).neq("id", staff.id).maybeSingle();
+      if (other) return json({ error: `Questa email è già di ${other.full_name}` }, 409);
+      let was: string | null = null;
+      if (staff.auth_user_id) {
+        const taken = await findAuthUser(email);
+        if (taken && taken.id !== staff.auth_user_id) return json({ error: "Questa email ha già un altro account di accesso: scegline un'altra" }, 409);
+        const { data: cur } = await admin.auth.admin.getUserById(staff.auth_user_id);
+        was = cur?.user?.email ?? null;
+        const { error } = await admin.auth.admin.updateUserById(staff.auth_user_id, { email, email_confirm: true });
+        if (error) throw error;
+      }
+      const { error } = await admin.from("staff").update({ email }).eq("id", staff.id);
+      if (error) {
+        if (staff.auth_user_id && was) await admin.auth.admin.updateUserById(staff.auth_user_id, { email: was, email_confirm: true });   // back as it was
+        throw error;
+      }
+      return json({ ok: true, login_changed: !!staff.auth_user_id });
+    }
+
     if (action === "invite") {
       const email = String(body.email ?? "").trim().toLowerCase();
       const full_name = String(body.full_name ?? "").trim();
@@ -73,13 +147,14 @@ Deno.serve(async (req) => {
 
       // staff row: reuse by e-mail, else create
       // v0.60: exact match (staff.email is stored lower-case); ilike treated "_" and "%" in an address as wildcards
-      let { data: staff } = await admin.from("staff").select("id, auth_user_id").eq("email", email).maybeSingle();
+      let { data: staff } = await admin.from("staff").select("id, auth_user_id, active").eq("email", email).maybeSingle();
+      if (staff && !staff.active) return OFF(staff.id);
       if (staff) {
         const { error } = await admin.from("staff").update({ full_name, app_role, role: job_role, active: true }).eq("id", staff.id);
         if (error) throw error;
       } else {
-        const badge = "STAFF:" + full_name.split(/\s+/)[0].toUpperCase().replace(/[^A-Z]/g, "").slice(0, 10) + Math.floor(Math.random() * 90 + 10);
-        const { data, error } = await admin.from("staff").insert({ full_name, email, app_role, role: job_role, active: true, badge_code: badge }).select("id, auth_user_id").single();
+        // v1.09: the badge code comes from the database (random, audit C-24)
+        const { data, error } = await admin.from("staff").insert({ full_name, email, app_role, role: job_role, active: true }).select("id, auth_user_id, active").single();
         if (error) throw error;
         staff = data;
       }
@@ -131,13 +206,22 @@ Deno.serve(async (req) => {
       }
       if (staff.auth_user_id === user.id) return json({ error: "Non puoi disattivare te stesso" }, 400);
       const active = action === "reactivate";
-      const { error } = await admin.from("staff").update({ active }).eq("id", staff.id);
-      if (error) throw error;
+      // deno-lint-ignore no-explicit-any
+      let summary: any = null;
+      if (active) {
+        const { error } = await admin.from("staff").update({ active }).eq("id", staff.id);
+        if (error) throw error;
+      } else {
+        // v1.09 (audit C-14): one transaction, as the caller (the change log names who did it)
+        const { data, error } = await userClient.rpc("staff_offboard", { p_staff_id: staff.id });
+        if (error) throw error;
+        summary = data;
+      }
       if (staff.auth_user_id) {
         const { error: e2 } = await admin.auth.admin.updateUserById(staff.auth_user_id, { ban_duration: active ? "none" : "876000h" });
         if (e2) throw e2;
       }
-      return json({ ok: true, active });
+      return json({ ok: true, active, summary });
     }
     return json({ error: "azione sconosciuta" }, 400);
   } catch (e) {

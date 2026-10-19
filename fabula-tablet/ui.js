@@ -93,11 +93,13 @@
       ${refreshFn ? '<button class="btn sec sm" id="ui-refresh" title="Ricarica i dati di questa scheda" aria-label="Aggiorna">⟳<span class="lbl"> Aggiorna</span></button>' : ''}
       <details class="me" id="me"><summary>${esc(staff.full_name)} <small>${esc(staff.role_name || '')}</small></summary><div class="menu">
         <button type="button" id="ui-hints">${hintsOff() ? 'Mostra le spiegazioni' : 'Nascondi le spiegazioni'}</button>
-        ${PERM.page('admin') ? '<a href="admin.html#account">Cambia password</a>' : ''}
+        <button type="button" id="ui-pw-open">Cambia password</button>
         <button type="button" id="ui-out">Esci</button></div></details></div>`;
     if (refreshFn) $('ui-refresh').onclick = () => act($('ui-refresh'), refreshFn, 'Dati aggiornati');
     $('ui-hints').onclick = () => { const off = !hintsOff(); try { localStorage.setItem(HINTS, off ? 'off' : 'on'); } catch {} document.documentElement.classList.toggle('nohints', off); $('ui-hints').textContent = off ? 'Mostra le spiegazioni' : 'Nascondi le spiegazioni'; $('me').open = false; };
-    $('ui-out').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+    $('ui-pw-open').onclick = () => { $('me').open = false; changePassword(); };   // v1.09 (audit C-23): every profile, not only Configurazione
+    // v1.09 (audit C-20): ask before signing out with unsaved changes (the page's own question came after the sign-out)
+    $('ui-out').onclick = async () => { if (unsaved() && !confirm('Ci sono modifiche non salvate: se esci le perdi. Uscire lo stesso?')) return; await sb.auth.signOut(); location.reload(); };
     document.addEventListener('click', e => { const m = $('me'); if (m && m.open && !m.contains(e.target)) m.open = false; });
     if (bell) { bellCount(); setInterval(() => { if (document.visibilityState === 'visible') bellCount(); }, 120000); }
   }
@@ -110,6 +112,43 @@
     el.textContent = al ? `${al} ${al === 1 ? 'allarme' : 'allarmi'}${n ? ` · ${n}` : ''}` : n ? String(n) : '';
     el.classList.toggle('on', al + n > 0); $('bell').classList.toggle('al', al > 0);
     $('bell').title = [al ? `${al} ${al === 1 ? 'allarme aperto' : 'allarmi aperti'}` : '', n ? `${n} ${n === 1 ? 'notifica' : 'notifiche'} da leggere` : ''].filter(Boolean).join(', ') || 'Nessuna notifica da leggere';
+  }
+
+  // ---------- v1.09 (audit C-23): change your own password (current + new + repeat), from the user menu of every page ----------
+  function changePassword() {
+    let d = $('ui-pw');
+    if (!d) {
+      d = document.createElement('dialog'); d.id = 'ui-pw'; d.className = 'ui-dialog';
+      d.innerHTML = `<form method="dialog" class="nodirty"><h3>Cambia password</h3>
+        <label for="ui-pw0">Password attuale</label><input id="ui-pw0" type="password" autocomplete="current-password">
+        <label for="ui-pw1">Nuova password (almeno 8 caratteri)</label><input id="ui-pw1" type="password" autocomplete="new-password">
+        <label for="ui-pw2">Ripeti la nuova password</label><input id="ui-pw2" type="password" autocomplete="new-password">
+        <div class="err" id="ui-pwerr" role="alert"></div>
+        <div class="row" style="gap:8px;justify-content:flex-end;margin-top:10px"><button type="button" class="btn sec" id="ui-pwno">Annulla</button><button type="button" class="btn" id="ui-pwok">Cambia password</button></div></form>`;
+      document.body.append(d);
+      $('ui-pwno').onclick = () => d.close();
+      $('ui-pwok').onclick = async () => {
+        const a = $('ui-pw0').value, b = $('ui-pw1').value, c = $('ui-pw2').value, e = $('ui-pwerr'); e.textContent = '';
+        if (!a) return e.textContent = 'Scrivi la password attuale.';
+        if (b.length < 8) return e.textContent = 'La nuova password deve avere almeno 8 caratteri.';
+        if (b !== c) return e.textContent = 'Le due password nuove non coincidono.';
+        if (a === b) return e.textContent = 'Scegli una password diversa da quella attuale.';
+        const ok = $('ui-pwok'); ok.disabled = true;
+        try {
+          const { data: { session } } = await sb.auth.getSession(); const email = session && session.user && session.user.email;
+          if (!email) return e.textContent = 'Sessione scaduta: esci e rientra, poi riprova.';
+          const chk = await sb.auth.signInWithPassword({ email, password: a });
+          if (chk.error) return e.textContent = /invalid/i.test(chk.error.message) ? 'La password attuale non è corretta.' : chk.error.message;
+          const { error } = await sb.auth.updateUser({ password: b });
+          if (error) return e.textContent = /weak|easy to guess|pwned/i.test(error.message) ? 'Questa password è troppo comune (compare in elenchi di password rubate): scegline un\'altra.' : error.message;
+          d.close(); toast('Password cambiata: vale per tablet, console e configurazione');
+        } catch (err) { e.textContent = PERM.isNetworkError(err) ? 'Nessuna connessione: riprova quando c\'è rete.' : (err.message || String(err)); }
+        finally { ok.disabled = false; }
+      };
+      d.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.matches('input')) { ev.preventDefault(); $('ui-pwok').click(); } });
+    }
+    ['ui-pw0', 'ui-pw1', 'ui-pw2'].forEach(i => { $(i).value = ''; }); $('ui-pwerr').textContent = '';
+    if (d.showModal) d.showModal(); else d.setAttribute('open', ''); $('ui-pw0').focus();
   }
 
   // ---------- login + access ----------
@@ -243,5 +282,5 @@
   }
   const why = { html: whyHtml, toggle: whyToggle, open: whyOpen };
 
-  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, hashTab, hashParams, bellCount, why, get staff() { return staff; } };
+  window.UI = { sb, $, esc, eur, num, fmtD, dateIt, romeISO, daysAgo, nOrNull, parseIt, jump, after, waNumber, dOrNull, toast, badge, upd, saveBtn, act, clean, unsaved, boot, tabs, changePassword, hashTab, hashParams, bellCount, why, get staff() { return staff; } };
 })();

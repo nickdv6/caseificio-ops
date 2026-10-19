@@ -438,3 +438,7 @@ verify_jwt = false
 # v1.02 (audit E-18): shopify-sync is called only by the database (pg_cron / «Esegui ora»), with its own key (fabula.job_secrets)
 [functions.shopify-sync]
 verify_jwt = false
+
+# v1.09: welcome is opened from a personal access link (benvenuto.html#invito=…) by someone who has no login yet; the link is its key
+[functions.welcome]
+verify_jwt = false

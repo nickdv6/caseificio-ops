@@ -275,3 +275,13 @@ approve the release; the system-check bot's prompt version; no new security find
 migrations. Updated on purpose: `infra-test/test_infra.sql` expects the GitHub wording again (the replay now has the new address), and
 `test_v108_release.sql` sets the Netlify address before its Netlify-wording check. The forwarding from the old address is
 `tablet-test/v108b_e2e.py`.
+
+`test_v109_people.sql` (v1.09 «Persone», database side) — `auth.link_days` 7 (1–30) and `auth.link_hours` 24; a new person's link is an
+invite for 7 days with name, profile page and company, and only its hash is kept; a newer link replaces the older; a password link for
+someone with a password; no link without e-mail; claim once, unclaim, done links the login; an expired link; nobody signed in reaches
+the table or the functions; login states (da_invitare, invitato with who made it, link_scaduto, attivo after the link, senza_email);
+`staff_logins` answers only the titolare; C-13 the guard on the e-mail of someone with a login (case is not a change; the service role
+may); C-14 only a user manager switches off, never himself, the preview, then shift closed, future rota removed (today kept), link
+revoked, Telegram unlinked, PIN removed, mentions listed, «In turno» without them, the change log names who; stale shifts close at 12 h
+every hour (job expected); a Telegram link for someone else lasts 7 days; no new security finding. 19/10/2026: 45/45 PASS on a fresh
+replay of the 200 migrations. The browser side: `tablet-test/v109_e2e.py`.

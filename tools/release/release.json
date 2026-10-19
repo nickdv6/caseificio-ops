@@ -1,15 +1,14 @@
 {
-  "version": "v1.08b",
-  "title_it": "L'app passa ad app.bubalina.it: link, inviti e QR usano il nuovo indirizzo, quello vecchio inoltra",
+  "version": "v1.09",
+  "title_it": "Persone: link di accesso che valgono una settimana, una scheda per persona, disattivazione completa, turni a tocco",
   "order": [
-    "functions",
-    "database"
+    "database",
+    "functions"
   ],
   "force": [],
   "after_it": [
-    "Su ogni tablet e telefono che usa l'app: chiudila e riaprila. Se non ha niente da inviare passa da sola ad app.bubalina.it; se mostra la barra blu in basso, lascia che invii (serve rete e qualcuno entrato) e tocca «Passa al nuovo indirizzo». Poi entra con le tue credenziali e, se l'app era sulla schermata Home, aggiungi di nuovo quella nuova",
-    "Ristampa il poster QR della stalla dal nuovo indirizzo (Configurazione → Utenti e accessi → Link della Masseria → stampa) e sostituisci quello vecchio: il vecchio funziona ancora, inoltrato, ma dipende da Netlify",
-    "Dì ai soci e al casaro che l'indirizzo dell'app è https://app.bubalina.it: si entra una volta con le stesse credenziali"
+    "Manda a Emilio il suo link: Configurazione → Utenti e accessi → la sua scheda → «Link di accesso» → «Manda su WhatsApp». Vale una settimana; quando sceglie la password gli propone anche Telegram",
+    "Controlla le schede delle persone: dove manca qualcosa (Telegram, PIN, formazione) c'è il pulsante per farlo"
   ],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }

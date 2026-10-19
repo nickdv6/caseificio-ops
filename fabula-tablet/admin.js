@@ -485,89 +485,183 @@
   }  // ---------- Utenti e ruoli ----------
   const LVL = ['—', 'vede', 'registra', 'gestisce'];
   const JOBS = [['owner', 'titolare'], ['partner', 'socio'], ['casaro', 'casaro'], ['operaio', 'operaio'], ['commesso', 'commesso'], ['consulente', 'consulente']];
-  function showLink(p, link) {
-    let box = $('usr-link'); if (!box) { box = document.createElement('div'); box.id = 'usr-link'; box.className = 'card'; box.style.marginTop = '12px'; $('users').after(box); }
-    const first = (p.full_name || '').split(' ')[0];
-    const text = `Ciao ${first}, ecco il link per entrare in La Perla: aprilo una volta sola e scegli la password (vale 24 ore). Poi entra sempre con email e password da ${location.origin}/console.html\n${link}`;
-    box.innerHTML = `<b>Link per ${esc(p.full_name)}</b> <small class="status">· vale 24 ore · nessuna email inviata · i link precedenti non valgono più</small>
-      <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input readonly style="flex:1;min-width:220px" value="${esc(link)}">
-      <button class="btn sm sec" id="usr-link-copy">Copia</button>
-      <a class="btn sm" style="text-decoration:none" target="_blank" href="https://wa.me/?text=${encodeURIComponent(text)}">Manda su WhatsApp</a></div>`;
-    $('usr-link-copy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiato'); } catch { box.querySelector('input').select(); } };
+  // v1.09 (audit C-17): the job role («Mansione»: courses and rota) follows the profile unless it is changed by hand
+  const JOB_FOR = { titolare: 'owner', socio: 'partner', resp_produzione: 'casaro', produzione: 'operaio', qualita: 'operaio', spedizioni: 'operaio', banco: 'commesso', marketing: 'consulente', amministrazione: 'consulente', consulente: 'consulente' };
+  const fmtWhen = s => new Date(s).toLocaleString('it-IT', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  // v1.09: the personal access link (a week, one use, only the newest works) with the message ready for WhatsApp or e-mail.
+  // Nothing leaves by itself: Nick sends it from his phone (no Supabase e-mail, so no 24 h and no hourly limit). Audit C-19: the
+  // message names the company and the page the profile uses, not «La Perla» and the office Console.
+  function showLink(p, r, box) {
+    const first = (p.full_name || '').split(' ')[0], company = r.company || BRAND.name;
+    const home = `${r.site || location.origin}/${PERM.HOME[r.home] || 'index.html'}`, until = fmtWhen(r.expires_at), email = r.email || p.email || '';
+    const text = r.purpose === 'reset'
+      ? `Ciao ${first}, ecco il link per scegliere una nuova password per l'app di ${company}. Vale fino a ${until}, una volta sola:\n${r.link}`
+      : `Ciao ${first}, ecco il tuo link per entrare nell'app di ${company}${r.role_name ? ' (' + r.role_name + ')' : ''}: aprilo e scegli la tua password. Vale fino a ${until}, una volta sola:\n${r.link}\n\nPoi entra sempre da ${home} con la tua email (${email}) e la password.`;
+    const subject = r.purpose === 'reset' ? `Nuova password per l'app di ${company}` : `Il tuo accesso all'app di ${company}`;
+    box.innerHTML = `<div class="linkbox"><b>${r.purpose === 'reset' ? 'Link per una nuova password' : 'Link di accesso'} per ${esc(p.full_name)}</b>
+      <div class="status">vale fino a ${esc(until)} · una volta sola · un link mandato prima non vale più · non è partita nessuna email: mandalo tu</div>
+      <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap"><input readonly style="flex:1;min-width:200px" value="${esc(r.link)}" aria-label="Link di accesso"><button class="btn sm sec" type="button" data-copy>Copia</button></div>
+      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><a class="btn sm" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">Manda su WhatsApp</a>
+        <a class="btn sm sec" style="text-decoration:none" href="mailto:${esc(email)}?subject=${encodeURIComponent(subject)}&amp;body=${encodeURIComponent(text)}">Manda per email</a></div>
+      <details style="margin-top:6px"><summary class="status">Testo del messaggio</summary><pre style="white-space:pre-wrap;font:inherit;margin:4px 0">${esc(text)}</pre></details></div>`;
+    box.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(r.link); toast('Link copiato'); } catch { box.querySelector('input').select(); } };
     box.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   async function callUsers(body) {
     const { data, error } = await sb.functions.invoke('invite-user', { body });
-    if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch {} throw new Error(m); }
-    if (data && data.error) throw new Error(data.error); return data;
+    if (error) { let m = error.message, j = null; try { j = await error.context.json(); m = j.error || m; } catch {} throw Object.assign(new Error(m), { data: j }); }
+    if (data && data.error) throw Object.assign(new Error(data.error), { data }); return data;
   }
   const badgeLine = p => [p.badge_code, p.full_name, (JOBS.find(([v]) => v === p.role) || [, ''])[1]].map(s => String(s || '').replace(/[|\n]/g, ' ')).join(' | ');
+  const flashPerson = id => { const c = document.querySelector(`.person[data-staff="${id}"]`); if (!c) return null; c.classList.add('flash'); c.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => c.classList.remove('flash'), 2500); return c; };
+  // v1.09 (audit C-14): what «Disattiva» did, kept on screen with what is still in the person's name
+  function showOffboard(sum) {
+    let box = $('usr-done'); if (!box) { box = document.createElement('div'); box.id = 'usr-done'; box.className = 'card'; box.style.marginTop = '12px'; $('users').before(box); }
+    const done = [sum.shift_closed ? 'turno aperto chiuso' : '', sum.rota_removed ? `${sum.rota_removed} ${sum.rota_removed === 1 ? 'turno futuro tolto' : 'turni futuri tolti'}` : '',
+      sum.links_revoked ? 'link di accesso annullato' : '', sum.telegram_unlinked ? 'Telegram scollegato' : '', sum.pin_removed ? 'PIN tolto' : '', 'accesso bloccato'].filter(Boolean);
+    box.innerHTML = `<b>${esc(sum.full_name)} è disattivato</b><div class="status">${esc(done.join(' · '))}</div>
+      ${(sum.mentions || []).length ? `<div style="margin-top:6px"><b>Ancora a suo nome, da cambiare a mano:</b><ul style="margin:4px 0 0 18px;padding:0">${sum.mentions.map(m => `<li>${esc(m.kind)} «${esc(m.what)}» <small class="status">· ${esc(m.where)}</small></li>`).join('')}</ul></div>` : ''}
+      <div class="row" style="margin-top:6px"><button class="btn sm sec" type="button" id="usr-done-x">Chiudi</button></div>`;
+    $('usr-done-x').onclick = () => box.remove();
+  }
+  // one card per person (v1.09: the table did not fit a phone, audit C-33): a checklist of what is set up, the profile, the e-mail
+  // and the actions, the main one chosen by what is missing
+  function personCard(p, { admin, roleOpts, L, pin, tg, todo }) {
+    const c = document.createElement('div'); c.className = 'person' + (p.active ? '' : ' off'); c.dataset.staff = p.id;
+    const first = (p.full_name || '').split(' ')[0], self = p.id === staff.id;
+    const st = !p.active ? 'disattivato' : L ? L.state : p.auth_user_id ? 'account' : p.email ? 'da_invitare' : 'senza_email';
+    const ACC = { attivo: ['ok', `accesso attivo${L && L.last_sign_in_at ? ' · ultimo ' + fmtWhen(L.last_sign_in_at) : ''}${L && L.link_open ? ' · link per nuova password mandato, vale fino a ' + fmtWhen(L.link_expires_at) : ''}`],
+      invitato: ['wn', L && L.link_kind === 'link' ? `link mandato${L.link_by ? ' da ' + L.link_by : ''}: vale fino a ${fmtWhen(L.link_expires_at)}, non l'ha ancora aperto` : `invito email: vale fino a ${L ? fmtWhen(L.link_expires_at) : '?'}`],
+      link_scaduto: ['ko', `il link è scaduto senza essere usato${L && L.link_expires_at ? ' (' + fmtWhen(L.link_expires_at) + ')' : ''}: mandagliene uno nuovo`],
+      senza_password: ['ko', 'ha aperto un link ma non ha scelto la password: mandagliene uno nuovo'],
+      da_invitare: ['wn', 'non ha ancora un accesso: mandagli il link'], senza_email: ['', 'senza email: sul tablet usa badge e PIN, in console non entra'],
+      disattivato: ['', 'disattivato: non entra più'], account: ['', 'account creato'] }[st] || ['', st];
+    const ck = (ok, txt, title) => `<span class="ck ${ok ? 'ok' : 'todo'}" title="${esc(title)}">${ok ? '✓ ' : ''}${txt}</span>`;
+    const checks = !p.active ? '' : [
+      ck(st === 'attivo', 'Accesso', ACC[1]),
+      admin ? ck(tg && tg.linked, 'Telegram', tg && tg.linked ? 'collegato: riceve gli allarmi sul telefono' : 'non collegato: gli allarmi gli arrivano solo nell\'app') : '',
+      admin ? ck(pin, 'PIN', pin ? 'PIN del tablet impostato' : 'senza PIN: sul tablet si sceglie solo col badge') : '',
+      ck(!todo, todo ? `Formazione: ${todo} da fare` : 'Formazione', todo ? 'corsi HACCP mancanti o scaduti (Console → Personale)' : 'corsi in regola')].join('');
+    c.innerHTML = `<div class="p-head"><b>${esc(p.full_name)}</b>${self ? ' <small class="status">(tu)</small>' : ''}</div>
+      <div class="p-state ${ACC[0] === 'ko' ? 'ko' : 'status'}">${esc(ACC[1])}</div><div class="p-checks">${checks}</div>
+      <div class="p-fields"></div><div class="p-email"></div><div class="p-actions"></div><div class="p-out"></div>`;
+    const out = c.querySelector('.p-out'), acts = c.querySelector('.p-actions'), fields = c.querySelector('.p-fields'), emailLine = c.querySelector('.p-email');
+    const roleName = (roleOpts.list.find(r => r.code === p.app_role) || {}).name_it || p.app_role, jobName = (JOBS.find(([v]) => v === p.role) || [, p.role])[1];
+    // profile and job role
+    if (admin && p.active) {
+      fields.dataset.scope = '';
+      fields.innerHTML = `<label>Profilo <select aria-label="Profilo di ${esc(p.full_name)}">${roleOpts(p.app_role)}</select></label>
+        <label>Mansione <small>(corsi e turni)</small> <select aria-label="Mansione di ${esc(p.full_name)}">${JOBS.map(([v, l]) => `<option value="${v}"${v === p.role ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`;
+      const [rs, js] = fields.querySelectorAll('select');
+      rs.onchange = () => { if (JOB_FOR[rs.value]) js.value = JOB_FOR[rs.value]; };
+      fields.append(saveBtn(async () => {
+        if (rs.value !== p.app_role && (rs.value === 'titolare' || p.app_role === 'titolare') && !confirm(rs.value === 'titolare'
+          ? `${p.full_name} diventa Titolare: potrà gestire utenti e ruoli e cambiare tutta la configurazione. Confermi?`
+          : `${p.full_name} non sarà più Titolare: non potrà più gestire utenti e ruoli. Confermi?`)) throw Object.assign(new Error('non salvato'), { silent: true });
+        PERM.changed(await sb.from('staff').update({ app_role: rs.value, role: js.value }).eq('id', p.id).select('id'));
+        UI.after(loadUsers);
+      }));
+    } else fields.innerHTML = `<span class="status">Profilo ${esc(roleName)} · mansione ${esc(jobName)}</span>`;
+    // e-mail (audit C-13: with a login, «Cambia» changes the login e-mail too)
+    const renderEmail = () => {
+      emailLine.innerHTML = `Email: ${p.email ? `<b>${esc(p.email)}</b>` : '<span class="status">nessuna</span>'} `;
+      if (admin && p.active) { const e = document.createElement('button'); e.type = 'button'; e.className = 'btn sm sec'; e.textContent = p.email ? 'Cambia' : 'Aggiungi'; e.onclick = openEmail; emailLine.append(e); }
+    };
+    const openEmail = () => {
+      emailLine.innerHTML = ''; const w = document.createElement('div'); w.className = 'row'; w.dataset.scope = ''; w.style.cssText = 'gap:6px;flex-wrap:wrap;align-items:center';
+      w.innerHTML = `<input type="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="nome@esempio.it" style="flex:1;min-width:200px" aria-label="Nuova email di ${esc(p.full_name)}">
+        <button type="button" class="btn sm save">Salva email</button><button type="button" class="btn sm sec">Annulla</button>`;
+      const [inp, ok, no] = w.querySelectorAll('input, button'); inp.value = p.email || '';
+      ok.onclick = async () => {
+        const v = inp.value.trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return toast('Scrivi un\'email valida', 'err');
+        if (p.auth_user_id && p.email && v !== p.email.toLowerCase() && !confirm(`Cambia anche l'email con cui ${first} entra: da ora entra con ${v} (la password resta la stessa). Confermi?`)) return;
+        ok.disabled = true;
+        try { const r = await callUsers({ action: 'update_email', staff_id: p.id, email: v }); UI.clean(w);
+          toast(r.unchanged ? 'Nessuna modifica' : r.login_changed ? `Email cambiata: ${first} ora entra con ${v}` : 'Email salvata'); loadUsers(); }
+        catch (err) { toast(err.message || String(err), 'err'); } finally { ok.disabled = false; }
+      };
+      no.onclick = () => { UI.clean(w); renderEmail(); };
+      emailLine.append(w); inp.focus();
+    };
+    renderEmail();
+    // actions
+    const b = (label, cls, fn, title) => { const x = document.createElement('button'); x.type = 'button'; x.className = 'btn sm ' + cls; x.textContent = label; if (title) x.title = title;
+      x.onclick = async () => { x.disabled = true; try { await fn(); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; acts.append(x); return x; };
+    if (admin && p.active && !self) {
+      if (!p.email) b('Aggiungi l\'email per l\'accesso', '', async () => openEmail());
+      else b(st === 'attivo' ? 'Link per nuova password' : 'Link di accesso', st === 'attivo' || st === 'invitato' ? 'sec' : '', async () => {
+        if (st === 'invitato' && !confirm(`${first} ha già un link valido fino a ${fmtWhen(L.link_expires_at)}. Ne crei uno nuovo? Quello di prima smette di funzionare.`)) return;
+        const r = await callUsers({ action: 'access_link', staff_id: p.id }); showLink(p, r, out);
+      }, 'Un link personale da mandare su WhatsApp o per email: vale una settimana, una volta sola');
+      if (!(tg && tg.linked)) b('Link Telegram', 'sec', async () => {
+        const { data, error } = await sb.rpc('notify_link_code', { p_staff_id: p.id }); if (error) throw error; ntLinkBox(out, data, true); out.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 'Per ricevere gli allarmi sul suo telefono');
+    }
+    if (admin && p.active) {   // v0.96 (A-01): the 4-digit PIN that, with the badge, says who is recording on the floor tablet
+      const pb = b(pin ? 'PIN ✓' : 'PIN', 'sec', async () => {
+        if (out.querySelector('[data-pin]')) { out.innerHTML = ''; return; }
+        const w = document.createElement('span'); w.dataset.pin = '1'; w.style.cssText = 'display:inline-flex;gap:4px;align-items:center;margin-top:6px';
+        w.innerHTML = '<input type="password" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="4 cifre" style="width:80px" aria-label="PIN"><button type="button" class="btn sm save">Salva PIN</button>' + (pin ? '<button type="button" class="btn sm warn">Togli</button>' : '');
+        const [inp, ok, del] = w.querySelectorAll('input, button');
+        const run = async v => { try { if (v !== null && !/^\d{4}$/.test(v)) throw new Error('Il PIN è di 4 cifre');
+            const { error } = await sb.rpc('staff_set_pin', { p_staff_id: p.id, p_pin: v }); if (error) throw error;
+            toast(v === null ? `PIN di ${p.full_name} tolto` : `PIN di ${p.full_name} impostato: diglielo a voce, non scriverlo da nessuna parte`); loadUsers(); }
+          catch (err) { toast(err.message || String(err), 'err'); } };
+        ok.onclick = () => run(inp.value.trim()); inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); run(inp.value.trim()); } };
+        if (del) del.onclick = () => { if (confirm(`Togliere il PIN di ${p.full_name}? Sul tablet potrà registrare solo passando il badge.`)) run(null); };
+        out.innerHTML = ''; out.append(w); inp.focus();
+      }, pin ? 'PIN del tablet impostato: tocca per cambiarlo o toglierlo' : 'Imposta il PIN di 4 cifre per scegliersi sul tablet senza badge');
+      pb.classList.toggle('done', !!pin);
+    }
+    if (p.active && p.badge_code) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.textDecoration = 'none'; a.target = '_blank'; a.textContent = 'Badge';
+      a.title = 'Stampa il badge QR da passare sul tablet'; a.href = 'labels.html?' + new URLSearchParams({ l: badgeLine(p) }); acts.append(a); }
+    if (admin && !self) {
+      if (p.active) b('Disattiva', 'warn', async () => {
+        const { data: pv, error } = await sb.rpc('staff_offboard_preview', { p_staff_id: p.id }); if (error) throw error;
+        const lines = [`Disattivare ${p.full_name}?`, '', '• Non potrà più entrare nell\'app, e sul tablet non comparirà più'];
+        if (pv.open_shift_since) lines.push(`• Il turno aperto da ${fmtWhen(pv.open_shift_since)} si chiude adesso`);
+        if (pv.future_rota) lines.push(`• ${pv.future_rota === 1 ? '1 turno futuro tolto' : pv.future_rota + ' turni futuri tolti'} dalla turnazione`);
+        if (pv.open_links) lines.push('• Il link di accesso mandato non vale più');
+        if (pv.telegram) lines.push('• Telegram scollegato: non riceve più gli allarmi');
+        if (pv.pin) lines.push('• PIN del tablet tolto');
+        if ((pv.mentions || []).length) { lines.push('', 'Ancora a suo nome (da cambiare a mano dopo):'); pv.mentions.forEach(m => lines.push(`• ${m.kind} «${m.what}»`)); }
+        lines.push('', 'Si può riattivare in qualsiasi momento.');
+        if (!confirm(lines.join('\n'))) return;
+        const r = await callUsers({ action: 'deactivate', staff_id: p.id });
+        await loadUsers(); showOffboard(r.summary || { full_name: p.full_name }); toast(`${p.full_name} disattivato`);
+      });
+      else b('Riattiva', 'sec', async () => {
+        await callUsers({ action: 'reactivate', staff_id: p.id });
+        toast(`${p.full_name} riattivato: se serve mandagli un link di accesso, poi ricollega Telegram e il PIN`); loadUsers();
+      });
+    }
+    return c;
+  }
   async function loadUsers() {
     const admin = PERM.isAdmin();
     $('usr-invite').hidden = !admin; $('usr-ro').hidden = admin;
-    const [{ data: people, error }, { data: roles }, { data: areas }, { data: perms }] = await Promise.all([
+    const [{ data: people, error }, { data: roles }, { data: areas }, { data: perms }, { data: train }] = await Promise.all([
       sb.from('staff').select('id, full_name, email, role, app_role, auth_user_id, active, badge_code').order('active', { ascending: false }).order('full_name'),
-      sb.from('app_roles').select('*').order('sort'), sb.from('app_areas').select('*').neq('code', 'comune').order('sort'), sb.from('role_permissions').select('*')]);
-    // v0.81: real login state from auth (an invite sent is not a login). Titolare only; others fall back to the staff row.
-    const LOGIN = {}; if (admin) { const { data: lg } = await sb.rpc('staff_logins'); (lg || []).forEach(r => { LOGIN[r.staff_id] = r; }); }
-    // v0.96 (audit A-01): who has a tablet PIN (the PIN itself is never readable: only set or removed here)
-    const HASPIN = {}; if (admin) { const { data: fo } = await sb.rpc('floor_operators'); (fo || []).forEach(r => { HASPIN[r.id] = r.has_pin; }); }
-    const fmtT = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
-    const loginLabel = p => { const L = LOGIN[p.id];
-      if (!L) return !p.active ? 'disattivato' : p.auth_user_id ? 'account creato' : p.email ? 'invito da inviare' : 'senza email';
-      return ({ attivo: `<span class="ok">attivo</span>${L.last_sign_in_at ? '<br>ultimo accesso ' + fmtT(L.last_sign_in_at) : ''}`,
-        invitato: `invito inviato ${fmtT(L.link_sent_at)}<br>il link vale fino alle ${fmtT(L.link_expires_at).slice(-5)}: deve aprire l'ultima email`,
-        link_scaduto: `<span class="ko">link scaduto, mai usato</span><br>inviato ${fmtT(L.link_sent_at)} · tocca «Reinvia invito»`,
-        senza_password: '<span class="ko">link aperto ma password non scelta</span><br>tocca «Reinvia invito»',
-        da_invitare: 'invito da inviare', senza_email: 'senza email', disattivato: 'disattivato' })[L.state] || esc(L.state); };
+      sb.from('app_roles').select('*').order('sort'), sb.from('app_areas').select('*').neq('code', 'comune').order('sort'), sb.from('role_permissions').select('*'),
+      sb.from('v_training_matrix').select('staff_id, status')]);
+    // v0.81: real login state from auth (an invite sent is not a login); v1.09 also the app's own links. Titolare only.
+    // v0.96 (A-01): who has a tablet PIN (the PIN itself is never readable). Telegram: who receives the alarms on the phone.
+    const LOGIN = {}, HASPIN = {}, TG = {};
+    if (admin) {
+      const [lg, fo, nt] = await Promise.all([sb.rpc('staff_logins'), sb.rpc('floor_operators'), sb.rpc('notify_overview')]);
+      (lg.data || []).forEach(r => { LOGIN[r.staff_id] = r; });
+      (fo.data || []).forEach(r => { HASPIN[r.id] = r.has_pin; });
+      ((nt.data && nt.data.people) || []).forEach(r => { TG[r.staff_id] = r; });
+    }
+    const TODO = {}; (train || []).forEach(t => { if (t.status === 'mancante' || t.status === 'scaduto') TODO[t.staff_id] = (TODO[t.staff_id] || 0) + 1; });
     const box = $('users'); if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     const roleOpts = sel => (roles || []).map(r => `<option value="${r.code}"${r.code === sel ? ' selected' : ''}>${esc(r.name_it)}</option>`).join('');
+    roleOpts.list = roles || [];
     $('inv-role').innerHTML = roleOpts('produzione');
-    const tbl = document.createElement('table');
-    tbl.innerHTML = '<tr><th>Persona</th><th>Email</th><th>Profilo</th><th>Mansione</th><th>Accesso</th><th></th></tr>';
-    (people || []).forEach(p => {
-      const tr = document.createElement('tr'); if (!p.active) tr.style.opacity = '.55';
-      tr.innerHTML = `<td><b>${esc(p.full_name)}</b><br><small>${esc(p.badge_code || '')}</small></td>`;
-      const em = document.createElement('input'); em.type = 'email'; em.value = p.email || ''; em.disabled = !admin; em.style.width = '200px';
-      const rs = document.createElement('select'); rs.innerHTML = roleOpts(p.app_role); rs.disabled = !admin;
-      const js = document.createElement('select'); js.innerHTML = JOBS.map(([v, l]) => `<option value="${v}"${v === p.role ? ' selected' : ''}>${l}</option>`).join(''); js.disabled = !admin;
-      [em, rs, js].forEach(x => { const td = document.createElement('td'); td.append(x); tr.append(td); });
-      const tdl = document.createElement('td'); tdl.innerHTML = `<small>${loginLabel(p)}</small>`; tr.append(tdl);
-      const tda = document.createElement('td'); tda.style.whiteSpace = 'nowrap';
-      if (p.active && p.badge_code) { const a = document.createElement('a'); a.className = 'btn sm sec'; a.style.cssText = 'text-decoration:none;margin-right:4px'; a.target = '_blank'; a.textContent = 'Badge';
-        a.title = 'Stampa il badge QR da passare sul tablet'; a.href = 'labels.html?' + new URLSearchParams({ l: badgeLine(p) }); tda.append(a); }
-      if (admin) {
-        const b = (label, cls, fn) => { const x = document.createElement('button'); x.className = 'btn sm ' + cls; x.textContent = label; x.style.marginRight = '4px';
-          x.onclick = async () => { x.disabled = true; try { const res = await fn(); if (cls === 'save' && res !== false) UI.clean(x); } catch (err) { toast(err.message || String(err), 'err'); } finally { x.disabled = false; } }; tda.append(x); };
-        b('Salva', 'save', async () => { PERM.changed(await sb.from('staff').update({ email: em.value.trim() || null, app_role: rs.value, role: js.value }).eq('id', p.id).select('id')); toast('Salvato'); loadUsers(); });
-        const st = (LOGIN[p.id] || {}).state;
-        if (p.active && p.email && p.id !== staff.id) b(st === 'attivo' ? 'Reimposta password' : p.auth_user_id ? 'Reinvia invito' : 'Invia invito', 'sec', async () => { const r = await callUsers({ action: p.auth_user_id ? 'resend' : 'invite', staff_id: p.id, email: p.email, full_name: p.full_name, app_role: p.app_role, job_role: p.role });
-          toast(r.sent === 'reset' ? 'Email per reimpostare la password inviata' : `Invito inviato a ${p.email}. Avvisa ${p.full_name.split(' ')[0]}: il link vale 24 ore e funziona solo l'ultima email (le precedenti non valgono più).`); loadUsers(); });
-        // v0.81f: a one-time link without e-mail (Supabase's built-in e-mail allows only a few messages an hour)
-        if (p.active && p.email && p.id !== staff.id) b('Link WhatsApp', 'sec', async () => { const r = await callUsers({ action: 'link', staff_id: p.id }); showLink(p, r.link); });
-        if (p.active) {   // v0.96 (A-01): the 4-digit PIN that, with the badge, says who is recording on the floor tablet
-          const pb = document.createElement('button'); pb.className = 'btn sm sec'; pb.style.marginRight = '4px'; pb.textContent = HASPIN[p.id] ? 'PIN ✓' : 'PIN';
-          pb.title = HASPIN[p.id] ? 'PIN del tablet impostato: tocca per cambiarlo o toglierlo' : 'Imposta il PIN di 4 cifre per scegliersi sul tablet senza badge';
-          pb.onclick = () => {
-            if (pb.nextSibling && pb.nextSibling.dataset && pb.nextSibling.dataset.pin) { pb.nextSibling.remove(); return; }
-            const w = document.createElement('span'); w.dataset.pin = '1'; w.style.cssText = 'display:inline-flex;gap:4px;align-items:center;margin-right:6px';
-            w.innerHTML = '<input type="password" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="4 cifre" style="width:80px"><button class="btn sm save">Salva PIN</button>' + (HASPIN[p.id] ? '<button class="btn sm warn">Togli</button>' : '');
-            const [inp, ok, del] = w.querySelectorAll('input, button');
-            const run = async pin => { try { if (pin !== null && !/^\d{4}$/.test(pin)) throw new Error('Il PIN è di 4 cifre');
-                const { error } = await sb.rpc('staff_set_pin', { p_staff_id: p.id, p_pin: pin }); if (error) throw error;
-                toast(pin === null ? `PIN di ${p.full_name} tolto` : `PIN di ${p.full_name} impostato: diglielo a voce, non scriverlo da nessuna parte`); loadUsers(); }
-              catch (err) { toast(err.message || String(err), 'err'); } };
-            ok.onclick = () => run(inp.value.trim()); inp.onkeydown = e => { if (e.key === 'Enter') run(inp.value.trim()); };
-            if (del) del.onclick = () => { if (confirm(`Togliere il PIN di ${p.full_name}? Sul tablet potrà registrare solo passando il badge.`)) run(null); };
-            pb.after(w); inp.focus();
-          };
-          tda.append(pb);
-        }
-        if (p.id !== staff.id) b(p.active ? 'Disattiva' : 'Riattiva', p.active ? 'warn' : 'sec', async () => { if (p.active && !confirm(`Disattivare ${p.full_name}? Non potrà più entrare finché non lo riattivi.`)) return false; await callUsers({ action: p.active ? 'deactivate' : 'reactivate', staff_id: p.id }); toast(p.active ? 'Disattivato: non può più entrare' : 'Riattivato'); loadUsers(); });
-      }
-      tr.append(tda); tbl.append(tr);
-    });
-    box.innerHTML = ''; box.append(tbl);
+    box.innerHTML = '';
+    (people || []).forEach(p => box.append(personCard(p, { admin, roleOpts, L: LOGIN[p.id], pin: HASPIN[p.id], tg: TG[p.id], todo: TODO[p.id] })));
+    if (!(people || []).length) box.innerHTML = '<div class="empty">Nessuna persona: aggiungila qui sopra.</div>';
     const withBadge = (people || []).filter(p => p.active && p.badge_code);
     if (withBadge.length) { const q = new URLSearchParams(); withBadge.forEach(p => q.append('l', badgeLine(p)));
       const all = document.createElement('a'); all.className = 'btn sm sec'; all.style.cssText = 'text-decoration:none;display:inline-block;margin-top:8px'; all.target = '_blank';
@@ -598,12 +692,22 @@
       UI.clean($('roles-card')); toast(`Permessi aggiornati (${ch.length})`); loadUsers();
     };
   }
+  // v1.09: «Aggiungi una persona». With an e-mail, the person's access link is ready at once (WhatsApp or e-mail from your phone).
+  // An e-mail already in use opens that person's card instead (audit C-15: someone switched off comes back with «Riattiva»).
   $('inv-go').onclick = async () => {
-    const b = $('inv-go'); b.disabled = true;
-    if (!$('inv-name').value.trim() || !/^\S+@\S+\.\S+$/.test($('inv-email').value.trim())) { b.disabled = false; return toast('Scrivi nome e un\'email valida', 'err'); }
-    try { const r = await callUsers({ action: 'invite', full_name: $('inv-name').value.trim(), email: $('inv-email').value.trim(), app_role: $('inv-role').value });
-      toast(r.invited ? 'Invito inviato: la persona riceve una email per scegliere la password. Il link vale 24 ore.' : 'Account esistente collegato'); $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite')); loadUsers();
-    } catch (err) { toast(err.message || String(err), 'err'); } finally { b.disabled = false; }
+    const b = $('inv-go'), name = $('inv-name').value.trim().replace(/\s+/g, ' '), email = $('inv-email').value.trim().toLowerCase();
+    if (name.length < 3) return toast('Scrivi nome e cognome', 'err');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('Email non valida', 'err');
+    b.disabled = true;
+    try {
+      const r = await callUsers({ action: 'add', full_name: name, email, app_role: $('inv-role').value });
+      $('inv-name').value = ''; $('inv-email').value = ''; UI.clean($('usr-invite'));
+      await loadUsers();
+      const card = flashPerson(r.staff_id);
+      if (r.link && card) showLink({ full_name: name, email }, r, card.querySelector('.p-out'));
+      toast(r.link ? `${name} aggiunto: mandagli il link di accesso` : `${name} aggiunto, senza email: sul tablet usa badge e PIN`);
+    } catch (err) { toast(err.message || String(err), 'err'); if (err.data && err.data.staff_id) flashPerson(err.data.staff_id); }
+    finally { b.disabled = false; }
   };
   // v0.84: a settings row is shown by its description ("Prezzo del latte di bufala €/kg…"), never by its key
   let SETNAME = {};
@@ -720,11 +824,8 @@
     const { error } = await sb.from('compliance_deadlines').insert({ kind: 'other', subject_it: subj, due_on: dOrNull($('dl-new-due').value), interval_days: nOrNull($('dl-new-int').value), responsible: 'partner' });
     if (error) return toast(error.message, 'err');
     $('dl-new-subject').value = ''; $('dl-new-due').value = ''; $('dl-new-int').value = ''; UI.clean($('dl-add')); toast('Aggiunta'); loadMaint();
-  };  $('pw-save').onclick = async () => {
-    const pw = $('pw-new').value; if (pw.length < 8) return toast('Minimo 8 caratteri', 'err');
-    $('pw-save').disabled = true; const { error } = await sb.auth.updateUser({ password: pw }); $('pw-save').disabled = false;
-    if (error) return toast(error.message, 'err'); $('pw-new').value = ''; UI.clean($('account')); toast('Password cambiata');
   };
+  $('pw-open').onclick = () => UI.changePassword();   // v1.09 (audit C-23): the same dialog as the user menu
 
   // ---------- tabs + start ----------
   // ---------- Panoramica (v0.84): one card per area, built from the same views the tabs use ----------
@@ -814,10 +915,10 @@
     if (people.error) cards.push({ id: 'usr', tab: 'utenti', title: 'Utenti e accessi', st: 'na', big: '—', items: [{ txt: people.error.message }], foot: 'Apri utenti e accessi' });
     else { const ps = (people.data || []).filter(p => p.active), L = {}; ((lg && lg.data) || []).forEach(r => { L[r.staff_id] = r; });
       const items = []; ps.forEach(p => { const s = L[p.id] ? L[p.id].state : (p.auth_user_id ? 'attivo' : p.email ? 'da_invitare' : 'senza_email');
-        if (s === 'link_scaduto' || s === 'senza_password') items.push({ st: 'wn', txt: `${p.full_name}: link scaduto o password mai scelta · reinvia l'invito` });
-        else if (s === 'da_invitare') items.push({ st: 'wn', txt: `${p.full_name}: invito da inviare` });
-        else if (s === 'invitato') items.push({ st: 'ok', txt: `${p.full_name}: invitato, deve ancora scegliere la password` });
-        else if (s === 'senza_email') items.push({ st: 'wn', txt: `${p.full_name}: senza email (entra solo con il badge)` }); });
+        if (s === 'link_scaduto' || s === 'senza_password') items.push({ st: 'wn', txt: `${p.full_name}: link scaduto o password mai scelta · mandagli un link di accesso` });
+        else if (s === 'da_invitare') items.push({ st: 'wn', txt: `${p.full_name}: non ha ancora un accesso · mandagli il link` });
+        else if (s === 'invitato') items.push({ st: 'ok', txt: `${p.full_name}: link mandato, deve ancora scegliere la password` });
+        else if (s === 'senza_email') items.push({ st: 'wn', txt: `${p.full_name}: senza email (usa il tablet con badge e PIN, non entra in console)` }); });
       const wn = items.filter(i => i.st === 'wn').length;
       cards.push({ id: 'usr', tab: 'utenti', title: 'Utenti e accessi', st: wn ? 'wn' : 'ok', big: ps.length,
         sub: `${ps.length === 1 ? 'persona attiva' : 'persone attive'}${wn ? ` · ${plural(wn, 'accesso da sistemare', 'accessi da sistemare')}` : admin ? ' · accessi in ordine' : ''}`,
@@ -858,7 +959,7 @@
   const NT_TZ = [['Europe/Rome', 'ora italiana'], ['America/New_York', 'ora della costa est USA']];
   const ntTime = s => new Date(s).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
   function ntLinkBox(box, d, forOther) {
-    const exp = new Date(d.expires).toLocaleString('it-IT', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+    const exp = new Date(d.expires).toLocaleString('it-IT', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });   // v1.09: a week, so the date too
     const text = `Ciao ${String(d.staff || '').split(' ')[0]}, per ricevere gli avvisi del caseificio su Telegram apri questo link sul telefono e tocca «Avvia» (vale fino a ${exp}, una volta sola):\n${d.url}`;
     box.innerHTML = `<div class="hint">${forOther ? `Collegamento per <b>${esc(d.staff)}</b>: mandaglielo.` : 'Inquadra il codice col telefono, oppure apri il link <b>sul telefono</b>,'} poi in Telegram tocca <b>Avvia</b> (Start). Vale fino a ${esc(exp)}, una volta sola.</div>
       <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div class="nt-qr" style="background:#fff;padding:6px"></div>
@@ -990,7 +1091,7 @@ ${full}`)}`;
       const h = (location.hash || '').slice(1);
       if (SEC_IDS.includes(h)) pendingSection = h;
       T.start();
-      if (h === 'account') setTimeout(() => { $('account').scrollIntoView({ block: 'start' }); $('pw-new').focus(); }, 150);
+      if (h === 'account') setTimeout(() => { $('account').scrollIntoView({ block: 'start' }); UI.changePassword(); }, 150);
       // counts for the tabs that are not open yet (the Panoramica fills the rest)
       if (!T.isLoaded('maint')) loadMaint(); if (!T.isLoaded('prodotti')) sb.from('v_shopify_variant_map').select('unmapped_lines').then(({ data }) => badge('n-prod', (data || []).filter(r => r.unmapped_lines).length));
       if (!T.isLoaded('panoramica')) loadOverview().catch(() => {});

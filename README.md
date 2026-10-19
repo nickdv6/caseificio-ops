@@ -18,6 +18,37 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## Persone: access links for a week, one card per person, a real switch-off, the rota by taps (v1.09)
+Staff onboarding, the next improvement after the release pipeline (re-score 15/10, «Staff & rota»; project doc
+`claude/audit-fixes-v109-2026-10-19.md`). Emilio's two 24-hour invites lapsed unused; nobody had used the rota.
+- **Personal access links** (migration `v109a`, server functions `welcome` (new, no login) and `invite-user`): Configurazione → Utenti e
+  accessi makes `benvenuto.html#invito=<token>`, valid `auth.link_days` (7) days, until a newer one is made, used up only when the
+  password is saved (a WhatsApp preview or a mail scanner cannot spend it). Only its sha256 is stored (`fabula.staff_access_links`,
+  service role only). Nick sends it by WhatsApp or from his own mail app, with the message ready: no Supabase e-mail, so neither the 24 h
+  limit nor the hourly e-mail limit applies. `welcome` creates the login the first time (or sets the password of the one already
+  linked, or of one with that e-mail), then the page signs in, offers «Collega Telegram» and opens the profile's page.
+  Supabase's own e-mails («Password dimenticata?») still work as before (24 h).
+- **One card per person** (audit C-33): checklist Accesso · Telegram · PIN · Formazione, the profile and job role, the e-mail, and the
+  action for what is missing («Link di accesso», «Link per nuova password», «Link Telegram», PIN, Badge, Disattiva/Riattiva).
+  «Aggiungi una persona» with an e-mail shows the link at once; without one, the person uses the tablet with badge and PIN.
+- **C-13**: «Cambia email» changes the login e-mail too (`update_email`); a plain edit of the e-mail of someone with a login is refused
+  by `trg_staff_guard`. **C-15**: adding the e-mail of someone switched off says «usa Riattiva». **C-17**: the job role follows the
+  profile; giving or removing Titolare asks first. **C-18**: `auth.link_hours` is 24 in the migrations too. **C-19**: the message and
+  the welcome page use the company's name and the profile's page, not «La Perla» and the office Console.
+- **C-14 switch-off**: «Disattiva» lists what will happen (`staff_offboard_preview`), then `staff_offboard` in one transaction closes the
+  open shift, removes the future rota (today is kept), cancels links, Telegram and PIN, and lists the settings and open deadlines that
+  still name the person; `invite-user` then blocks the login. Shifts open past `labor.max_shift_hours` close by themselves every hour
+  (`close_stale_shifts`, job `fabula_close_stale_shifts` at :07); the tablet's «In turno» lists active people only.
+- **Telegram links** for someone's phone last `auth.link_days` too (they lasted 24 h).
+- **C-23** «Cambia password» (current, new, repeat) is in the user menu of every page that uses the shared shell; **C-20** «Esci» asks
+  first when something is unsaved.
+- **B-26 rota**: a cell is tapped, not typed: the shifts used in the last 8 weeks, start and end with time pickers, break, area,
+  riposo/ferie/permesso/malattia, «Anche questi giorni»; an end before the start is a night shift only when ticked; changed cells are
+  orange until «Salva settimana»; the week says «questa settimana» / «settimana prossima»; database errors in Italian. sw `perla-v76`.
+- Release order: database first, then the server functions (they call the new database functions).
+- Tests: `prod-test/test_v109_people.sql` 45/45; `tablet-test/v109_e2e.py` 31/31 (the real `invite-user` and `welcome` under Deno with
+  a fake Supabase auth); `operator_e2e.py` follows the cards; `test_v106_perche.sql` no longer pins the number of database jobs.
+
 ## The app moves to https://app.bubalina.it (v1.08b)
 Second automatic release (project doc `claude/audit-fixes-v108-2026-10-15.md`, «v1.08b»). Since v1.08 every release publishes
 `fabula-tablet/` on GitHub Pages at app.bubalina.it; Netlify kept serving the same app at its old address.

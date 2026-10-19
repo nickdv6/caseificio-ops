@@ -213,6 +213,15 @@ and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.
     indirizzo»; a refused save (even one reported) and a photo hold it back; a Console page with a record waiting stays and keeps the
     old address's cache; `//other-site/index.html` still lands on app.bubalina.it; on the new address an id there is kept while that
     address has work waiting, else replaced. Expect `FAILURES: none` (18 checks).
+31. `python3 v109_e2e.py` (v1.09 «Persone») — against restore_drill with v109a and PostgREST on :3000, with the REAL server functions
+    `invite-user` and `welcome` run by Deno (DENO=…) behind a small fake Supabase on :8791 that forwards /rest/v1 to PostgREST and plays
+    the auth admin API on auth.users. People as cards with the checklist, fitting a phone; «Aggiungi una persona» shows the access link
+    with the WhatsApp and e-mail messages (company, expiry date, the profile's page); the same e-mail again; the job role follows the
+    profile and Titolare asks; «Cambia email» changes the login too; a password link for someone with a password; the welcome page:
+    greeting, password checks, a password Supabase finds too common, save → login created and linked, Telegram, the profile's page, the
+    link used and replaced; «Disattiva» lists, then closes shift and future rota and blocks the login, with a summary; «Riattiva»;
+    «Cambia password» in a casaro's menu; the rota editor (night shift only when ticked, break, area, «Anche questi giorni», riposo,
+    saved and shown again, the week label, the unsaved-week question). Expect `FAILURES: none` (31 checks).
 
 Last run 15/10/2026 (v1.07), same setup with the 197 migrations, all 25 suites in the usual order (the 24 above with v106_e2e after
 v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same database once the local server restarted):

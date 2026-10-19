@@ -195,3 +195,34 @@ td input[type=text]:not([class]){flex:none}
 .why-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .why-by{font-size:.8rem;color:var(--muted);margin-top:2px}
 @media (min-width:700px){ .why-sheet{align-items:center} }
+
+/* v1.09: dialogs (Cambia password) */
+.ui-dialog{border:1px solid var(--rule);border-radius:10px;padding:16px 18px;max-width:380px;width:calc(100% - 32px);background:var(--paper);color:var(--fg)}
+.ui-dialog::backdrop{background:rgba(0,0,0,.35)}
+.ui-dialog h3{font-family:var(--display);font-size:1.1rem;margin:0 0 6px}
+.ui-dialog label{display:block;font-size:.8rem;color:var(--muted);margin:10px 0 3px}
+.ui-dialog input{width:100%;font:1rem var(--body);padding:8px 10px;border:1px solid #9a958b;border-radius:6px}
+.ui-dialog .err{color:var(--warn);min-height:1.2em;margin-top:8px;font-size:.9rem}
+/* v1.09 (audit B-26): rota cells are tapped, not typed */
+table.rota td{padding:3px}
+.r-cell{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;width:100%;min-width:92px;min-height:44px;padding:4px 7px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.r-cell:hover{border-color:var(--accent)}
+.r-cell small{color:var(--muted);font-size:.75rem;line-height:1.2}
+.r-cell .r-time{font-weight:600;font-variant-numeric:tabular-nums}
+.r-cell.r-changed{border:2px solid #d98a1f;background:#fff7e8}
+.r-empty{color:var(--muted);opacity:.6;font-size:1.1rem}
+.r-kind{font-weight:600;font-size:.85rem;border-radius:10px;padding:1px 8px}
+.r-riposo{background:#eceae4;color:#4a4a45}.r-ferie{background:#e3ecf7;color:#1e3a5f}.r-permesso{background:#efe6f5;color:#58306e}.r-malattia{background:#fbe7e3;color:#8a2c1a}
+table.rota th.r-today{color:var(--accent);text-decoration:underline}
+.rota-dlg{max-width:470px}
+.rota-dlg .r-sec{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:12px 0 4px}
+.rota-dlg .r-chips{display:flex;gap:6px;flex-wrap:wrap}
+.rota-dlg .r-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
+.rota-dlg .r-grid label{margin:0}
+.rota-dlg .r-grid select{width:100%;font:1rem var(--body);padding:7px 8px;border:1px solid #9a958b;border-radius:6px;background:var(--paper)}
+.rota-dlg .r-night{display:flex;gap:6px;align-items:center;margin-top:8px;font-size:.9rem;color:var(--fg)}
+.rota-dlg .r-night input{width:auto}
+.rota-dlg .r-hours{margin-top:6px;min-height:1.3em}
+.rota-dlg .r-days{display:flex;gap:4px 12px;flex-wrap:wrap}
+.rota-dlg .r-days label{display:flex;gap:4px;align-items:center;margin:0;color:var(--fg);font-size:.9rem}
+.rota-dlg .r-days input{width:auto}

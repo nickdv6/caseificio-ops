@@ -180,7 +180,7 @@ try:
     # 9. Configurazione → Utenti: the owner sets a PIN
     ctx, ap = page_as(b, OWNER, 'admin.html', logs, 1300)
     ap.wait_for_timeout(2500); ap.click('.tab[data-tab="utenti"]'); ap.wait_for_timeout(2000)
-    rowl = ap.locator('#users tr', has_text=f'Aiuto E2E {RUN}')
+    rowl = ap.locator('#users .person', has_text=f'Aiuto E2E {RUN}')   # v1.09: one card per person
     check('A-01 Utenti shows «PIN ✓» for someone with a PIN', rowl.locator('button', has_text='PIN ✓').count() == 1)
     before = sql1(f"select pin_hash from fabula.staff_pins where staff_id = '{AIUTO}'")
     rowl.locator('button', has_text='PIN ✓').click(); ap.wait_for_timeout(300)

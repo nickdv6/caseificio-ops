@@ -259,8 +259,8 @@ update fabula.message_basis set kept_at = now() - interval '91 days' where messa
 select fabula.basis_trim() trimmed \gset
 select pg_temp.ck('clean-up: unused reads after a day, the others after «Giorni di conservazione» (90)', :trimmed = 2
   and not exists (select 1 from fabula.message_basis where message_id = :m12) and pg_temp.texts(fabula.message_why(:m12)) like '%non ci sono più%', :'trimmed');
-select pg_temp.ck('the clean-up is one of the expected database jobs (24)',
-  (select count(*) from fabula.cron_jobs_expected) = 24 and exists (select 1 from fabula.cron_jobs_expected where jobname = 'fabula_basis_trim'));
+select pg_temp.ck('the clean-up is one of the expected database jobs (24 at v1.06, more since: v1.09 added the stale-shift close)',
+  (select count(*) from fabula.cron_jobs_expected) >= 24 and exists (select 1 from fabula.cron_jobs_expected where jobname = 'fabula_basis_trim'));
 select pg_temp.as_user(:'tit');
 set role authenticated;
 select fabula.system_checks()::text sc \gset

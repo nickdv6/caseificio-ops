@@ -3,23 +3,31 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
 <title>Caseificio Bubalina · Benvenuto</title>
 <link rel="icon" href="icon.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600&display=swap">
 <style>
-/* Landing page for invite and password-reset e-mails: choose a password, then go to the profile's home page. Light theme only, like the rest of the app. */
-:root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--warn:#b3261e;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
+/* Landing page for the personal access link (v1.09: #invito=…) and for Supabase's invite and password e-mails: choose a password,
+   link Telegram, then go to the profile's home page. Light theme only, like the rest of the app. */
+:root{--bg:#f6f4ef;--paper:#fff;--fg:#161514;--muted:#5d6168;--rule:#e4e0d6;--accent:#1e3a5f;--accent-fg:#fff;--warn:#b3261e;--ok:#2e6b3a;--gold:#c99a3c;--display:'Fraunces',Georgia,serif;--body:'Source Sans 3',system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 var(--body)}
-.box{max-width:420px;margin:12vh auto;padding:0 16px}
+.box{max-width:440px;margin:10vh auto;padding:0 16px}
 .card{background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:22px}
 h1{font-family:var(--display);font-weight:600;font-size:1.6rem;margin:0 0 4px}
+h2{font-family:var(--display);font-weight:600;font-size:1.15rem;margin:0 0 4px}
 .sub{color:var(--muted);margin-bottom:16px}
+.who{background:var(--bg);border-radius:6px;padding:8px 10px;margin:0 0 6px;font-size:.95rem}
 label{display:block;font-size:.85rem;color:var(--muted);margin:12px 0 4px}
-input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6px;font:inherit}
-.btn{margin-top:16px;width:100%;border:0;border-radius:6px;padding:11px 14px;font:600 1rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer}
+input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;font:inherit}
+.btn{display:block;text-align:center;text-decoration:none;margin-top:16px;width:100%;border:0;border-radius:6px;padding:11px 14px;font:600 1rem var(--body);background:var(--accent);color:var(--accent-fg);cursor:pointer}
+.btn.sec{background:transparent;color:var(--accent);border:1px solid var(--rule)}
 .btn:disabled{opacity:.5}.err{color:var(--warn);margin-top:10px;min-height:1.2em}
 .rule{height:3px;width:48px;background:var(--gold);border-radius:2px;margin-bottom:14px}
+.step{border-top:1px solid var(--rule);margin-top:18px;padding-top:16px}
+.done{color:var(--ok);font-weight:600}
+.tip{color:var(--muted);font-size:.9rem;margin-top:10px}
 </style>
 </head>
 <body>
@@ -28,6 +36,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
   <h1 data-brand="name">Caseificio Bubalina</h1>
   <div class="sub" id="sub">Un momento…</div>
   <div id="form" hidden>
+    <div class="who" id="who" hidden></div>
     <label for="pw1">Nuova password (almeno 8 caratteri)</label><input id="pw1" type="password" autocomplete="new-password">
     <label for="pw2">Ripeti la password</label><input id="pw2" type="password" autocomplete="new-password">
     <button class="btn" id="go">Salva e entra</button>
@@ -36,7 +45,20 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
     <label for="em">La tua email</label><input id="em" type="email" autocomplete="email" inputmode="email">
     <button class="btn" id="send">Mandami un nuovo link</button>
     <div class="sub" id="sent" style="margin:12px 0 0"></div>
-    <a class="btn" href="console.html" style="display:block;text-align:center;text-decoration:none;background:transparent;color:var(--accent);border:1px solid var(--rule)">Ho già la password: entra</a>
+    <a class="btn sec" id="have" href="console.html">Ho già la password: entra</a>
+  </div>
+  <div id="steps" hidden>
+    <div class="done" id="st-ok">✓ Password salvata: sei dentro.</div>
+    <div class="step" id="st-tg" hidden>
+      <h2>Avvisi sul telefono</h2>
+      <div class="sub" style="margin:0">Gli allarmi del caseificio (per esempio una temperatura fuori limite) arrivano su <b>Telegram</b>, anche quando l'app è chiusa. Serve l'app Telegram sul telefono.</div>
+      <a class="btn" id="tg-go" target="_blank" rel="noopener">Collega Telegram</a>
+      <div class="tip" id="tg-tip">Si apre Telegram: tocca <b>Avvia</b> (Start). Poi torna qui.</div>
+    </div>
+    <div class="step">
+      <a class="btn" id="enter" href="console.html">Entra nell'app</a>
+      <div class="tip" id="home-tip"></div>
+    </div>
   </div>
   <div class="err" id="err"></div>
 </div></div>
@@ -49,6 +71,83 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
   const CFG = window.FABULA_CONFIG, sb = supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { db: { schema: 'fabula' } });
   const $ = id => document.getElementById(id);
   const H = new URLSearchParams(location.hash.slice(1)), Q = new URLSearchParams(location.search);
+  const homeOf = h => (h && PERM.HOME[h]) || 'console.html';
+  const fmtDay = s => new Date(s).toLocaleString('it-IT', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const pwError = m => /weak|easy to guess|pwned/i.test(m) ? 'Questa password è troppo comune (compare in elenchi di password rubate): scegline una diversa.' : /should be different/i.test(m) ? 'Scegli una password diversa da quella di prima.' : m;
+  const checkPw = () => { const a = $('pw1').value, b = $('pw2').value;
+    if (a.length < 8) return 'La password deve avere almeno 8 caratteri.'; if (a !== b) return 'Le due password non coincidono.'; return null; };
+  $('pw2').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+  // only «Ho già la password: entra», to the person's own page
+  const onlyEnter = h => { $('form').hidden = true; $('again').hidden = false; ['em', 'send', 'sent'].forEach(i => $(i).hidden = true); document.querySelector('label[for=em]').hidden = true; $('have').href = homeOf(h); };
+
+  // after the password: Telegram (one tap on the phone), then the profile's own page
+  async function steps(P) {
+    $('form').hidden = true; $('again').hidden = true; $('err').textContent = ''; $('steps').hidden = false;
+    $('sub').textContent = P && P.full_name ? `Ciao ${P.full_name.split(' ')[0]}! Ancora un passo, se vuoi.` : 'Fatto.';
+    const home = P && P.home && PERM.page(P.home) ? PERM.HOME[P.home] : 'console.html';
+    $('enter').href = home;
+    $('home-tip').innerHTML = `La prossima volta entra da <b>${location.origin}/${home}</b> con la tua email e la password. Sul telefono o sul tablet: aggiungi la pagina alla <b>schermata Home</b> (Condividi → Aggiungi alla schermata Home), così la ritrovi con un tocco.`;
+    try {
+      const { data: ov } = await sb.rpc('notify_overview');
+      if (ov && ov.me && ov.me.linked) return;                 // already linked
+      const { data, error } = await sb.rpc('notify_link_code');
+      if (error || !data || !data.url) return;
+      $('tg-go').href = data.url; $('st-tg').hidden = false;
+      $('tg-go').onclick = () => { $('tg-tip').innerHTML = 'Dopo <b>Avvia</b> in Telegram ricevi un messaggio di conferma. Se non hai Telegram, puoi collegarlo più tardi da Configurazione o chiedere al titolare.'; };
+    } catch { /* Telegram is optional */ }
+  }
+
+  // ---------------------------------------------------------------- v1.09: the personal access link (#invito=…)
+  const INV = H.get('invito');
+  if (INV) {
+    const call = async body => {
+      const r = await fetch(CFG.supabaseUrl + '/functions/v1/welcome', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: CFG.supabaseKey }, body: JSON.stringify(body) });
+      let j = null; try { j = await r.json(); } catch {}
+      if (!r.ok && !(j && 'ok' in j)) throw new Error((j && j.error) || 'Servizio non disponibile: riprova tra poco');
+      return j || {};
+    };
+    const why = i => ({
+      used: `Questo link è già stato usato${i.used_at ? ' il ' + fmtDay(i.used_at) : ''}: la password l'hai già scelta. Entra con la tua email${i.email ? ' (' + i.email + ')' : ''} e la password.`,
+      replaced: 'Questo link è stato sostituito da uno più recente: apri l\'ultimo che hai ricevuto, oppure chiedi al titolare di mandartene uno nuovo.',
+      expired: `Questo link è scaduto${i.expires_at ? ' ' + fmtDay(i.expires_at) : ''}: chiedi al titolare di mandartene uno nuovo.`,
+      revoked: 'Questo link non è più attivo: chiedi al titolare.',
+      inactive: 'Il tuo accesso non è attivo: chiedi al titolare.',
+    })[i.reason] || 'Questo link non è valido: controlla di averlo aperto tutto (anche la parte dopo «#»), oppure chiedi al titolare un link nuovo.';
+    let info;
+    try { info = await call({ action: 'info', token: INV }); }
+    catch (e) { $('sub').textContent = navigator.onLine === false ? 'Nessuna connessione: riapri il link quando c\'è rete.' : e.message; return; }
+    if (info.company) BRAND.set({ name: info.company });
+    if (!info.ok) {
+      $('sub').textContent = why(info);
+      if (info.reason === 'used') onlyEnter(info.home);
+      return;
+    }
+    const first = info.first_name || '';
+    $('sub').textContent = info.purpose === 'reset' ? `Ciao ${first}, scegli la nuova password.`
+      : `Ciao ${first}! Benvenuto in ${info.company || BRAND.name}. Scegli la password per entrare${info.role_name ? ' come ' + info.role_name : ''}.`;
+    let { data: { session } } = await sb.auth.getSession();
+    const other = session && session.user && info.email && session.user.email && session.user.email.toLowerCase() !== info.email.toLowerCase() ? session.user.email : null;
+    $('who').hidden = false;
+    $('who').innerHTML = `Entrerai sempre con la tua email: <b></b>${other ? `<br><small>Su questo dispositivo è collegato ${other}: quando salvi esce, ed entri tu.</small>` : ''}`;
+    $('who').querySelector('b').textContent = info.email || '';
+    $('form').hidden = false; $('pw1').focus();
+    $('go').onclick = async () => {
+      $('err').textContent = ''; const bad = checkPw(); if (bad) return $('err').textContent = bad;
+      $('go').disabled = true;
+      let r;
+      try { r = await call({ action: 'redeem', token: INV, password: $('pw1').value }); }
+      catch (e) { $('go').disabled = false; return $('err').textContent = navigator.onLine === false ? 'Nessuna connessione: riprova quando c\'è rete (il link vale ancora).' : e.message; }
+      if (!r.ok) { $('go').disabled = false; if (r.reason === 'weak') return $('err').textContent = r.message; $('form').hidden = true; $('sub').textContent = why(r); if (r.reason === 'used') onlyEnter(info.home); return; }
+      history.replaceState(null, '', location.pathname);         // the link is used: it leaves the address bar
+      if (session) await sb.auth.signOut({ scope: 'local' }).catch(() => {});
+      const { error } = await sb.auth.signInWithPassword({ email: r.email, password: $('pw1').value });
+      if (error) { $('sub').textContent = `Password salvata. Entra con la tua email (${r.email}) e la password.`; onlyEnter(info.home); return; }
+      steps(await PERM.load(sb));
+    };
+    return;
+  }
+
+  // ---------------------------------------------------------------- Supabase's own e-mail links («Password dimenticata?»)
   const err = H.get('error_description') || Q.get('error_description'), code = H.get('error_code') || Q.get('error_code');
   await new Promise(r => setTimeout(r, 300));   // let supabase-js read the token from the link
   let { data: { session } } = await sb.auth.getSession();
@@ -67,7 +166,7 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
       ? 'Questo link non vale più: è scaduto, è già stato usato, oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
       : 'Il link è scaduto o è già stato usato.';
     $('form').hidden = true; $('err').textContent = '';
-    $('sub').textContent = why + ' Se hai già scelto la password, entra e basta. Altrimenti scrivi la tua email e ricevi un link nuovo (vale 24 ore).';
+    $('sub').textContent = why + ' Se hai già scelto la password, entra e basta. Altrimenti scrivi la tua email e ricevi un link nuovo (vale 24 ore), oppure chiedi al titolare un link su WhatsApp (vale una settimana).';
     $('again').hidden = false; $('em').focus();
     $('send').onclick = async () => {
       const email = $('em').value.trim().toLowerCase(); $('err').textContent = '';
@@ -86,21 +185,18 @@ input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:6p
     (wasEmail ? ` (Questo dispositivo era collegato come ${wasEmail}: l'abbiamo scollegato, così la password vale per te. Chi usava il dispositivo dovrà rientrare con la sua password.)` : '');
   $('form').hidden = false; $('pw1').focus();
   $('go').onclick = async () => {
-    const a = $('pw1').value, b = $('pw2').value; $('err').textContent = '';
-    if (a.length < 8) return $('err').textContent = 'La password deve avere almeno 8 caratteri.';
-    if (a !== b) return $('err').textContent = 'Le due password non coincidono.';
+    $('err').textContent = ''; const bad = checkPw(); if (bad) return $('err').textContent = bad;
     $('go').disabled = true;
     if (!session) {   // the link is used only now
       const { data, error } = await sb.auth.verifyOtp({ token_hash: TH, type: TYPE });
       if (error || !data.session) { $('go').disabled = false; return showAgain(); }
       session = data.session; history.replaceState(null, '', location.pathname); P = await PERM.load(sb);
     }
-    const { error } = await sb.auth.updateUser({ password: a });
-    if (error) { $('go').disabled = false; return $('err').textContent = /weak|easy to guess|pwned/i.test(error.message) ? 'Questa password è troppo comune (compare in elenchi di password rubate): scegline una diversa.' : /should be different/i.test(error.message) ? 'Scegli una password diversa da quella di prima.' : error.message; }
-    const home = P && P.home && PERM.page(P.home) ? PERM.HOME[P.home] : 'console.html';
-    location.replace(home);
+    const { error } = await sb.auth.updateUser({ password: $('pw1').value });
+    if (error) { $('go').disabled = false; return $('err').textContent = pwError(error.message); }
+    if (TYPE === 'invite' || !(P && P.staff_id)) return steps(P);   // a first sign-in: Telegram, then the app
+    location.replace(P && P.home && PERM.page(P.home) ? PERM.HOME[P.home] : 'console.html');
   };
-  $('pw2').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
 })();
 </script>
 </body>
