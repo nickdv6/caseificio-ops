@@ -25,18 +25,24 @@ Second automatic release (project doc `claude/audit-fixes-v108-2026-10-15.md`, �
   summary, the hourly site check) uses it, and the drift texts say «approva il rilascio su GitHub» (v1.08a made them follow the
   setting). The drift notice and the uptime alert no longer say Netlify. `ops_health` prompt version `2422561503` (its sentences for
   uptime and app_deployed name GitHub, not Netlify).
-- **`fabula-tablet/config.js`** (loaded first by every page): on `*.netlify.app` every page goes to the same page on app.bubalina.it,
-  path, ?query and #hash kept (the Masseria's QR and the trade links keep working), after removing the old address's service worker
-  and caches. The tablet (`index.html`) first waits until nothing is waiting to be sent from the old address (`fabula_queue`, refused
-  saves not yet reported, photos in IndexedDB), showing a bar with the count, then carries `?device=` and `?device_uid=`; on the new
-  address the id is kept (only if none is there yet) and removed from the address bar. Sign-ins are per address: everyone signs in once.
-  sw `perla-v75`.
+- **`fabula-tablet/config.js`** (loaded first by every page): on `*.netlify.app` a page goes to the same page on app.bubalina.it,
+  path, ?query and #hash kept (the Masseria's QR and the trade links keep working), only when all of these hold:
+  - app.bubalina.it answers with `perla-v75` or later in its `sw.js` (so nothing moves before the release is approved, or offline);
+  - the page has just started (never in the middle of someone's work);
+  - nothing is waiting on that device: `fabula_queue`, every refused save in `fabula_failed` (reported or not: they can only be
+    redone or discarded there), photos in IndexedDB (3 s timeout: a database that does not answer counts as waiting).
+  The tablet (`index.html`) left open shows a bar saying what is waiting, nudges the app's own sending, and turns on «Passa al nuovo
+  indirizzo» when nothing is left; other pages with something waiting simply stay. Moving clears the old address's service worker
+  and caches and carries `?device=` and `?device_uid=`; the new URL is built on app.bubalina.it and checked to stay there. On the new
+  address the id is taken when none is there or nothing is waiting there, and removed from the address bar. Sign-ins are per address:
+  everyone signs in once. sw `perla-v75`.
 - **Netlify** (`netlify.toml`, both copies): builds only when `fabula-tablet/config.js` changes, so this release deploys the forwarding
   there once and later releases spend no Netlify credits.
-- **`invite-user`** and **`tools/watch/check.sh`**: the fallback and the outside watcher's site are app.bubalina.it.
+- **`invite-user`** and **`tools/watch/check.sh`**: the fallback and the outside watcher's site are app.bubalina.it; the watcher also
+  checks that the old address still forwards (`old_site`: its `config.js` names `FABULA_HOME`), until `OLD_SITE=` is emptied.
 - **Before approving:** Supabase → Authentication → URL Configuration: Site URL `https://app.bubalina.it`, Redirect URLs
-  `https://app.bubalina.it/**` (`RELEASING.md`).
-- Tests: `prod-test/test_v108b_move.sql` 10/10; `tablet-test/v108b_e2e.py` 10/10; `infra-test/test_infra.sql` and `test_v108_release.sql`
+  `https://app.bubalina.it/**` (`RELEASING.md`; done 19/10). After: reprint the barn's QR poster from the new address.
+- Tests: `prod-test/test_v108b_move.sql` 10/10; `tablet-test/v108b_e2e.py` 18/18; `infra-test/test_infra.sql` and `test_v108_release.sql`
   updated for the new address.
 
 ## Releases apply themselves after one approval (v1.08)

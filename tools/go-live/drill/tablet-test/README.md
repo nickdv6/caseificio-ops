@@ -205,11 +205,14 @@ and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.
     quiet day is covered by prod-test/test_v107_quiet.sql). Expect `FAILURES: none` (5 checks).
 
 30. `python3 v108b_e2e.py` (v1.08b, the app moves to https://app.bubalina.it) — both addresses are served from the local files through
-    Playwright routes, so nothing reaches Netlify, GitHub or Supabase. A Console page on the old Netlify address goes to the same page
-    on app.bubalina.it with ?query and #hash; the tablet with nothing waiting goes too, as the same tablet (name and id carried, the id
-    kept on the new address and removed from the address bar); with records waiting it stays, says why with the count, and goes by
-    itself once the queue is empty; a refused save already reported does not hold it back, one not yet reported does; on the new
-    address nothing moves and an id already there is not replaced. Expect `FAILURES: none` (10 checks).
+    Playwright routes, so nothing reaches Netlify, GitHub or Supabase; the new address's `sw.js` is served as v74 («before the
+    approval»), not at all («offline») or v75 («ready»). Before the approval and offline nothing moves and no bar shows. Once ready, a
+    Console page on the old address goes to the same page on app.bubalina.it with ?query and #hash; the tablet with nothing waiting goes
+    at once as the same tablet (name and id carried, the id taken on the new address and removed from the address bar); with records
+    waiting it stays and says what is waiting, does not move by itself after they are sent, and moves on a tap of «Passa al nuovo
+    indirizzo»; a refused save (even one reported) and a photo hold it back; a Console page with a record waiting stays and keeps the
+    old address's cache; `//other-site/index.html` still lands on app.bubalina.it; on the new address an id there is kept while that
+    address has work waiting, else replaced. Expect `FAILURES: none` (18 checks).
 
 Last run 15/10/2026 (v1.07), same setup with the 197 migrations, all 25 suites in the usual order (the 24 above with v106_e2e after
 v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same database once the local server restarted):

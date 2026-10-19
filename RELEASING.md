@@ -70,7 +70,7 @@ After v1.08:
 - the app answers on https://app.bubalina.it as well as on the old Netlify address;
 - v1.08b moves everyone over, through the pipeline, once you have opened the new address and signed in once.
 
-### Before approving v1.08b (once, 2 minutes)
+### Before approving v1.08b (once, 2 minutes) — done 19/10
 Supabase must accept sign-in links for the new address, or the invitation and «password dimenticata» e-mails would open the old one.
 Supabase → project Caseificio → **Authentication** → **URL Configuration**:
 1. **Site URL**: `https://app.bubalina.it` → **Save**.
@@ -78,10 +78,14 @@ Supabase → project Caseificio → **Authentication** → **URL Configuration**
 
 After v1.08b:
 - every link the system builds (Telegram, invites, the Masseria and trade links, QR codes printed from now on) uses app.bubalina.it;
-- the old Netlify address forwards every page to the same page on app.bubalina.it. A tablet first sends what is still waiting, then
-  moves as the same tablet. QR codes already printed keep working;
+- the old Netlify address forwards every page to the same page on app.bubalina.it, but only once app.bubalina.it serves v1.08b
+  (that is, after your approval: merging alone moves nobody), only when the page starts, and only when that device has nothing left
+  to send. A tablet left open with records, refused saves or photos still waiting shows a blue bar with what is waiting; once it is
+  all sent, «Passa al nuovo indirizzo» turns on (or it moves by itself the next time it opens). QR codes already printed keep working;
 - each address has its own sign-in: everyone signs in once on the new one, and re-adds the app to the Home screen if it was there;
-- Netlify builds only when `fabula-tablet/config.js` changes, so releases spend no Netlify credits.
+- reprint the barn's QR poster from the new address (Configurazione → Utenti e accessi → Link della Masseria);
+- Netlify builds only when `fabula-tablet/config.js` changes, so releases spend no Netlify credits. The outside watcher checks that
+  the old address still forwards («old_site»); when nobody uses it any more, set `OLD_SITE=` in `tools/watch/check.sh`.
 
 ## For Claude: preparing a release
 - **Branch** `vNNN-name` from `main`.

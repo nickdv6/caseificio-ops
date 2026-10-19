@@ -9,13 +9,16 @@
 #     if the set of problems changes, or every 6 h while it lasts (not at night, 22–07 Rome); «tornato tutto OK» when two
 #     checks 3 minutes apart are both clean. A message Telegram did not take is retried at the next run. The state between
 #     runs lives in $STATE_FILE (kept by the workflow's cache): «status epoch signature», signature = the problem codes
-#     (site, db, cron, backup, bots, farm_order), not their text, so a changing count does not look like a new incident;
+#     (site, old_site, db, cron, backup, bots, farm_order), not their text, so a changing count does not look like a new incident;
 #   - every run reports to the database (public.fabula_outside_report, with BACKUP_EXPORT_TOKEN), which raises its own
 #     alarm when the watcher goes quiet for 24 h (GitHub skipping runs, or switching the schedule off after 60 days);
 #   - the run still fails on a confirmed problem, so GitHub also e-mails the repo owner.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 SITE="${SITE:-https://app.bubalina.it}"     # v1.08b: GitHub Pages (was the Netlify address)
+# v1.08b: the old Netlify address must keep forwarding while QR codes and links printed before still point to it (the barn
+# poster, saved bookmarks, home-screen icons). Its config.js names the new address. Empty it (OLD_SITE=) once nobody uses it.
+OLD_SITE="${OLD_SITE-https://flourishing-swan-6729c4.netlify.app}"
 SB="${SB:-https://ojkquhzaeypsphncjqwy.supabase.co}"
 KEY="${KEY:-sb_publishable_Kl7c4NqV44tjDYs6IbpA0Q_S5ENoKq3}"   # publishable key, the same one shipped in fabula-tablet/config.js
 STATE_FILE="${STATE_FILE:-.watch-state/state}"
@@ -24,6 +27,8 @@ REALERT_HOURS="${REALERT_HOURS:-6}"
 check() {
   local bad=()
   curl -fsS -m 20 "$SITE/sw.js" 2>/dev/null | grep -q "perla-v" || bad+=("site	sito tablet non risponde ($SITE)")
+  [ -z "$OLD_SITE" ] || curl -fsS -m 20 "$OLD_SITE/config.js" 2>/dev/null | grep -q "FABULA_HOME" \
+    || bad+=("old_site	il vecchio indirizzo ($OLD_SITE) non inoltra più ad app.bubalina.it: i QR e i link vecchi non aprono l'app (controlla Netlify)")
   local h; h=$(curl -fsS -m 20 -X POST "$SB/rest/v1/rpc/fabula_health" -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}' 2>/dev/null)
   if [ -z "$h" ] || [ "$(echo "$h" | jq -r .db 2>/dev/null)" != "true" ]; then bad+=("db	database non risponde")
   else
