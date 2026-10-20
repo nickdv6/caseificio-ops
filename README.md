@@ -18,6 +18,48 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## Sicurezza e salvataggi: the fixes of the quality test of 20/10 (v1.10)
+A full test of v1.09 (project doc `claude/quality-test-2026-10-20.md`: every suite green, live = repo) and three independent reviews
+found no Critical issue but two ways for a socio profile to become Titolare, a tablet save path that could write a HACCP record twice,
+and smaller issues. Migrations `v110a` (security, people) and `v110b` (saves, wholesale, farm, Telegram); project doc
+`claude/audit-fixes-v110-2026-10-20.md`.
+- **Item 1 · protected settings:** `fabula.setting_protected(key)` = `infra.*`, `auth.*`, every `*_url` except `mkt.*`,
+  `notify.telegram_bot`. Trigger `settings_guard` refuses a write of those straight through the API (role authenticated/anon) by
+  anyone who does not manage users; the database's own functions (they run as their owner) are not checked. A socio could point
+  `infra.site_url` at another site (the next access link carried a password token there) or `trade.edge_url` / `shopify.sync_url`
+  at a host that would receive the job keys. Configurazione shows them as text to whoever is not titolare. `invite-user` builds
+  access links only on app.bubalina.it (or `SITE_URL` / `SITE_HOSTS`), whatever the setting says.
+- **Item 2:** `staff_insert_guard` (not security definer, so it sees who writes): a staff row added through the API by someone who
+  does not manage users has no login, no e-mail (a sign-up with it would have been claimed by `claim_staff_profile`) and no profile
+  that manages users. **Telegram:** someone else's chat that already works is replaced only by who manages users.
+- **Item 3 · one record per check:** the tablet's `rpcNow` goes through `save()`, so the first attempt already carries the save id:
+  a reply lost after the database wrote a CCP reading, milk check, valve check, calibration, pest round or lab sample no longer
+  writes it twice (the re-send gets the first answer from `save_ops`). `record_calibration_check`, `record_pest_inspection`,
+  `record_sample_taken` (and the badge scans) are in `ONCE_RPCS` and the `save_ops` list. `flush()` is taken before its first wait.
+  **Item 12:** with the tablet's storage full an offline save says «Memoria del tablet piena … NON è salvata» instead of «Salvato
+  offline». **Item 11:** product and preset names are escaped on the tablet.
+- **Item 4:** one reader of Italian numbers for every page (`PERM.parseIt`; `UI.parseIt` uses it): Autocontrollo → «Correggi» read
+  «1.050» kg as 1,05 kg and moved the milk stock; Marketing's settings too.
+- **Wholesale (items 5–7):** `trade_approve` matches an existing customer by e-mail only and never overwrites name, P.IVA, SDI, PEC,
+  phone or address: blanks are filled and the differences are listed (Console → Ingrosso and the request's note); the Shopify id
+  of the public form is not taken. The Shopify order queue is claimed by one run (`trade_queue_claim`, 10 minutes) and each draft
+  carries the tag `fq-<queue id>`: a run that finds it completes it or reports the order it became (`trade-portal/queue.ts`).
+  A customer's new plan cannot change a delivery already confirmed; delivery windows only from `trade.windows`.
+- **People (items 8–10):** a badge-out queued on a tablet that is older than the open shift corrects the shift the database closed
+  by itself (it closed the new shift at 0 h); the other open access links stop when the password is saved (`access_link_done`,
+  called by `welcome`); «Cambia email» to the address already on the row moves a login left on the old one.
+- **Smaller (items 13–16):** the farm's 8 loads a day count only loads that stand; the backup reads a one-column key page after page
+  from the last key; «&» escaped in Telegram's «Se ne occupa»; webhook and job secrets compared in constant time; the PO and
+  Consorzio prints show the Rome date; a marketing post link must be http(s); the release STOPs when the app changes without a new
+  `sw.js` version; `welcome` says which characters a password needs; the welcome page opened with no link says where links come
+  from. sw `perla-v77`.
+- **Tests:** `prod-test/test_v110_security_saves.sql` 51/51; `tablet-test/v110_e2e.py` 13/13 (the old app fails its lost-reply,
+  storage and escaping checks); `supabase/functions/trade-portal/queue_test.ts` 4/4; `tools/release/test_release.py` 118.
+  `v109_e2e.py` (C-19) reads the stored expiry instead of «now + 7 days» (it failed in the week before a change of time) and
+  `test_shopify_sync_digest.sql` (E-33) checks a day ahead of the real one (it failed on 20/10 itself).
+- Release order: database first, then the server functions (`welcome` calls `access_link_done`; `trade-portal` calls
+  `trade_queue_claim`).
+
 ## Persone: access links for a week, one card per person, a real switch-off, the rota by taps (v1.09)
 Staff onboarding, the next improvement after the release pipeline (re-score 15/10, «Staff & rota»; project doc
 `claude/audit-fixes-v109-2026-10-19.md`). Emilio's two 24-hour invites lapsed unused; nobody had used the rota.

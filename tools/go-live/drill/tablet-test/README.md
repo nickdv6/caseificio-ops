@@ -229,3 +229,10 @@ and alerts_e2e last): `FAILURES: none` in each, v105_e2e 18/18, v103_e2e 30/30.
 Last run 15/10/2026 (v1.07), same setup with the 197 migrations, all 25 suites in the usual order (the 24 above with v106_e2e after
 v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same database once the local server restarted):
 `FAILURES: none` in each, v107_e2e 5/5.
+32. `python3 v110_e2e.py` (v1.10 «Sicurezza e salvataggi»; pages on :8789, fake Supabase on :8792, the REAL `invite-user` and `welcome`
+    under Deno on :8803/:8804) — the quality test of 20/10/2026: a CCP reading whose reply is lost after the database wrote it is
+    written once (the old app wrote 2 rows); with the storage full an offline save says «Memoria del tablet piena», not «Salvato offline»;
+    a product name with HTML is shown as text in «Arrivo merce»; Autocontrollo «Correggi» reads «1.050» kg as 1050; a socio sees
+    the app's address as text in Configurazione, the titolare can edit it; with the setting naming another site the access link is
+    still on app.bubalina.it; a password refused for its kinds of character says so; «Cambia email» moves a login left on the old
+    address; the welcome page with no link says where links come from. Expect `FAILURES: none` (13 checks). Run it after v109_e2e.

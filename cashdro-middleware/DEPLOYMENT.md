@@ -155,7 +155,7 @@ npm i preact
 
 **Machine error with cash inside** (`error` after notes went in) — the tile no longer offers "Riprova": it says to check the machine display first and only then tap "Ho controllato…". Status calls to the CashDro are retried three times before the operation is cancelled and the cash returned.
 
-**Tests** (no hardware): `AUTH_MODE=none python3 test_engine.py` — 12 checks on the payment engine with a fake CashDro and Epson (change short, receipt failure, double-start, retries).
+**Tests** (no hardware): `AUTH_MODE=none python3 test_engine.py` — 14 checks on the payment engine with a fake CashDro and Epson (change short, receipt failure, double-start, retries).
 
 **End of day** — `GET https://pos-bridge…/cash/journal/YYYY-MM-DD` gives `cash_collected_cents`; compare with Shopify POS payment-session `totalCashSales` (the `pos_daily_closings` reconciliation already planned in the ops system). Any gap > €0.50 → look for sales closed in POS as Cash without going through the tile.
 
