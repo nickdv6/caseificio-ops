@@ -66,13 +66,30 @@ Deno.serve(async (req: Request) => {
     const counts: Record<string, number> = {};
     for (const t of tables as string[]) {
       const rows: unknown[] = [];
-      for (let from = 0; ; from += PAGE) {
-        let q = fab.from(t).select("*");
-        for (const c of orderOf(t)) q = q.order(c, { ascending: true, nullsFirst: true });
-        const { data, error } = await q.range(from, from + PAGE - 1);
-        if (error) throw new Error(`${t}: ${error.message}`);
-        rows.push(...(data ?? []));
-        if (!data || data.length < PAGE) break;
+      const ord = orderOf(t);
+      if (ord.length === 1) {
+        // v1.10 (quality test item 14): a one-column key is read page after page from the last key seen, so a row written during the
+        // export can no longer push an existing row into a page already read (skipped) or back into the next one (doubled)
+        const k = ord[0];
+        let last: unknown = null;
+        for (;;) {
+          let q = fab.from(t).select("*").order(k, { ascending: true });
+          if (last !== null) q = q.gt(k, last);
+          const { data, error } = await q.limit(PAGE);
+          if (error) throw new Error(`${t}: ${error.message}`);
+          rows.push(...(data ?? []));
+          if (!data || data.length < PAGE) break;
+          last = (data[data.length - 1] as Record<string, unknown>)[k];
+        }
+      } else {
+        for (let from = 0; ; from += PAGE) {
+          let q = fab.from(t).select("*");
+          for (const c of ord) q = q.order(c, { ascending: true, nullsFirst: true });
+          const { data, error } = await q.range(from, from + PAGE - 1);
+          if (error) throw new Error(`${t}: ${error.message}`);
+          rows.push(...(data ?? []));
+          if (!data || data.length < PAGE) break;
+        }
       }
       out[t] = rows;
       counts[t] = rows.length;

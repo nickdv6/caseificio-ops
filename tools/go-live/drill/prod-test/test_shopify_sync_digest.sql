@@ -190,7 +190,10 @@ select set_config('request.jwt.claims', '', false);
 select pg_temp.ck('E-21 …pressed again within minutes: says it was just started', :'e_n5' like 'Clienti Shopify è stato avviato alle __:__: rifarlo adesso?%|| hint: confirm', :'e_n5');
 
 -- ============================== E-33 · the hourly check: a Shopify job that did not start ==============================
-select fabula.bot_watchdog('2026-10-20 08:30:00+02') w1 \gset
+-- v1.10: a day ahead of the real one (it was the fixed 20/10/2026: on that very day the runs made above counted as done and the check failed)
+select ((select d from generate_series((now() at time zone 'Europe/Rome')::date + 3, (now() at time zone 'Europe/Rome')::date + 5, interval '1 day') d
+          where extract(isodow from d) between 1 and 6 order by d limit 1) + time '08:30') at time zone 'Europe/Rome' w_at \gset
+select fabula.bot_watchdog(:'w_at'::timestamptz) w1 \gset
 select pg_temp.ck('E-33 a Shopify job that did not start: its incident tells to use «Esegui ora» (the database does it, not a Claude task)',
   exists (select 1 from fabula.notify_outbox where source = 'bot_alerts' and title like 'Clienti Shopify: non è partito%' and body like 'La sincronizzazione con Shopify la fa il database. Per riprovare: Configurazione → Bot → «Esegui ora»%'),
   (select string_agg(title || ' :: ' || coalesce(body, ''), ' || ') from fabula.notify_outbox where source = 'bot_alerts'));

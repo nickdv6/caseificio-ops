@@ -46,10 +46,14 @@
       d.querySelector('[data-ok]').onclick = () => act(d.querySelector('[data-ok]'), async () => {
         const r = await edge('approve', { application_id: a.id, note: d.querySelector('[data-note]').value || null });
         const st = d.querySelector('[data-st]');
+        // v1.10 (quality test item 5): a customer already in the register keeps their data; what the request says differently is listed
+        const diff = (r.approved && r.approved.differences) || [];
+        const diffHtml = diff.length ? `<div class="small" style="margin-top:4px">Cliente già in anagrafica: i suoi dati NON sono stati cambiati. Diversi nella richiesta: ${diff.map(x => `${esc(x.label)} «${esc(x.request)}» (in anagrafica «${esc(x.current)}»)`).join(' · ')}. Se sono giusti, correggili a mano nella scheda del cliente.</div>` : '';
         if (r.shopify === 'linked') st.innerHTML = `<span class="ok">Approvato: azienda Shopify ${r.existed ? 'già esistente, collegata' : 'creata'}.</span> Il cliente può entrare nel sito con la sua email.`;
         else if (r.shopify === 'not_configured') st.innerHTML = `<span class="ko">Approvato qui, ma Shopify non è collegato.</span> A mano in Shopify: cliente ${esc(r.manual.email)} → tag <b>${esc(r.manual.tag)}</b> e metafield <b>${esc(r.manual.metafield)}</b> = <span class="mono">${esc(r.manual.value)}</span>; poi crea l'azienda B2B (Clienti → Aziende).`;
         else st.innerHTML = `<span class="ko">Approvato qui; Shopify: ${esc(r.error || r.shopify)}.</span> Riprova da Clienti e piani → "Collega a Shopify".`;
-        setTimeout(() => { loadApps(); loadCusts(); }, 2500);
+        if (diffHtml) st.insertAdjacentHTML('beforeend', diffHtml);
+        setTimeout(() => { loadApps(); loadCusts(); }, diff.length ? 15000 : 2500);
       });
       d.querySelector('[data-no]').onclick = () => act(d.querySelector('[data-no]'), async () => { await edge('reject', { application_id: a.id, note: d.querySelector('[data-note]').value || null }); loadApps(); }, 'Richiesta rifiutata');
       box.appendChild(d);
@@ -203,7 +207,7 @@
     const cl = must(await sb.from('trade_closures').select('*').order('date_from'));
     $('closures').innerHTML = cl.length ? cl.map(c => `<div class="ex"><span>${fmtD(c.date_from)}${c.date_to !== c.date_from ? ' → ' + fmtD(c.date_to) : ''} ${esc(c.note || '')}</span>${c.date_to >= romeISO() ? `<button class="btn sm sec" data-cl="${c.id}">Chiudi prima</button>` : '<span class="small">passata</span>'}</div>`).join('') : '<div class="empty">Nessuna chiusura.</div>';
     // no deletes from the browser (same rule as the rest of the system): a closure ends the day before today
-    $('closures').querySelectorAll('[data-cl]').forEach(b => b.onclick = () => act(b, async () => { const y = new Date(Date.now() - 864e5).toLocaleDateString('sv-SE'); await upd('trade_closures', { id: b.dataset.cl }, { date_to: y, date_from: cl.find(c => c.id === b.dataset.cl).date_from > y ? y : cl.find(c => c.id === b.dataset.cl).date_from, note: 'annullata' }); loadRegole(); }, 'Chiusura annullata'));
+    $('closures').querySelectorAll('[data-cl]').forEach(b => b.onclick = () => act(b, async () => { const y = UI.daysAgo(1);   /* v1.10: yesterday in Agropoli, not on the device's clock */ await upd('trade_closures', { id: b.dataset.cl }, { date_to: y, date_from: cl.find(c => c.id === b.dataset.cl).date_from > y ? y : cl.find(c => c.id === b.dataset.cl).date_from, note: 'annullata' }); loadRegole(); }, 'Chiusura annullata'));
     $('rules2').innerHTML = rulesHtml(['enabled', 'delivery_days', 'windows', 'default_window', 'min_order_kg', 'cutoff_time', 'horizon_days']);
   }
 

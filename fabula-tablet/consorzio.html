@@ -57,6 +57,7 @@ tr.big td{font-weight:600}
   const num = (n, d = 0) => n == null || n === '' ? '—' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d, minimumFractionDigits: d });
   const eur = n => n == null ? '—' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
   const fmtD = s => s ? String(s).slice(8, 10) + '/' + String(s).slice(5, 7) + '/' + String(s).slice(0, 4) : '—';
+  const romeDay = t => t ? new Date(t).toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' }) : '';   // v1.10: a time's day in Agropoli, not in UTC
   const monthIt = m => m ? new Date(m + '-15T12:00:00').toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : '';
   let ROWS = [], FILE = 'dichiarazione-consorzio.csv';
   async function show() {
@@ -99,7 +100,7 @@ tr.big td{font-weight:600}
       ${iss.length ? iss.map(i => `<div class="ko">• ${esc(i.it)}: ${esc(i.n)}</div>${Array.isArray(i.detail) && i.detail.length ? `<div class="note" style="margin:0 0 6px 14px">${i.detail.slice(0, 20).map(one).join('; ')}</div>` : ''}`).join('')
         : '<div>Nessun rilievo su 60 ore, grasso e proteine, fornitori DOP e tracciabilità.</div>'}
       ${p.fees_estimate_eur ? `<div class="note">Contributo stimato: Consorzio ${eur(p.fees_estimate_eur.consorzio)} · RINA quota variabile ${eur(p.fees_estimate_eur.rina_variable)} (${esc(p.fees_estimate_eur.note || '')})</div>` : ''}
-      <div class="note">${a.status === 'approved' ? `Dati approvati da ${esc(a.decided_by || '')} il ${fmtD((a.decided_at || '').slice(0, 10))}${a.decision_note ? ' · ' + esc(a.decision_note) : ''}.` : ''}
+      <div class="note">${a.status === 'approved' ? `Dati approvati da ${esc(a.decided_by || '')} il ${fmtD(romeDay(a.decided_at))}${a.decision_note ? ' · ' + esc(a.decision_note) : ''}.` : ''}
         ${p.sent_at ? ` Inviata il ${fmtD(p.sent_on)} da ${esc(p.sent_by || '')}${p.protocol ? ', protocollo ' + esc(p.protocol) : ''}${p.sent_note ? ' · ' + esc(p.sent_note) : ''}.` : ''}
         Preparata in automatico dai dati di produzione del gestionale.</div>
       <div class="sig"><div>Luogo e data</div><div>Firma del legale rappresentante</div></div>`;

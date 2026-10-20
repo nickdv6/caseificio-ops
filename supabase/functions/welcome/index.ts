@@ -27,10 +27,16 @@ const pub = (c: any) => c?.ok
       home: c?.reason === "used" ? c?.home ?? null : null, used_at: c?.reason === "used" ? c?.used_at ?? null : null,
       expires_at: c?.reason === "expired" ? c?.expires_at ?? null : null };
 
-const weak = (m: string) =>
-  /weak|easy to guess|pwned|known/i.test(m) ? "Questa password è troppo comune (compare in elenchi di password rubate): scegline una diversa."
-  : /at least|too short|characters/i.test(m) ? "La password deve avere almeno 8 caratteri."
-  : null;
+// v1.10 (review): the rule Supabase gives is said as it is (a length other than 8, or the kinds of character it wants)
+const weak = (m: string) => {
+  if (/weak|easy to guess|pwned|known/i.test(m)) return "Questa password è troppo comune (compare in elenchi di password rubate): scegline una diversa.";
+  if (/password should contain|character of each|at least one (lower|upper|digit|number|symbol)/i.test(m)) {
+    return "La password deve contenere lettere minuscole, lettere maiuscole e numeri" + (/symbol|[!@#$%^&*]/i.test(m) ? " e almeno un simbolo (per esempio ! ? #)." : ".");
+  }
+  const n = m.match(/at least (\d+) char/i);
+  if (n || /password.*(too short|characters)/i.test(m)) return `La password deve avere almeno ${n ? n[1] : 8} caratteri.`;
+  return null;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -90,6 +96,10 @@ Deno.serve(async (req) => {
         user = data.user;
         await bind(user.id);
       }
+      // v1.10 (review): the person's other open links stop only now that the password is saved (before, a save that failed left
+      // both this link and a newer one dead)
+      const { error: de } = await admin.rpc("access_link_done", { p_link_id: claim.link_id });
+      if (de) console.error("welcome done:", de.message);
       return json({ ok: true, email, first_name: claim.first_name, company: claim.company });
     } catch (e) {
       await admin.rpc("access_link_unclaim", { p_link_id: claim.link_id });   // nothing was set: the link works again

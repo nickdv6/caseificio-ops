@@ -170,6 +170,7 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
     // an expired or superseded link no longer leaves the person stuck — they ask for a fresh link themselves.
     const why = code === 'otp_expired' || /expired|invalid/i.test(err || '') || TH
       ? 'Questo link non vale più: è scaduto, è già stato usato, oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
+      : !H.toString() && !Q.toString() ? 'Questa pagina si apre dal link di accesso che ti manda il titolare (WhatsApp o email).'   // v1.10: opened with no link at all
       : 'Il link è scaduto o è già stato usato.';
     $('form').hidden = true; $('err').textContent = '';
     $('sub').textContent = why + ' Se hai già scelto la password, entra e basta. Altrimenti scrivi la tua email e ricevi un link nuovo (vale 24 ore), oppure chiedi al titolare un link su WhatsApp (vale una settimana).';

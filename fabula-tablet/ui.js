@@ -16,13 +16,7 @@
   const romeISO = (d = new Date()) => d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
   const daysAgo = n => romeISO(new Date(Date.now() - n * 864e5));
   // v0.60: Italian numbers — "1.300" is one thousand three hundred, "1,3" and "1.3" are 1.3, "1.300,5" works; anything else is an error, never NULL/0
-  const parseIt = v => {
-    let t = String(v).trim().replace(/\s|€/g, '');
-    if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.');
-    else if (t.includes(',')) t = t.replace(',', '.');
-    else if (/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');   // v0.93 (audit C-01): "0.044" is a decimal, not 44
-    return /^-?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : NaN;
-  };
+  const parseIt = v => PERM.parseIt(v);   // v1.10: one reader for every page (perm.js)
   // v0.93 (audit C-01/B-17): a new value 10× bigger or smaller than the old one is almost always a comma/dot slip ("1.325" read as 1325)
   const jump = (was, now) => { const a = Number(was), b = Number(now); if (!a || !b || !Number.isFinite(a) || !Number.isFinite(b)) return 0; const r = b / a; return r >= 10 || r <= 0.1 ? r : 0; };
   const nOrNull = v => { if (v === '' || v == null) return null; if (typeof v === 'number') return v; const n = parseIt(v); if (!Number.isFinite(n)) throw new Error(`Numero non valido: "${v}"`); return n; };

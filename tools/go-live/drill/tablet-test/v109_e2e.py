@@ -213,9 +213,11 @@ try:
     wa = unquote(lb['wa'].split('text=', 1)[1])
     check('«Aggiungi una persona» with an e-mail: the access link is shown at once in her card', len(token) >= 40 and '/benvenuto.html#invito=' in lb['link'], lb['link'][:90])
     check('…valid a week, one use, sent by me (no e-mail left by itself)', 'una volta sola' in lb['text'] and 'mandalo tu' in lb['text'], lb['text'][:200])
-    week = (datetime.datetime.now() + datetime.timedelta(days=7))
+    # v1.10: the expiry as stored, on the Rome calendar (the runner's clock + 7 days was wrong in the week before a change of time)
+    exp_dm = sql1(f"select to_char(l.expires_at at time zone 'Europe/Rome', 'FMDD/FMMM') from fabula.staff_access_links l join fabula.staff s on s.id = l.staff_id "
+                  f"where s.full_name = {q(GIADA)} order by l.created_at desc limit 1")
     check('C-19: the WhatsApp message greets her, names the company, the expiry date and the page her profile uses (the tablet)',
-          wa.startswith('Ciao Giada,') and COMPANY in wa and f'{week.day}/{week.month}' in wa and '/index.html' in wa and GMAIL in wa and 'console.html' not in wa, wa)
+          wa.startswith('Ciao Giada,') and COMPANY in wa and bool(exp_dm) and exp_dm in wa and '/index.html' in wa and GMAIL in wa and 'console.html' not in wa, exp_dm + ' | ' + wa)
     check('…and «Manda per email» opens a mail to her with the same text', lb['mail'].startswith('mailto:' + GMAIL) and 'Giada' in unquote(lb['mail']), lb['mail'][:120])
     row = sql1(f"select s.email || '|' || s.app_role || '|' || s.role || '|' || (s.auth_user_id is null) || '|' || l.purpose || '|' || (l.token_hash = encode(sha256(convert_to({q(token)}, 'UTF8')), 'hex')) "
                f"from fabula.staff s join fabula.staff_access_links l on l.staff_id = s.id where s.full_name = {q(GIADA)} order by l.created_at desc limit 1")

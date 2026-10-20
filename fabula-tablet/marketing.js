@@ -11,6 +11,8 @@
   const eur = (n, d = 0) => n == null ? '–' : new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: d, minimumFractionDigits: d }).format(n);
   const num = (n, d = 0) => n == null ? '–' : Number(n).toLocaleString('it-IT', { maximumFractionDigits: d });
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // v1.10: only http(s) links become links (a «javascript:» address typed as a post link stays text), as in vendite.js
+  const safeUrl = u => { const s = String(u ?? '').trim(); if (!s) return ''; const v = /^https?:\/\//i.test(s) ? s : /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s) ? 'https://' + s : ''; try { return v && /^https?:$/.test(new URL(v).protocol) ? v : ''; } catch { return ''; } };
   const romeDate = d => new Date(d).toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
   const romeTime = d => new Date(d).toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' });
   const dayLabel = s => new Date(s + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -113,7 +115,7 @@
         const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0';
         const inp = document.createElement('input'); inp.type = 'text'; inp.className = 'wide'; inp.value = r.value;
         const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Salva';
-        b.onclick = () => run(async () => { let v = inp.value.trim(); if (r.data_type === 'number' && isNaN(Number(v.replace(',', '.')))) throw new Error('Inserisci un numero'); if (r.data_type === 'number') v = String(Number(v.replace(',', '.'))); PERM.changed(await sb.from('settings').update({ value: v }).eq('key', r.key).select('key')); settings[r.key].value = v; }, 'Salvato');
+        b.onclick = () => run(async () => { let v = inp.value.trim(); if (r.data_type === 'number' && !Number.isFinite(PERM.parseIt(v))) throw new Error('Inserisci un numero'); if (r.data_type === 'number') v = String(PERM.parseIt(v));   /* v1.10: «1.050» = 1050 */ PERM.changed(await sb.from('settings').update({ value: v }).eq('key', r.key).select('key')); settings[r.key].value = v; }, 'Salvato');
         right.append(inp, b); row.append(right); box.append(row);
       });
     });
@@ -298,7 +300,7 @@
     $('ie-extra').innerHTML = '';
     if (id) {
       const { data: col } = await sb.from('mkt_collabs').select('*').eq('influencer_id', id).order('created_at', { ascending: false });
-      $('ie-extra').innerHTML = '<label class="fl">Collaborazioni</label>' + ((col || []).length ? '<table><tr><th>Tipo</th><th>Cosa</th><th class="num">Costo</th><th>Post</th><th>Dicitura</th></tr>' + col.map(c => `<tr><td>${esc(c.kind)}</td><td class="status">${esc(c.deliverables || '')}</td><td class="num">${eur(Number(c.fee_eur) + Number(c.product_value_eur))}</td><td>${c.post_url ? `<a href="${esc(c.post_url)}" target="_blank" rel="noopener">post</a>` : '—'}</td><td class="${c.disclosure_ok ? 'ok' : c.post_url ? 'ko' : ''}">${c.disclosure_ok ? '✓' : c.post_url ? 'da verificare' : ''}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna.</div>');
+      $('ie-extra').innerHTML = '<label class="fl">Collaborazioni</label>' + ((col || []).length ? '<table><tr><th>Tipo</th><th>Cosa</th><th class="num">Costo</th><th>Post</th><th>Dicitura</th></tr>' + col.map(c => `<tr><td>${esc(c.kind)}</td><td class="status">${esc(c.deliverables || '')}</td><td class="num">${eur(Number(c.fee_eur) + Number(c.product_value_eur))}</td><td>${safeUrl(c.post_url) ? `<a href="${esc(safeUrl(c.post_url))}" target="_blank" rel="noopener">post</a>` : '—'}</td><td class="${c.disclosure_ok ? 'ok' : c.post_url ? 'ko' : ''}">${c.disclosure_ok ? '✓' : c.post_url ? 'da verificare' : ''}</td></tr>`).join('') + '</table>' : '<div class="empty">Nessuna.</div>');
     }
     $('dlg-inf').showModal();
   }

@@ -237,6 +237,13 @@ def plan(sha, live=None, live_migs=None):
 
     site_paths = [path for _, path in ch if path.startswith('fabula-tablet/') and os.path.basename(path) not in ('README.md', 'netlify.toml')]
     p['site'] = bool(site_paths) or 'site' in force
+    # v1.10 (quality test item 16): app files changed but sw.js kept its version: tablets would keep the old offline copy and report
+    # the old version (the office's «Aggiorna ora» and the go-live check go by it)
+    if any(os.path.basename(path) != 'sw.js' for path in site_paths) and exists_at(base, 'fabula-tablet/sw.js') and exists_at(sha, 'fabula-tablet/sw.js') \
+            and sw_version(file_at(base, 'fabula-tablet/sw.js')) == sw_version(file_at(sha, 'fabula-tablet/sw.js')):
+        p['warnings'].append('STOP: l\'app cambia (' + ', '.join(sorted(os.path.basename(x) for x in site_paths)[:4])
+                             + ') ma fabula-tablet/sw.js ha ancora la versione ' + str(sw_version(file_at(sha, 'fabula-tablet/sw.js')))
+                             + ': aumenta CACHE (perla-vNN)')
     p['prompts'] = sorted({os.path.basename(path)[:-4] for _, path in ch if path.startswith('tools/bots/prompts/') and path.endswith('.txt')})
     for v in p['migrations']:
         p['warnings'] += lint_migration(file_at(sha, migs[v['version']][1]), v['version'])

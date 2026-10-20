@@ -131,6 +131,17 @@ def test_plan():
     check('plan: a verify_jwt change in config.toml redeploys that function', p['functions'] == ['beta'], p['functions'])
     check('function config: a function not listed verifies the JWT', R.function_config(c3).get('alpha', True) is True and R.function_config(c3)['beta'] is False)
 
+    # v1.10 (quality test item 16): an app file changed without a new sw.js version stops the plan; with the bump it passes
+    g.write('fabula-tablet/app.js', 'v1\n')
+    c4a = g.commit('app without bump')
+    p = R.plan(c4a, live=c4)
+    check('plan: the app changed but sw.js kept its version → STOP (tablets would keep the old copy)',
+          any(w.startswith('STOP') and 'sw.js' in w for w in p['warnings']), p['warnings'])
+    g.write('fabula-tablet/sw.js', "const CACHE = 'perla-v3';\n")
+    c4b = g.commit('bump')
+    p = R.plan(c4b, live=c4)
+    check('plan: …with the version raised it passes', not any('sw.js' in w for w in p['warnings']) and p['site'], p['warnings'])
+    run('git', '-C', g.dir, 'reset', '-q', '--hard', c4)   # the next checks start from c4 as before
     g.write('tools/release/release.json', json.dumps({'version': 'v9', 'force': ['site', 'functions']}))
     c5 = g.commit('force')
     p = R.plan(c5, live=c4)

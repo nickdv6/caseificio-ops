@@ -9,6 +9,7 @@
   // Mouse wheel over a focused number field must never change its value (keyboard only).
   document.addEventListener('wheel', e => { const a = document.activeElement; if (a && a.tagName === 'INPUT' && a.type === 'number' && e.target === a) e.preventDefault(); }, { passive: false });
   let staff = null, scanner = null, current = null;
+  let redoPending = null;   // v1.10: declared (it worked only because the file is not in strict mode)
 
   // ---------- UI helpers ----------
   const show = v => { if (v === 'home') redoPending = null; document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-' + v)); };
@@ -135,8 +136,10 @@
     $('pending').textContent = q ? (q === 1 ? '1 registrazione in attesa di rete: parte da sola' : `${q} registrazioni in attesa di rete: partono da sole`) : '';
     try { renderRejects(); } catch {} };   // v0.97 (A-11): refused saves are the red banner at the top of Home
   // (v0.74 check-in further down reports both numbers to the office)
-  const setQueue = q => { try { localStorage.setItem(Q, JSON.stringify(q)); } catch {} showPending(); };
-  const setFailed = f => { try { localStorage.setItem(QF, JSON.stringify(f)); } catch {} showPending(); };
+  // v1.10: a write that fails (tablet storage full) is reported, so «Salvato offline» is never shown for a record that was not kept
+  const writeList = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
+  const setQueue = q => { const ok = writeList(Q, q); showPending(); return ok; };
+  const setFailed = f => { const ok = writeList(QF, f); showPending(); return ok; };
   // retryable = network down, timeout, or an expired login; anything else is the database refusing the data
   const retryable = e => !e || !e.code || /fetch|network|timeout|jwt|token/i.test(e.message || '') || e.code === 'PGRST301' || e.status === 401;
   // every insert carries its own id, generated once on the tablet: a re-send after a lost reply hits the same row instead of duplicating it
@@ -205,7 +208,12 @@
     const qid = uuid();                       // v0.62: one id per save — the server writes it once, however many times it is sent
     const st = { done: 0, out: [] };          // v0.59: progress travels with the queued item, so a re-send skips the steps already saved
     const at = Date.now();                    // v0.97 (audit D-04): when it was done; sent with the item, so a check queued offline keeps it
-    const enqueue = () => { setQueue([...queue(), { qid, at, ops, st }]); markRedo(ops); };
+    const enqueue = () => {
+      if (!setQueue([...queue(), { qid, at, ops, st }])) {   // v1.10: storage full → say so instead of «Salvato offline»
+        throw new Error('Memoria del tablet piena: questa registrazione NON è salvata. Scrivila sul foglio di carta e avvisa l\'ufficio.');
+      }
+      markRedo(ops);
+    };
     // v0.97: the answer of each step when it was saved now (null when it went into the queue), e.g. the CCP result for the NC card
     if (!navigator.onLine) { enqueue(); toast('Salvato offline, invio appena c\'è rete'); return null; }
     if (queue().length) await flush();        // v0.62: records saved offline go first (a batch start needs its milk intake on the server)
@@ -222,7 +230,9 @@
   // and the queue id makes a re-send after a lost reply return the first result instead of writing again.
   // Items half-sent by an older version (st.done > 0) finish step by step as before.
   // single RPCs that write (dosing, steps, CCP, receipts) go the same way, so a lost reply never records them twice
-  const ONCE_RPCS = new Set(['log_ccp', 'log_milk_check', 'receive_purchase_order', 'record_receipt_check', 'close_open_task', 'start_byproduct_batch', 'log_batch_step', 'record_batch_consumable']);
+  // v1.10: the badge scans and the calibration, pest round and lab sample records too (they could be written twice after a lost reply)
+  const ONCE_RPCS = new Set(['log_ccp', 'log_milk_check', 'receive_purchase_order', 'record_receipt_check', 'close_open_task', 'start_byproduct_batch', 'log_batch_step', 'record_batch_consumable',
+    'badge_in', 'badge_out', 'record_calibration_check', 'record_pest_inspection', 'record_sample_taken']);
   let atomicOk = true, clientAtOk = true;
   async function run(ops, st = { done: 0, out: [] }, qid = null, at = null) {
     if ((ops.length > 1 || (qid && ops[0] && ONCE_RPCS.has(ops[0].rpc))) && !(st.done > 0) && atomicOk) {
@@ -258,10 +268,13 @@
   let flushing = false;
   async function flush() {
     if (flushing) return;
-    const q = queue(); if (!q.length || !navigator.onLine) return;
-    if (!staff || !(await PERM.session(sb))) return;            // v0.59: logged out → keep the queue for the next login (it used to fail every item)
+    if (!queue().length || !navigator.onLine) return;
+    flushing = true;                                            // v1.10: taken before the first wait, so two flushes never send the same items
+    let signedIn = false;
+    try { signedIn = !!staff && !!(await PERM.session(sb)); } catch {}
+    if (!signedIn) { flushing = false; return; }                // v0.59: logged out → keep the queue for the next login (it used to fail every item)
+    const q = queue(); if (!q.length) { flushing = false; return; }
     q.forEach(i => { if (!i.qid) i.qid = uuid(); }); setQueue(q);   // v0.56: every item gets an id (same tick as the read, so nothing is lost)
-    flushing = true;
     try {
       try { await sb.auth.getSession(); } catch {}           // refreshes an expired login before re-sending
       const left = [], failed = [], blocked = new Set();
@@ -1038,7 +1051,7 @@
     if (!data || !data.length) return toast('Nessun ordine in arrivo');
     data.forEach(po => {
       const d = document.createElement('div'); d.className = 'task';
-      const items = po.lines.map(l => `${l.name} ${Number(l.remaining).toLocaleString('it-IT')} ${l.unit}`).join(' · ');
+      const items = po.lines.map(l => `${esc(l.name)} ${Number(l.remaining).toLocaleString('it-IT')} ${esc(l.unit)}`).join(' · ');
       d.innerHTML = `<div><div>${esc(po.po_number)} · ${esc(po.supplier)}</div><div class="code">${items}${po.status === 'partially_received' ? ' · parziale' : ''}</div></div><time>${po.expected_date ? po.expected_date.slice(8, 10) + '/' + po.expected_date.slice(5, 7) : ''}</time>`;
       d.onclick = () => { $('form').innerHTML = ''; current = { code: 'PO:' + po.po_number }; stepReceive(po.po_number).catch(e => { toast(e.message, 'err'); show('home'); }); };
       $('form').append(d);
@@ -1515,7 +1528,7 @@
     const prodSel = field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) });
     const presets = await loadPresets();
     const preSel = field('preset', 'Impostazioni di processo', 'select', { options: [['', '—']], required: false });
-    const fillPresets = () => { const mine = presetsFor(presets, prodSel.value); preSel.innerHTML = mine.length ? mine.map(p => `<option value="${p.id}" ${p.is_default ? 'selected' : ''}>${p.name}${p.is_default ? ' · predefinito' : ''}</option>`).join('') : '<option value="">nessun preset: solo dosi</option>'; };
+    const fillPresets = () => { const mine = presetsFor(presets, prodSel.value); preSel.innerHTML = mine.length ? mine.map(p => `<option value="${esc(p.id)}" ${p.is_default ? 'selected' : ''}>${esc(p.name)}${p.is_default ? ' · predefinito' : ''}</option>`).join('') : '<option value="">nessun preset: solo dosi</option>'; };
     prodSel.onchange = fillPresets; fillPresets();
     if (pre) {
       if ([...prodSel.options].some(o => o.value === pre.product_id)) { prodSel.value = pre.product_id; fillPresets(); }
@@ -2224,11 +2237,11 @@
 
 
   // ---------- Sicurezza alimentare (v0.28) ----------
-  const rpcNow = async (fn, args) => {          // online: run now and return the answer · offline (or network error): queue it
-    if (!navigator.onLine) { await save([{ rpc: fn, args }]); return null; }
-    const { data, error } = await sb.rpc(fn, args);
-    if (error && retryable(error)) { await save([{ rpc: fn, args }]); return null; }   // v0.59: Wi-Fi up but no internet → queued, not lost
-    if (error) throw error; markRedo([{ rpc: fn, args }]); return data;
+  // online: run now and return the answer · offline (or network error): queue it (null). v1.10: always through save(), so the first
+  // attempt already carries the save id: a reply lost after the database wrote the record can no longer write it a second time
+  const rpcNow = async (fn, args) => {
+    const out = await save([{ rpc: fn, args }]);
+    return out && out.length ? (out[0] ?? null) : null;
   };
   function stepHaccpMenu() {
     $('form').innerHTML = ''; current = { code: 'HACCP:' };

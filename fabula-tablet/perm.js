@@ -3,6 +3,16 @@
    this file only hides what the person can't use. */
 window.PERM = {
   data: null,
+  // v1.10: the one reader of numbers typed the Italian way, shared by every page (it was in ui.js only, and the Manuale and Marketing
+  // pages read «1.050» as 1,05): «1.050» = 1050, «4,5» = 4.5, «1.050,5» = 1050.5, «0.044» = 0.044 (a dot not followed by three digits
+  // is a decimal point). NaN when it is not a number.
+  parseIt(v) {
+    let t = String(v ?? '').trim().replace(/\s|€/g, '');
+    if (t.includes(',') && t.includes('.')) t = t.replace(/\./g, '').replace(',', '.');
+    else if (t.includes(',')) t = t.replace(',', '.');
+    else if (/^-?[1-9]\d{0,2}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');   // v0.93 (audit C-01): "0.044" is a decimal, not 44
+    return /^-?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : NaN;
+  },
   HOME: { tablet: 'index.html', console: 'console.html', haccp: 'haccp.html', marketing: 'marketing.html', vendite: 'vendite.html', ingrosso: 'ingrosso.html', admin: 'admin.html' },
   offline: false,
   // v0.59: the last profile seen on this device is kept per user, so the tablet still opens when the network is down.

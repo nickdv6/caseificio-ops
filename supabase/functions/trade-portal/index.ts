@@ -27,6 +27,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { money, planFrom } from "./prices.ts";
+import { createOnce } from "./queue.ts";
 
 const SHOP = Deno.env.get("SHOPIFY_SHOP") ?? "pxssjd-cq.myshopify.com";
 const STATIC_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
@@ -67,6 +68,14 @@ const asUser = (req: Request) => createClient(Deno.env.get("SUPABASE_URL")!, Den
 const dbErr = (e: { code?: string; message?: string }) => json({ error: e.code === "22023" || e.code === "42501" || e.code === "P0001" ? e.message : "errore del server", code: e.code }, e.code === "42501" ? 403 : e.code === "22023" || e.code === "P0001" ? 400 : 500);
 
 // ---------- Shopify Admin GraphQL ----------
+function same(a: string, b: string) {             // v1.10: constant time for keys of the same length (as shopify-sync)
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  if (!x.length || x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+}
+
 async function gql(query: string, variables: Record<string, unknown> = {}) {
   if (!CONFIGURED) throw new Error("not_configured");
   for (let i = 0; i < 3; i++) {
@@ -99,8 +108,11 @@ async function termsTemplate(days: number | null) {
 
 // the Shopify company for an application / party: existing company of the customer with that e-mail, else a new one
 async function ensureCompany(app: Record<string, string | null>, termsDays: number | null) {
-  const q = await gql(`query($q: String!) { customers(first: 1, query: $q) { nodes { id defaultEmailAddress { emailAddress } companyContactProfiles { id company { id name locations(first: 1) { nodes { id } } } } } } }`, { q: `email:"${app.email}"` });
-  const cust = q.customers.nodes[0];
+  // v1.10 (review M1): the e-mail goes into the search without quotes of its own, and the customer found must have exactly that e-mail
+  const email = String(app.email ?? "").trim().toLowerCase().replace(/["\\\s]/g, "");
+  const q = await gql(`query($q: String!) { customers(first: 5, query: $q) { nodes { id defaultEmailAddress { emailAddress } companyContactProfiles { id company { id name locations(first: 1) { nodes { id } } } } } } }`, { q: `email:"${email}"` });
+  // deno-lint-ignore no-explicit-any
+  const cust = (q.customers.nodes as any[]).find((c) => String(c.defaultEmailAddress?.emailAddress ?? "").toLowerCase() === email);
   const prof = cust?.companyContactProfiles?.[0];
   if (prof?.company?.id) {
     return { companyId: prof.company.id, locationId: prof.company.locations.nodes[0]?.id ?? null, contactId: prof.id, customerId: cust.id, existed: true };
@@ -157,26 +169,23 @@ async function createOrder(row: Record<string, any>) {
     ...(tmpl ? { paymentTerms: { paymentTermsTemplateId: tmpl.id, paymentSchedules: [{ issuedAt: `${row.delivery_date}T06:00:00Z` }] } } : {}),
     ...(p.po_number ? { poNumber: String(p.po_number) } : {}),
   };
-  const d = await gql(`mutation($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id name } userErrors { field message } } }`, { input });
-  const ue = userErr(d.draftOrderCreate); if (ue) throw new Error("draftOrderCreate: " + ue);
-  const draftId = d.draftOrderCreate.draftOrder.id;
-  const done = await gql(`mutation($id: ID!) { draftOrderComplete(id: $id, paymentPending: true) { draftOrder { id order { id name } } userErrors { field message } } }`, { id: draftId });
-  const ue2 = userErr(done.draftOrderComplete); if (ue2) throw new Error("draftOrderComplete: " + ue2 + ` (bozza ${draftId})`);
-  const o = done.draftOrderComplete.draftOrder.order;
-  return { draftId, orderId: o?.id ?? null, name: o?.name ?? null };
+  return await createOnce(gql, String(row.id), input);   // v1.10: once per queue row (queue.ts)
 }
 
 async function runQueue() {
   const db = admin();
-  const { data, error } = await db.rpc("trade_queue_pending");
+  // v1.10: the rows are claimed for this run (another run, or «Invia ora» pressed meanwhile, does not get them)
+  const { data, error } = await db.rpc("trade_queue_claim");
   if (error) throw error;
   const rows = (data ?? []) as Record<string, any>[];
   const out: Record<string, unknown>[] = [];
   for (const row of rows) {
     try {
       const r = await createOrder(row);
-      await db.rpc("trade_queue_result", { p_id: row.id, p_ok: true, p_draft: r.draftId, p_order: r.orderId, p_name: r.name, p_error: null });
-      out.push({ id: row.id, ok: true, order: r.name });
+      const { error: re } = await db.rpc("trade_queue_result", { p_id: row.id, p_ok: true, p_draft: r.draftId, p_order: r.orderId, p_name: r.name, p_error: null });
+      // v1.10: not recorded → the row stays claimed and the next run finds the order by its tag instead of creating another
+      if (re) { console.error("trade_queue_result", row.id, re.message); out.push({ id: row.id, ok: true, order: r.name, recorded: false }); continue; }
+      out.push({ id: row.id, ok: true, order: r.name, ...(r.existed ? { existed: true } : {}) });
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       if (msg === "not_configured") return { configured: false, pending: rows.length };
@@ -338,7 +347,7 @@ Deno.serve(async (req: Request) => {
     // ----- queue → Shopify orders -----
     if (req.method === "POST" && action === "run-queue") {
       const { data: sec } = await admin().from("settings").select("value").eq("key", "trade.job_secret").maybeSingle();
-      const okSecret = sec?.value && req.headers.get("x-trade-secret") === sec.value;
+      const okSecret = !!sec?.value && same(req.headers.get("x-trade-secret") ?? "", sec.value);
       if (!okSecret && (await staffLevel(req)) < 3) return json({ error: "non autorizzato" }, 403);
       const r = await runQueue();
       return json(r, r.configured ? 200 : 503);
@@ -346,7 +355,7 @@ Deno.serve(async (req: Request) => {
     // ----- diagnostics: is Shopify reachable with the configured credentials? (staff or job secret) -----
     if (req.method === "GET" && action === "status") {
       const { data: sec } = await admin().from("settings").select("value").eq("key", "trade.job_secret").maybeSingle();
-      const okSecret = sec?.value && req.headers.get("x-trade-secret") === sec.value;
+      const okSecret = !!sec?.value && same(req.headers.get("x-trade-secret") ?? "", sec.value);
       if (!okSecret && (await staffLevel(req)) < 1) return json({ error: "non autorizzato" }, 403);
       if (!CONFIGURED) return json({ configured: false, shop: SHOP, mode: "none" });
       try {

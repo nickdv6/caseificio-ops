@@ -21,12 +21,23 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SITE_FALLBACK = Deno.env.get("SITE_URL") ?? "https://app.bubalina.it";
+// v1.10 (quality test 20/10, item 1): an access link sets a password, so it is built only on an address of ours. The setting can move
+// the app between these hosts; any other value (a look-alike such as app.bubalina.it.example.com) falls back to the app's address.
+// SITE_HOSTS (comma-separated) adds hosts, e.g. for a test copy.
+const SITE_HOSTS = new Set(["app.bubalina.it", new URL(SITE_FALLBACK).hostname,
+  ...(Deno.env.get("SITE_HOSTS") ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+function allowedSite(v: string): string | null {
+  const t = String(v ?? "").trim().replace(/\/+$/, "");
+  if (!/^https:\/\/[a-z0-9.-]+(:\d+)?(\/[A-Za-z0-9._~\/-]*)?$/i.test(t)) return null;
+  try { return SITE_HOSTS.has(new URL(t).hostname.toLowerCase()) ? t : null; } catch { return null; }
+}
 // deno-lint-ignore no-explicit-any
 async function siteUrl(admin: any): Promise<string> {
   try {
     const { data } = await admin.from("settings").select("value").eq("key", "infra.site_url").maybeSingle();
-    const v = String(data?.value ?? "").trim().replace(/\/+$/, "");
-    if (/^https:\/\/[a-z0-9.-]+(:\d+)?(\/[A-Za-z0-9._~\/-]*)?$/i.test(v)) return v;
+    const v = allowedSite(String(data?.value ?? ""));
+    if (v) return v;
+    if (data?.value) console.error("invite-user: infra.site_url is not an address of ours, links use " + SITE_FALLBACK);
   } catch { /* the fallback below */ }
   return SITE_FALLBACK.replace(/\/+$/, "");
 }
@@ -129,7 +140,13 @@ Deno.serve(async (req) => {
       if (!staff) return json({ error: "Persona non trovata" }, 404);
       const email = String(body.email ?? "").trim().toLowerCase();
       if (!EMAIL_RE.test(email)) return json({ error: "Email non valida" }, 400);
-      if (email === String(staff.email ?? "").toLowerCase()) return json({ ok: true, unchanged: true });
+      if (email === String(staff.email ?? "").toLowerCase()) {
+        // v1.10 (review): the row can already have the new address while the login is still on the old one (the C-13 state left by
+        // a plain edit before v1.09): then the login is moved to it, instead of answering «unchanged»
+        if (!staff.auth_user_id) return json({ ok: true, unchanged: true });
+        const { data: cur } = await admin.auth.admin.getUserById(staff.auth_user_id);
+        if (String(cur?.user?.email ?? "").toLowerCase() === email) return json({ ok: true, unchanged: true });
+      }
       const { data: other } = await admin.from("staff").select("id, full_name").eq("email", email).neq("id", staff.id).maybeSingle();
       if (other) return json({ error: `Questa email è già di ${other.full_name}` }, 409);
       let was: string | null = null;

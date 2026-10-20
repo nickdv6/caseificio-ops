@@ -36,6 +36,9 @@
   // v1.03 (audit C-05): the secret keys no longer reach the browser at all (the database hides them); kept masked should one ever show
   const SECRET = new Set(['trade.job_secret', 'milk.farm_token', 'milk.farm_ship_token']);
   const READONLY = new Set(['infra.sw_seen']);   // written by the system, shown as text
+  // v1.10 (quality test item 1): the app's address, the access-link settings and the addresses the database sends its keys to change
+  // only for who manages users (the database refuses anyone else: fabula.setting_protected); others see them as text
+  const PROTECTED = k => /^(infra|auth)\./.test(k) || (/_url$/.test(k) && !/^mkt\./.test(k)) || k === 'notify.telegram_bot';
   const canEdit = () => PERM.can('sistema', 3);
   let PROWS = [], pendingSection = null, curSec = null;
   const secOf = r => SEC_OF[r.key.split('.')[0]] || 'altro';
@@ -124,7 +127,7 @@
     const k = kindOf(r), att = attOf(r), row = document.createElement('div'); row.className = 'set-row' + (k === 'text' ? ' text' : '') + (att ? ' att' + (att === 'da compilare' ? ' att-empty' : '') : ''); row.dataset.key = r.key; if (att) row.dataset.att = att;
     row.innerHTML = `<div class="lbl"${att ? ` data-att="${att}"` : ''}>${esc(r.description || r.key)}${k === 'number' && rangeOf(r) ? `<small class="rng">possibile ${esc(rangeOf(r))}</small>` : ''}${r.impact_it ? '<small class="imp" title="' + esc(r.impact_it) + '">cambia il comportamento per tutti</small>' : ''}<span class="was" hidden></span></div>`; row.title = r.key;
     const right = document.createElement('div'); right.className = 'row'; right.style.marginTop = '0'; row.append(right);
-    if (READONLY.has(r.key)) { const t = document.createElement('div'); t.className = 'ro'; t.textContent = r.value || '—'; right.append(t); return row; }
+    if (READONLY.has(r.key) || (PROTECTED(r.key) && !PERM.isAdmin())) { const t = document.createElement('div'); t.className = 'ro'; t.textContent = r.value || '—'; if (!READONLY.has(r.key)) t.title = 'La cambia solo il titolare'; right.append(t); return row; }
     if (k === 'weekdays') {          // v0.95 (audit C-04): seven boxes instead of a "1,2,3,4,5,6" text that could silently empty the delivery days
       const box = document.createElement('span'); box.className = 'wdays'; box.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 12px';
       const on = new Set(String(r.value || '').split(',').map(x => x.trim()));

@@ -104,7 +104,7 @@ async function onUpdate(fab: any, u: any) {
     const { data: r, error } = await fab.rpc("notify_link", { p_code: start[1].toLowerCase(), p_chat_id: chatId, p_tg_name: name });
     if (error || !r?.ok) return void await say("Collegamento non valido o scaduto: creane uno nuovo da <b>Configurazione → Utenti → Avvisi Telegram</b>.");
     const T: Record<string, string> = { food_safety: "sicurezza alimentare (a qualsiasi ora)", infra: "sistema (backup, bot, tablet)", decisions: "decisioni da prendere" };
-    return void await say(`✅ Collegato: <b>${String(r.full_name).replace(/</g, "&lt;")}</b>.\nQui arriveranno gli avvisi: ${(r.topics ?? []).map((x: string) => T[x] ?? x).join(", ")}.\n` +
+    return void await say(`✅ Collegato: <b>${String(r.full_name ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</b>.\nQui arriveranno gli avvisi: ${(r.topics ?? []).map((x: string) => T[x] ?? x).join(", ")}.\n` +
       `Le decisioni non arrivano dalle ${r.quiet_from} alle ${r.quiet_to}; la sicurezza alimentare sì.\nSotto ogni avviso: «✋ Me ne occupo io» avvisa gli altri che ci pensi tu.\nPer non ricevere più nulla scrivi /stop.`);
   }
   if (/^\/stop\b/i.test(text)) {
@@ -114,13 +114,21 @@ async function onUpdate(fab: any, u: any) {
   await say("Questo bot manda solo gli avvisi del caseificio. Rispondi con i pulsanti sotto ogni avviso.");
 }
 
+function same(a: string, b: string) {             // v1.10: constant time for keys of the same length (as shopify-sync)
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  if (!x.length || x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ ok: true, service: "notify" });
   if (!TOKEN || !HOOK_SECRET) return json({ error: "TELEGRAM_BOT_TOKEN o TELEGRAM_WEBHOOK_SECRET mancanti nei secrets della funzione" }, 500);
   const fab = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } }).schema("fabula");
   const hook = req.headers.get("x-telegram-bot-api-secret-token");
   if (hook !== null) {
-    if (hook !== HOOK_SECRET) return new Response("forbidden", { status: 403 });
+    if (!same(hook, HOOK_SECRET)) return new Response("forbidden", { status: 403 });
     try { await onUpdate(fab, await req.json()); } catch (e) { console.error("update", clean((e as Error).message)); }
     return new Response("ok");                                    // always 200: Telegram would otherwise resend the same update
   }

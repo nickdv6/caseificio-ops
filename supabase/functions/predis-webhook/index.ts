@@ -4,10 +4,18 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+function same(a: string, b: string) {             // v1.10: constant time for keys of the same length (as shopify-sync)
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  if (!x.length || x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+}
+
 Deno.serve(async (req) => {
   const token = Deno.env.get("PREDIS_WEBHOOK_TOKEN") ?? "";
   const given = new URL(req.url).searchParams.get("token") ?? "";
-  if (!token || given !== token) return new Response("forbidden", { status: 403 });
+  if (!token || !same(given, token)) return new Response("forbidden", { status: 403 });
   if (req.method !== "POST") return new Response("ok");
   const p = await req.json().catch(() => null);
   if (!p?.post_id) return new Response("bad payload", { status: 400 });
