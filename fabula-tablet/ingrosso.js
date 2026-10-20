@@ -53,7 +53,8 @@
         else if (r.shopify === 'not_configured') st.innerHTML = `<span class="ko">Approvato qui, ma Shopify non è collegato.</span> A mano in Shopify: cliente ${esc(r.manual.email)} → tag <b>${esc(r.manual.tag)}</b> e metafield <b>${esc(r.manual.metafield)}</b> = <span class="mono">${esc(r.manual.value)}</span>; poi crea l'azienda B2B (Clienti → Aziende).`;
         else st.innerHTML = `<span class="ko">Approvato qui; Shopify: ${esc(r.error || r.shopify)}.</span> Riprova da Clienti e piani → "Collega a Shopify".`;
         if (diffHtml) st.insertAdjacentHTML('beforeend', diffHtml);
-        setTimeout(() => { loadApps(); loadCusts(); }, diff.length ? 15000 : 2500);
+        // the card with the differences stays until the page is reloaded (the request is no longer pending, a reload would remove it)
+        setTimeout(() => { if (!diff.length) loadApps(); loadCusts(); }, 2500);
       });
       d.querySelector('[data-no]').onclick = () => act(d.querySelector('[data-no]'), async () => { await edge('reject', { application_id: a.id, note: d.querySelector('[data-note]').value || null }); loadApps(); }, 'Richiesta rifiutata');
       box.appendChild(d);

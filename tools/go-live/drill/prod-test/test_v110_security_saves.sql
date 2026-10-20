@@ -26,8 +26,8 @@ insert into fabula.staff (id, full_name, role, app_role, email, active, auth_use
 select pg_temp.ck('protected: the app address, access links, the addresses the database calls, the Telegram bot',
   fabula.setting_protected('infra.site_url') and fabula.setting_protected('auth.link_days') and fabula.setting_protected('trade.edge_url')
   and fabula.setting_protected('shopify.sync_url') and fabula.setting_protected('notify.function_url') and fabula.setting_protected('notify.telegram_bot'));
-select pg_temp.ck('…not the marketing links nor ordinary settings',
-  not fabula.setting_protected('mkt.local_site_url') and not fabula.setting_protected('milk.price_eur_kg') and not fabula.setting_protected('trade.min_order_kg'));
+select pg_temp.ck('…not the marketing links, the Manuale link (review L3) nor ordinary settings',
+  not fabula.setting_protected('mkt.local_site_url') and not fabula.setting_protected('food.manuale_url') and not fabula.setting_protected('milk.price_eur_kg') and not fabula.setting_protected('trade.min_order_kg'));
 select value site_before from fabula.settings where key = 'infra.site_url' \gset
 select pg_temp.as_user('00000000-0000-4000-a000-0000000110b1');
 set role authenticated;
@@ -141,6 +141,31 @@ reset role;
 select set_config('request.jwt.claims', '', false);
 select pg_temp.ck('a badge-out now still closes the open shift', :'bo2'::jsonb ->> 'action' = 'out' and not coalesce((:'bo2'::jsonb ->> 'corrected')::boolean, false), :'bo2');
 
+-- review H1: a late badge-out with no shift open never stretches an old automatic close from days before (it became 119 h)
+insert into fabula.staff (id, full_name, role, app_role, active) values ('00000000-0000-4000-b000-0000000110f0', 'Gino Turni', 'operaio', 'produzione', true);
+insert into fabula.shifts (staff_id, clock_in, clock_out, source, notes) values
+  ('00000000-0000-4000-b000-0000000110f0', now() - interval '5 days', now() - interval '5 days' + interval '12 hours', 'tablet', 'chiuso automaticamente (badge dimenticato)'),
+  ('00000000-0000-4000-b000-0000000110f0', now() - interval '8 hours', now() - interval '30 minutes', 'tablet', null);
+select fabula.badge_out(null, '00000000-0000-4000-b000-0000000110f0', now() - interval '1 hour') h1 \gset
+select pg_temp.ck('review H1: a late badge-out after a normal badge-out on another tablet changes nothing (the old automatic close stays 12 h)',
+  :'h1'::jsonb ->> 'action' = 'none' and (select max(hours) from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f0') = 12.00, :'h1');
+-- review M1a: a split shift: morning closed normally, afternoon open; the morning's late scan from the other tablet leaves the afternoon open
+insert into fabula.shifts (staff_id, clock_in, clock_out, source) values ('00000000-0000-4000-b000-0000000110f0', now() - interval '7 hours', now() - interval '3 hours', 'tablet');
+insert into fabula.shifts (staff_id, clock_in, source) values ('00000000-0000-4000-b000-0000000110f0', now() - interval '2 hours', 'tablet');
+delete from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f0' and clock_in > now() - interval '9 hours' and clock_in < now() - interval '7 hours 30 minutes';
+select fabula.badge_out(null, '00000000-0000-4000-b000-0000000110f0', now() - interval '3 hours 2 minutes') m1 \gset
+select pg_temp.ck('review M1: a late badge-out older than the open shift never closes it at 0 hours',
+  :'m1'::jsonb ->> 'action' = 'none' and exists (select 1 from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f0' and clock_out is null), :'m1');
+-- review M1b: a tablet offline overnight: its badge-out is 16 hours old
+insert into fabula.staff (id, full_name, role, app_role, active) values ('00000000-0000-4000-b000-0000000110f1', 'Nina Notte', 'operaio', 'produzione', true);
+insert into fabula.shifts (staff_id, clock_in, clock_out, source, notes) values
+  ('00000000-0000-4000-b000-0000000110f1', now() - interval '24 hours', now() - interval '12 hours', 'tablet', 'chiuso automaticamente (badge dimenticato)');
+insert into fabula.shifts (staff_id, clock_in, source) values ('00000000-0000-4000-b000-0000000110f1', now() - interval '1 hour', 'tablet');
+select fabula.badge_out(null, '00000000-0000-4000-b000-0000000110f1', now() - interval '16 hours') m2 \gset
+select pg_temp.ck('review M1: a badge-out 16 hours old (tablet offline overnight) corrects yesterday''s shift (8 h) and today''s stays open',
+  (:'m2'::jsonb ->> 'corrected')::boolean and (:'m2'::jsonb ->> 'hours')::numeric = 8.00
+  and exists (select 1 from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f1' and clock_out is null), :'m2');
+
 -- ---------------------------------------------------------------- 6. save_ops: calibration, pest round, lab sample with the save id (item 3)
 select pg_temp.ck('save_ops accepts the three records', (select prosrc from pg_proc where oid = 'fabula.save_ops(jsonb,uuid,timestamp with time zone,timestamp with time zone)'::regprocedure)
   ~ 'record_calibration_check.*record_pest_inspection.*record_sample_taken');
@@ -226,11 +251,15 @@ select d tom from (select g::date d from generate_series(fabula.trade_now_rome()
                     where fabula.trade_is_delivery_day(g::date) and not fabula.trade_can_change(g::date) order by g limit 1) x \gset
 select extract(isodow from :'tom'::date)::int wd \gset
 select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"start_date":"%s","days":{"%s":{"lines":{"gid://v110/1":140}}}}'::jsonb, 'customer')$q$, :'tom', :'wd')) w1 \gset
-select pg_temp.ck('a customer''s new plan cannot change a delivery already confirmed (20 → 140 kg after the cut-off)', :'w1' ilike '%già confermata%fai partire il piano dal%', :'w1');
+select pg_temp.ck('a customer''s new plan cannot change a delivery already confirmed (20 → 140 kg after the cut-off)', :'w1' ilike '%già chiusi%fai partire il piano dal%', :'w1');
 select pg_temp.ck('…the plan is untouched', (select qty from fabula.trade_schedule_lines where customer_id = '50000000-0000-4000-a000-000000000111' and weekday = :wd) = 20);
 select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"start_date":"%s","days":{"%s":{"lines":{"gid://v110/1":20}},"%s":{"lines":{"gid://v110/1":30}}}}'::jsonb, 'customer')$q$,
   :'tom', :'wd', case when :wd = 6 then 1 else :wd + 1 end)) w2 \gset
 select pg_temp.ck('…a plan that keeps the confirmed day as it is still saves', :'w2' = '', :'w2');
+update fabula.trade_schedules set status = 'paused' where customer_id = '50000000-0000-4000-a000-000000000111';
+select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"start_date":"%s","days":{"%s":{"lines":{"gid://v110/1":90}}}}'::jsonb, 'customer')$q$, :'tom', :'wd')) w2b \gset
+select pg_temp.ck('review L1: a paused plan saved after the cut-off is not refused (it stays paused, no delivery changes)', :'w2b' = '', :'w2b');
+update fabula.trade_schedules set status = 'active' where customer_id = '50000000-0000-4000-a000-000000000111';
 select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"window":"05:00-06:00","days":{"%s":{"lines":{"gid://v110/1":20}}}}'::jsonb, 'staff')$q$, :'wd')) w3 \gset
 select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"days":{"%s":{"window":"23:00-24:00","lines":{"gid://v110/1":20}}}}'::jsonb, 'staff')$q$, :'wd')) w4 \gset
 select pg_temp.ck('a delivery window that is not offered is refused (plan and day)', :'w3' ilike '%Fascia oraria non prevista: 05:00-06:00%' and :'w4' ilike '%Fascia oraria non prevista: 23:00-24:00%', :'w3' || ' / ' || :'w4');

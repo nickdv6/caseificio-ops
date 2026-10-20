@@ -17,7 +17,7 @@
 -- ============================================================================================================================
 create or replace function fabula.setting_protected(p_key text) returns boolean
 language sql immutable set search_path = fabula, public as $$
-  select p_key like 'infra.%' or p_key like 'auth.%' or (p_key like '%\_url' and p_key not like 'mkt.%') or p_key = 'notify.telegram_bot'
+  select p_key like 'infra.%' or p_key like 'auth.%' or (p_key like '%\_url' and p_key not like 'mkt.%' and p_key not like 'food.%') or p_key = 'notify.telegram_bot'
 $$;
 comment on function fabula.setting_protected(text) is 'v1.10: settings only who manages users may change (app address, access links, the addresses the database calls with its keys)';
 
@@ -120,25 +120,29 @@ begin
   perform fabula.require_perm('comune', 2);
   select * into v_staff from fabula.staff where (badge_code = p_badge or id = p_staff_id) limit 1;
   if v_staff is null then raise exception 'Badge sconosciuto: %', coalesce(p_badge, p_staff_id::text) using errcode = 'P0002'; end if;
-  v_at := case when p_at is null or p_at > now() + interval '5 minutes' or p_at < now() - interval '12 hours' then now() else least(p_at, now()) end;
+  -- v1.10: a time from the tablet is kept up to the window in which close_stale_shifts leaves a shift open (max hours + 12): a tablet
+  -- offline overnight sends a badge-out older than 12 hours (it used to become «now» and close today's new shift)
+  v_at := case when p_at is null or p_at > now() + interval '5 minutes' or p_at < now() - make_interval(hours => v_max::int + 12) then now()
+               else least(p_at, now()) end;
   v_late := v_at < now() - interval '5 minutes';
   select * into v_open from fabula.shifts where staff_id = v_staff.id and clock_out is null order by clock_in desc limit 1;
-  -- v1.10 (quality test item 8): a badge-out sent late (queued on a tablet without network) and older than the open shift, or with no
-  -- shift open, belongs to the shift before: if the database closed that one by itself at the maximum hours (badge forgotten), its
-  -- real end is corrected. Before, it closed the new shift at 0 hours, or was dropped.
+  -- v1.10 (quality test item 8): a badge-out sent late (queued on a tablet without network) that is older than the open shift, or
+  -- comes when no shift is open, belongs to the shift that was running at that time: the last one started before it. If the database
+  -- closed that one by itself at the maximum hours (badge forgotten), its real end is written; if it was closed normally (badge-out
+  -- on another tablet), nothing changes. The open shift is never closed at a time before it started (it was closed at 0 hours).
   if v_late and (v_open.id is null or v_at < v_open.clock_in) then
     select * into v_prev from fabula.shifts
-     where staff_id = v_staff.id and clock_out is not null and clock_in <= v_at and notes like '%chiuso automaticamente%'
-       and clock_out = clock_in + make_interval(hours => v_max::int)
-       and (v_open.id is null or clock_in < v_open.clock_in)
+     where staff_id = v_staff.id and clock_in <= v_at and clock_out is not null
      order by clock_in desc limit 1;
-    if v_prev.id is not null then
+    if v_prev.id is not null and v_prev.notes like '%chiuso automaticamente%' and v_prev.clock_out = v_prev.clock_in + make_interval(hours => v_max::int)
+       and v_at <= v_prev.clock_in + make_interval(hours => v_max::int + 12) then
       update fabula.shifts set clock_out = v_at,
              notes = concat_ws(' · ', notes, 'uscita corretta con l''ora del tablet (inviata senza rete): ' || to_char(now() at time zone 'Europe/Rome', 'DD/MM HH24:MI'))
        where id = v_prev.id returning * into v_prev;
       return jsonb_build_object('action', 'out', 'corrected', true, 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'at', v_prev.clock_out,
                                 'hours', v_prev.hours, 'still_open_since', v_open.clock_in);
     end if;
+    return jsonb_build_object('action', 'none', 'late', true, 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'still_open_since', v_open.clock_in);
   end if;
   if v_open.id is null then return jsonb_build_object('action', 'none', 'staff_id', v_staff.id, 'staff', v_staff.full_name); end if;
   update fabula.shifts set clock_out = greatest(v_at, clock_in),

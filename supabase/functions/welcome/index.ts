@@ -98,7 +98,8 @@ Deno.serve(async (req) => {
       }
       // v1.10 (review): the person's other open links stop only now that the password is saved (before, a save that failed left
       // both this link and a newer one dead)
-      const { error: de } = await admin.rpc("access_link_done", { p_link_id: claim.link_id });
+      let { error: de } = await admin.rpc("access_link_done", { p_link_id: claim.link_id });
+      if (de) ({ error: de } = await admin.rpc("access_link_done", { p_link_id: claim.link_id }));   // once more: the other links must stop
       if (de) console.error("welcome done:", de.message);
       return json({ ok: true, email, first_name: claim.first_name, company: claim.company });
     } catch (e) {

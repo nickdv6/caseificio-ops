@@ -1,14 +1,13 @@
 {
-  "version": "v1.09",
-  "title_it": "Persone: link di accesso che valgono una settimana, una scheda per persona, disattivazione completa, turni a tocco",
+  "version": "v1.10",
+  "title_it": "Sicurezza e salvataggi: indirizzo dell'app e persone solo dal titolare, nessuna registrazione HACCP doppia, «1.050» letto bene, ingrosso più sicuro",
   "order": [
     "database",
     "functions"
   ],
   "force": [],
   "after_it": [
-    "Manda a Emilio il suo link: Configurazione → Utenti e accessi → la sua scheda → «Link di accesso» → «Manda su WhatsApp». Vale una settimana; quando sceglie la password gli propone anche Telegram",
-    "Controlla le schede delle persone: dove manca qualcosa (Telegram, PIN, formazione) c'è il pulsante per farlo"
+    "Supabase → Authentication → Sign In / Providers: controlla che «Allow new users to sign up» sia spento (i link di accesso e gli inviti funzionano lo stesso)"
   ],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }

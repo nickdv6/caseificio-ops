@@ -157,7 +157,8 @@ $s$, $s$  if v_start < fabula.trade_now_rome()::date then raise exception 'La da
   end if;
   -- v1.10 (quality test item 7): a customer's new plan may not change a delivery already confirmed (past its cut-off); before, saving
   -- the plan «from tomorrow» after the 18:00 cut-off changed tomorrow's order until the booking at 18:20
-  if p_actor = 'customer' then
+  -- (a paused plan stays paused when saved, so it changes no delivery: not checked)
+  if p_actor = 'customer' and not exists (select 1 from fabula.trade_schedules where customer_id = p_customer and status = 'paused') then
     declare v_d date := v_start; v_old jsonb; v_new jsonb; v_first date; v_wd text;
     begin
       while not fabula.trade_can_change(v_d) and v_d < fabula.trade_now_rome()::date + 14 loop
@@ -175,7 +176,7 @@ $s$, $s$  if v_start < fabula.trade_now_rome()::date then raise exception 'La da
           if v_old is distinct from v_new then
             v_first := v_d + 1;
             while not fabula.trade_can_change(v_first) and v_first < v_d + 14 loop v_first := v_first + 1; end loop;
-            raise exception 'La consegna di % % è già confermata (%): fai partire il piano dal %', fabula.trade_wd_it(v_wd::int), to_char(v_d, 'DD/MM'),
+            raise exception 'Gli ordini per % % sono già chiusi (%): fai partire il piano dal %', fabula.trade_wd_it(v_wd::int), to_char(v_d, 'DD/MM'),
               coalesce(s->>'cutoff_rule_it', 'ordini chiusi il giorno prima'), to_char(v_first, 'DD/MM/YYYY') using errcode = '22023';
           end if;
         end if;
