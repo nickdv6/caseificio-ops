@@ -38,7 +38,7 @@
   const READONLY = new Set(['infra.sw_seen']);   // written by the system, shown as text
   // v1.10 (quality test item 1): the app's address, the access-link settings and the addresses the database sends its keys to change
   // only for who manages users (the database refuses anyone else: fabula.setting_protected); others see them as text
-  const PROTECTED = k => /^(infra|auth)\./.test(k) || (/_url$/.test(k) && !/^(mkt|food)\./.test(k)) || k === 'notify.telegram_bot';
+  const PROTECTED = k => /^(infra|auth)\./.test(k) || (/_url$/.test(k) && !/^mkt\./.test(k) && k !== 'food.manuale_url') || k === 'notify.telegram_bot';
   const canEdit = () => PERM.can('sistema', 3);
   let PROWS = [], pendingSection = null, curSec = null;
   const secOf = r => SEC_OF[r.key.split('.')[0]] || 'altro';

@@ -324,7 +324,7 @@ Deno.serve(async (req: Request) => {
         app = { ...(a ?? {}), party_id: partyId };
         // v1.10 (review L2): a customer already in the register whose data differ from the request: the Shopify company is made from
         // the register, never from what the request says (name, P.IVA, address)
-        if (Array.isArray(data?.differences) && data.differences.length) {
+        if (data?.already || (Array.isArray(data?.differences) && data.differences.length)) {
           const { data: p } = await db.from("parties").select("*").eq("id", partyId).maybeSingle();
           if (p) app = { ...app, business_name: p.legal_name ?? app.business_name, piva: p.piva, phone: p.phone, address: p.address, city: p.city,
                          province: p.province, postcode: p.postcode, email: p.email ?? app.email };

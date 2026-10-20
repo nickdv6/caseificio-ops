@@ -1006,7 +1006,10 @@
     try { await save([scanEvent(code || 'PIN', 'task_done', { payload: { shift: 'out', hours: r && r.hours } })]); } catch (e) { console.warn('scanEvent', e); }
     markShift(p.id, false);
     if (operator && operator.id === p.id) clearOperator();
-    toast(r && r.hours != null ? `${p.full_name}: fine turno ✓ · ${Number(r.hours).toLocaleString('it-IT')} h` : `${p.full_name}: fine turno ✓${r ? '' : ' (parte appena c\'è rete)'}`);
+    // v1.10: what the database did is what the screen says (nothing closed → «non risultavi in turno»; a forgotten badge-out → closed at the maximum)
+    toast(r && r.action === 'none' ? `${p.full_name}: non risultavi in turno (nessun turno chiuso)` :
+          r && r.auto_closed ? `${p.full_name}: il turno era aperto da più di ${Number(r.hours).toLocaleString('it-IT')} h, chiuso al massimo: correggi l'ora in Console → Personale` :
+          r && r.hours != null ? `${p.full_name}: fine turno ✓ · ${Number(r.hours).toLocaleString('it-IT')} h` : `${p.full_name}: fine turno ✓${r ? '' : ' (parte appena c\'è rete)'}`, r && (r.action === 'none' || r.auto_closed) ? 'err' : undefined, r && r.auto_closed ? 8000 : undefined);
     show('home'); loadTasks();
   }
   $('who').onclick = () => {

@@ -178,7 +178,9 @@ $s$, $s$  if v_start < fabula.trade_now_rome()::date then raise exception 'La da
     declare v_d date := v_start; v_old jsonb; v_new jsonb; v_first date; v_wd text;
     begin
       while not fabula.trade_can_change(v_d) and v_d < fabula.trade_now_rome()::date + 14 loop
-        if fabula.trade_is_delivery_day(v_d) then
+        -- a day the customer skips (a skip, or «Pausa fino al») has no delivery whatever the plan says
+        if fabula.trade_is_delivery_day(v_d) and not exists (select 1 from fabula.trade_exceptions e where e.customer_id = p_customer and e.kind = 'skip'
+                                                               and e.cancelled_at is null and v_d between e.date_from and e.date_to) then
           v_wd := extract(isodow from v_d)::int::text;
           select coalesce(jsonb_object_agg(l.variant_id, l.qty), '{}') into v_old
             from fabula.trade_schedule_lines l

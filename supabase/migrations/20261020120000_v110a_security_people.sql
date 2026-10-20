@@ -9,15 +9,17 @@
 --      another phone replaced the person's chat, so they stopped getting alarms).
 --   4. Item 9: the person's other open access links stop only when the password is saved (access_link_done, called by «welcome»);
 --      before, a save that failed left this link and a newer one both dead.
---   5. Item 8: a badge-out queued on a tablet that is older than the open shift corrects the earlier shift the database closed by
---      itself (badge forgotten), instead of closing the new shift at 0 hours.
+--   5. Item 8: a badge scan queued on a tablet keeps its time up to labor.max_shift_hours + 12 hours (the window in which
+--      close_stale_shifts leaves a shift open); a badge-out older than the open shift corrects the earlier shift the database closed by
+--      itself (badge forgotten), never the new one; a scan older than the window changes nothing and tells the office. A shift open
+--      longer than the maximum hours no longer counts as «in turno» on the tablet (the next scan clocks in and closes it at the maximum).
 
 -- ============================================================================================================================
 -- 1. Protected settings
 -- ============================================================================================================================
 create or replace function fabula.setting_protected(p_key text) returns boolean
 language sql immutable set search_path = fabula, public as $$
-  select p_key like 'infra.%' or p_key like 'auth.%' or (p_key like '%\_url' and p_key not like 'mkt.%' and p_key not like 'food.%') or p_key = 'notify.telegram_bot'
+  select p_key like 'infra.%' or p_key like 'auth.%' or (p_key like '%\_url' and p_key not like 'mkt.%' and p_key <> 'food.manuale_url') or p_key = 'notify.telegram_bot'
 $$;
 comment on function fabula.setting_protected(text) is 'v1.10: settings only who manages users may change (app address, access links, the addresses the database calls with its keys)';
 
@@ -112,6 +114,50 @@ grant execute on function fabula.access_link_done(uuid) to service_role;
 -- ============================================================================================================================
 -- 5. A late badge-out that belongs to the shift the database closed by itself
 -- ============================================================================================================================
+-- the time a badge scan is kept with: the tablet's (queued scans, measured by save_ops) up to max hours + 12; «too old» beyond that
+create or replace function fabula._badge_time(p_at timestamptz) returns timestamptz
+language sql stable set search_path = fabula, public as $$
+  select case when p_at is null or p_at > now() + interval '5 minutes' then now()
+              when p_at < now() - make_interval(hours => fabula.setting_num('labor.max_shift_hours', 12)::int + 12) then null
+              else least(p_at, now()) end
+$$;
+revoke all on function fabula._badge_time(timestamptz) from public, anon, authenticated;
+
+create or replace function fabula._badge_too_old(p_staff record, p_at timestamptz, p_kind text) returns jsonb
+language plpgsql set search_path = fabula, public as $$
+begin
+  perform fabula.post_bot_message('tablet', 'warn', format('Badge di %s arrivato troppo tardi', p_staff.full_name),
+    format('Il badge di %s di %s (%s) è arrivato dal tablet più di %s ore dopo: non è stato registrato. Segna il turno a mano in Console → Personale.',
+           case p_kind when 'in' then 'entrata' else 'uscita' end, p_staff.full_name, to_char(p_at at time zone 'Europe/Rome', 'DD/MM HH24:MI'),
+           fabula.setting_num('labor.max_shift_hours', 12)::int + 12));
+  return jsonb_build_object('action', 'none', 'too_old', true, 'staff_id', p_staff.id, 'staff', p_staff.full_name);
+end $$;
+revoke all on function fabula._badge_too_old(record, timestamptz, text) from public, anon, authenticated;
+
+create or replace function fabula.badge_in(p_badge text, p_staff_id uuid default null, p_at timestamptz default null)
+returns jsonb language plpgsql security definer set search_path = fabula, public as $$
+declare v_staff record; v_open record; v_max numeric := fabula.setting_num('labor.max_shift_hours', 12); v_at timestamptz; v_last timestamptz;
+begin
+  perform fabula.require_perm('comune', 2);
+  select * into v_staff from fabula.staff where active and (badge_code = p_badge or id = p_staff_id) limit 1;
+  if v_staff is null then raise exception 'Badge sconosciuto o persona disattivata: %', coalesce(p_badge, p_staff_id::text) using errcode = 'P0002'; end if;
+  v_at := fabula._badge_time(p_at);                        -- v1.10: the same window as the badge-out (it was 12 hours, then «now»)
+  if v_at is null then return fabula._badge_too_old(v_staff, p_at, 'in'); end if;
+  -- forgotten badge-out: auto-close anything older than max hours before deciding (as toggle_shift)
+  update fabula.shifts set clock_out = clock_in + make_interval(hours => v_max::int), notes = coalesce(notes || ' · ', '') || 'chiuso automaticamente (badge dimenticato)'
+   where staff_id = v_staff.id and clock_out is null and clock_in < now() - make_interval(hours => v_max::int);
+  select * into v_open from fabula.shifts where staff_id = v_staff.id and clock_out is null order by clock_in desc limit 1;
+  if v_open.id is not null then
+    return jsonb_build_object('action', 'already', 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'since', v_open.clock_in);
+  end if;
+  select max(clock_out) into v_last from fabula.shifts where staff_id = v_staff.id;
+  if v_last > v_at then v_at := v_last; end if;            -- a late offline scan never overlaps a shift already closed
+  insert into fabula.shifts (staff_id, clock_in, source, notes)
+  values (v_staff.id, v_at, 'tablet', case when v_at < now() - interval '5 minutes' then 'entrata registrata dopo, con l''ora del tablet (senza rete): ' || to_char(now() at time zone 'Europe/Rome', 'DD/MM HH24:MI') end)
+  returning * into v_open;
+  return jsonb_build_object('action', 'in', 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'at', v_open.clock_in);
+end $$;
+
 create or replace function fabula.badge_out(p_badge text, p_staff_id uuid default null, p_at timestamptz default null)
 returns jsonb language plpgsql security definer set search_path = fabula, public as $$
 declare v_staff record; v_open record; v_prev record; v_at timestamptz; v_late boolean;
@@ -121,9 +167,10 @@ begin
   select * into v_staff from fabula.staff where (badge_code = p_badge or id = p_staff_id) limit 1;
   if v_staff is null then raise exception 'Badge sconosciuto: %', coalesce(p_badge, p_staff_id::text) using errcode = 'P0002'; end if;
   -- v1.10: a time from the tablet is kept up to the window in which close_stale_shifts leaves a shift open (max hours + 12): a tablet
-  -- offline overnight sends a badge-out older than 12 hours (it used to become «now» and close today's new shift)
-  v_at := case when p_at is null or p_at > now() + interval '5 minutes' or p_at < now() - make_interval(hours => v_max::int + 12) then now()
-               else least(p_at, now()) end;
+  -- offline overnight sends a badge-out older than 12 hours (it used to become «now» and close today's new shift); older than that
+  -- it changes nothing and the office is told
+  v_at := fabula._badge_time(p_at);
+  if v_at is null then return fabula._badge_too_old(v_staff, p_at, 'out'); end if;
   v_late := v_at < now() - interval '5 minutes';
   select * into v_open from fabula.shifts where staff_id = v_staff.id and clock_out is null order by clock_in desc limit 1;
   -- v1.10 (quality test item 8): a badge-out sent late (queued on a tablet without network) that is older than the open shift, or
@@ -145,8 +192,38 @@ begin
     return jsonb_build_object('action', 'none', 'late', true, 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'still_open_since', v_open.clock_in);
   end if;
   if v_open.id is null then return jsonb_build_object('action', 'none', 'staff_id', v_staff.id, 'staff', v_staff.full_name); end if;
+  -- v1.10: a shift open longer than the maximum hours was a forgotten badge-out: it ends at the maximum, as the database would close it
+  if v_at > v_open.clock_in + make_interval(hours => v_max::int) then
+    update fabula.shifts set clock_out = clock_in + make_interval(hours => v_max::int), notes = concat_ws(' · ', notes, 'chiuso automaticamente (badge dimenticato)')
+     where id = v_open.id returning * into v_open;
+    return jsonb_build_object('action', 'out', 'auto_closed', true, 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'at', v_open.clock_out, 'hours', v_open.hours);
+  end if;
   update fabula.shifts set clock_out = greatest(v_at, clock_in),
          notes = case when v_late then concat_ws(' · ', notes, 'uscita registrata dopo, con l''ora del tablet (senza rete): ' || to_char(now() at time zone 'Europe/Rome', 'DD/MM HH24:MI')) else notes end
    where id = v_open.id returning * into v_open;
   return jsonb_build_object('action', 'out', 'staff_id', v_staff.id, 'staff', v_staff.full_name, 'at', v_open.clock_out, 'hours', v_open.hours);
 end $$;
+
+-- a shift open longer than the maximum hours is a forgotten badge-out: not «in turno» on the tablet (the person's next scan clocks in,
+-- and badge_in closes the old shift at the maximum); before, the tablet showed «in turno dalle 06:00» the next morning
+create or replace function fabula.floor_operators()
+returns table (id uuid, full_name text, job_role text, badge_code text, has_pin boolean, on_shift boolean, shift_since timestamptz)
+language sql stable security definer set search_path = fabula, public as $$
+  select s.id, s.full_name, s.role::text, s.badge_code,
+         exists (select 1 from fabula.staff_pins p where p.staff_id = s.id),
+         sh.clock_in is not null, sh.clock_in
+    from fabula.staff s
+    left join lateral (select clock_in from fabula.shifts x where x.staff_id = s.id and x.clock_out is null
+                          and x.clock_in > now() - make_interval(hours => fabula.setting_num('labor.max_shift_hours', 12)::int)
+                        order by x.clock_in desc limit 1) sh on true
+   where s.active and fabula.can('comune', 2)
+   order by s.full_name
+$$;
+create or replace function fabula.floor_open_shifts()
+returns table (full_name text, hours_so_far numeric) language sql stable security definer set search_path = fabula, public as $$
+  select st.full_name, round(extract(epoch from now() - s.clock_in) / 3600.0, 1)
+    from fabula.shifts s join fabula.staff st on st.id = s.staff_id
+   where s.clock_out is null and st.active and (fabula.my_staff_id() is not null or auth.uid() is null)
+     and s.clock_in > now() - make_interval(hours => fabula.setting_num('labor.max_shift_hours', 12)::int)
+   order by s.clock_in
+$$;
