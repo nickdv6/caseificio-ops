@@ -326,3 +326,12 @@ select pg_temp.ck('«Se ne occupa» escapes the name with tg_esc («&» too)',
 -- ---------------------------------------------------------------- 12. security scan
 select pg_temp.ck('no new finding without a reason', not exists (select 1 from fabula.security_findings() f where not exists (select 1 from fabula.security_accepted a where a.key = f.key)),
   (select string_agg(f.key, ', ') from fabula.security_findings() f where not exists (select 1 from fabula.security_accepted a where a.key = f.key)));
+
+-- ---------------------------------------------------------------- 13. v1.10a: no index twice (Supabase advisor «Duplicate Index»)
+select pg_temp.ck('v1.10a: no two indexes in fabula are the same (bot_messages_open was a copy of bot_messages_unread)',
+  not exists (select 1 from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'fabula'
+              group by i.indrelid, regexp_replace(pg_get_indexdef(i.indexrelid), ' INDEX \S+ ON ', ' INDEX ON ') having count(*) > 1),
+  (select string_agg(x, '; ') from (select string_agg(c.relname, ' = ') x from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'fabula' group by i.indrelid, regexp_replace(pg_get_indexdef(i.indexrelid), ' INDEX \S+ ON ', ' INDEX ON ') having count(*) > 1) d));
+select pg_temp.ck('…the Bot feed keeps its index of open messages (bot_messages_unread)',
+  pg_get_indexdef('fabula.bot_messages_unread'::regclass) like '%(created_at DESC) WHERE (read_at IS NULL)', coalesce(to_regclass('fabula.bot_messages_unread')::text, 'missing'));

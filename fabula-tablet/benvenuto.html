@@ -166,14 +166,26 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
   // when the page opens — only when the person saves the password. Opening the email twice, in Gmail's own browser and then in
   // Safari/Chrome, or a mail scanner pre-opening it, no longer burns the link.
   const TH = !session && Q.get('token_hash'), TYPE = Q.get('type') === 'recovery' ? 'recovery' : 'invite';
-  const showAgain = () => {
+  // v1.10a: how long the e-mail links (Supabase, auth.link_hours) and the WhatsApp links (auth.link_days) last, from the settings
+  // (they said «24 ore» and «una settimana» in the text); without an answer within 2 seconds the durations are left out
+  const linkLife = async () => {
+    try {
+      const r = await Promise.race([fetch(CFG.supabaseUrl + '/functions/v1/welcome', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: CFG.supabaseKey }, body: JSON.stringify({ action: 'config' }) }),
+                                    new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 2000))]);
+      const j = await r.json();
+      const h = Number(j.link_hours), d = Number(j.link_days);
+      return { mail: h > 0 ? ` (vale ${h === 1 ? '1 ora' : h + ' ore'})` : '', wa: d > 0 ? ` (vale ${d === 7 ? 'una settimana' : d === 1 ? '1 giorno' : d + ' giorni'})` : '' };
+    } catch { return { mail: '', wa: '' }; }
+  };
+  const showAgain = async () => {
+    const life = await linkLife();
     // an expired or superseded link no longer leaves the person stuck — they ask for a fresh link themselves.
     const why = code === 'otp_expired' || /expired|invalid/i.test(err || '') || TH
       ? 'Questo link non vale più: è scaduto, è già stato usato, oppure ne è stato inviato uno più recente (vale solo l\'ultima email ricevuta).'
       : !H.toString() && !Q.toString() ? 'Questa pagina si apre dal link di accesso che ti manda il titolare (WhatsApp o email).'   // v1.10: opened with no link at all
       : 'Il link è scaduto o è già stato usato.';
     $('form').hidden = true; $('err').textContent = '';
-    $('sub').textContent = why + ' Se hai già scelto la password, entra e basta. Altrimenti scrivi la tua email e ricevi un link nuovo (vale 24 ore), oppure chiedi al titolare un link su WhatsApp (vale una settimana).';
+    $('sub').textContent = why + ' Se hai già scelto la password, entra e basta. Altrimenti scrivi la tua email e ricevi un link nuovo' + life.mail + ', oppure chiedi al titolare un link su WhatsApp' + life.wa + '.';
     $('again').hidden = false; $('em').focus();
     $('send').onclick = async () => {
       const email = $('em').value.trim().toLowerCase(); $('err').textContent = '';
@@ -181,7 +193,7 @@ input{width:100%;padding:10px 12px;border:1px solid #9a958b;border-radius:6px;fo
       $('send').disabled = true;
       const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('benvenuto.html', location.href).href });
       if (error) { $('send').disabled = false; return $('err').textContent = /rate limit/i.test(error.message) ? 'Troppe email inviate nell\'ultima ora: per ora non ne arrivano altre. Se hai già scelto una password, tocca «Ho già la password: entra»; altrimenti chiedi al titolare un link su WhatsApp.' : /seconds/i.test(error.message) ? 'Hai appena chiesto un link: aspetta un minuto e riprova.' : error.message; }
-      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email, una volta sola (vale 24 ore). Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
+      $('sent').textContent = `Fatto. Controlla la posta di ${email} (anche Spam/Promozioni) e apri il link dell'ultima email, una volta sola${life.mail}. Se l'indirizzo non è registrato non arriva nulla: chiedi al titolare.`;
     };
     $('em').addEventListener('keydown', e => { if (e.key === 'Enter') $('send').click(); });
   };

@@ -68,12 +68,16 @@ and smaller issues. Migrations `v110a` (security, people) and `v110b` (saves, wh
   the next morning; a day the customer skips no longer refuses a new plan; the approved card loses its buttons and an already approved
   customer's Shopify company also comes from the register. Left as is: an app still on perla-v76 between the database and the site
   release calls badge_out with its own clock (minutes); a pause/resume after the cut-off (trade_set_status) is unchanged.
-- **Tests:** `prod-test/test_v110_security_saves.sql` 61/61; `tablet-test/v110_e2e.py` 13/13 (the old app fails its lost-reply,
+- **Tests:** `prod-test/test_v110_security_saves.sql` 61/61; `tablet-test/v110_e2e.py` 13/13 (v1.10a: 63 and 14; the old app fails its lost-reply,
   storage and escaping checks); `supabase/functions/trade-portal/queue_test.ts` 4/4; `tools/release/test_release.py` 118.
   `v109_e2e.py` (C-19) reads the stored expiry instead of «now + 7 days» (it failed in the week before a change of time) and
   `test_shopify_sync_digest.sql` (E-33) checks a day ahead of the real one (it failed on 20/10 itself).
 - Release order: database first, then the server functions (`welcome` calls `access_link_done`; `trade-portal` calls
   `trade_queue_claim`).
+- **v1.10a (touch-ups, 20/10):** the welcome page says how long a new link lasts from the settings (`auth.link_hours` by e-mail,
+  `auth.link_days` by WhatsApp, read through `welcome` `{action:"config"}`; nothing shown if it cannot read them) instead of a fixed
+  «24 ore»; the duplicate index `bot_messages_open` (a copy of `bot_messages_unread`, Supabase advisor «Duplicate Index») is dropped
+  (`v110c`). sw `perla-v78`. Tests: `test_v110_security_saves.sql` 63/63 (no two identical indexes in `fabula`), `v110_e2e.py` 14/14.
 
 ## Persone: access links for a week, one card per person, a real switch-off, the rota by taps (v1.09)
 Staff onboarding, the next improvement after the release pipeline (re-score 15/10, «Staff & rota»; project doc

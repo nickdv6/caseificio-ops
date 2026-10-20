@@ -47,6 +47,12 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* empty */ }
   const action = String(body.action ?? "");
   const token = String(body.token ?? "");
+  // v1.10a: how long the links last, for the page's texts (no link needed: public numbers, not secrets)
+  if (action === "config") {
+    const { data } = await admin.from("settings").select("key, value").in("key", ["auth.link_hours", "auth.link_days"]);
+    const num = (k: string) => { const v = Number((data ?? []).find((r: { key: string }) => r.key === k)?.value); return Number.isFinite(v) && v > 0 ? v : null; };
+    return json({ link_hours: num("auth.link_hours"), link_days: num("auth.link_days") });
+  }
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return json({ ok: false, reason: "unknown" });
   const hash = await sha256hex(token);
 

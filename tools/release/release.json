@@ -1,13 +1,11 @@
 {
-  "version": "v1.10",
-  "title_it": "Sicurezza e salvataggi: indirizzo dell'app e persone solo dal titolare, nessuna registrazione HACCP doppia, «1.050» letto bene, ingrosso più sicuro",
+  "version": "v1.10a",
+  "title_it": "Ritocchi: la pagina di benvenuto dice quanto vale il link secondo le impostazioni (non più «24 ore» fisso), un indice doppio del feed Bot tolto",
   "order": [
     "database",
     "functions"
   ],
   "force": [],
-  "after_it": [
-    "Supabase → Authentication → Sign In / Providers: controlla che «Allow new users to sign up» sia spento (i link di accesso e gli inviti funzionano lo stesso)"
-  ],
+  "after_it": [],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }

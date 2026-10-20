@@ -235,4 +235,5 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
     a product name with HTML is shown as text in «Arrivo merce»; Autocontrollo «Correggi» reads «1.050» kg as 1050; a socio sees
     the app's address as text in Configurazione, the titolare can edit it; with the setting naming another site the access link is
     still on app.bubalina.it; a password refused for its kinds of character says so; «Cambia email» moves a login left on the old
-    address; the welcome page with no link says where links come from. Expect `FAILURES: none` (13 checks). Run it after v109_e2e.
+    address; the welcome page with no link says where links come from and (v1.10a) how long a link lasts, from the settings.
+    Expect `FAILURES: none` (14 checks). Run it after v109_e2e.

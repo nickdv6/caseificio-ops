@@ -9,6 +9,7 @@ The browser runs in Italian. Pages on :8789. Quality test 20/10/2026 (claude/qua
   invite-user builds the access link on app.bubalina.it even when the setting names another site;
 - item 10: «Cambia email» to the address already on the row moves a login still on the old address;
 - the welcome page opened with no link says where the link comes from; a password refused for its kinds of character says so.
+- v1.10a: the welcome page reads how long the links last from the settings (auth.link_hours, auth.link_days).
 Expect "FAILURES: none"."""
 import json, os, subprocess, threading, time, hmac, hashlib, base64, urllib.request, urllib.error, re, shutil
 from urllib.parse import urlparse
@@ -286,10 +287,15 @@ try:
     check('…and once both agree it answers «unchanged»', r.get('unchanged') is True, r)
 
     # ================= the welcome page with no link =================
+    H0 = sql1("select value from fabula.settings where key = 'auth.link_hours'")
+    sql("update fabula.settings set value = '1' where key = 'auth.link_hours'")
     ctx, wp = page_as(b, None, 'benvenuto.html', logs, width=390)
-    wp.wait_for_timeout(2500)
+    wp.wait_for_timeout(3500)
     sub = wp.evaluate("document.getElementById('sub').textContent")
     check('the welcome page opened with no link says the link comes from the titolare (not «scaduto o già usato»)', 'si apre dal link di accesso' in sub and 'scaduto o è già stato usato' not in sub, sub)
+    check('v1.10a: …and how long the links last comes from the settings (1 hour by e-mail, a week by WhatsApp), not a fixed «24 ore»',
+          'un link nuovo (vale 1 ora)' in sub and 'su WhatsApp (vale una settimana)' in sub and '24 ore' not in sub, sub)
+    sql(f"update fabula.settings set value = {q(H0)} where key = 'auth.link_hours'")
     ctx.close()
 
     pe = [x for x in logs if x.startswith('PAGEERROR')]
