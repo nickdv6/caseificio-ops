@@ -166,6 +166,28 @@ select pg_temp.ck('review M1: a badge-out 16 hours old (tablet offline overnight
   (:'m2'::jsonb ->> 'corrected')::boolean and (:'m2'::jsonb ->> 'hours')::numeric = 8.00
   and exists (select 1 from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f1' and clock_out is null), :'m2');
 
+-- a tablet whose clock is an hour behind: a badge sent at once takes the database's time; a queued one the time it was made
+insert into fabula.staff (id, full_name, role, app_role, active) values ('00000000-0000-4000-b000-0000000110f2', 'Orologio Indietro', 'operaio', 'produzione', true),
+  ('00000000-0000-4000-b000-0000000110f3', 'Coda Offline', 'operaio', 'produzione', true);
+select pg_temp.as_user('00000000-0000-4000-a000-0000000110c1');
+set role authenticated;
+select fabula.save_ops(jsonb_build_array(jsonb_build_object('rpc', 'badge_in', 'args', jsonb_build_object('p_badge', null, 'p_staff_id', '00000000-0000-4000-b000-0000000110f2', 'p_at', now() - interval '1 hour'))),
+                       '11000000-0000-4000-a000-0000000110f2'::uuid) k1 \gset
+select fabula.save_ops(jsonb_build_array(jsonb_build_object('rpc', 'badge_out', 'args', jsonb_build_object('p_badge', null, 'p_staff_id', '00000000-0000-4000-b000-0000000110f2', 'p_at', now() - interval '1 hour'))),
+                       '11000000-0000-4000-a000-0000000110f3'::uuid) k2 \gset
+reset role;
+select set_config('request.jwt.claims', '', false);
+select pg_temp.ck('a badge sent at once takes the database''s time, not the tablet''s clock an hour behind: in and out close the shift',
+  (select clock_in > now() - interval '1 minute' and clock_out is not null from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f2'), :'k1' || ' / ' || :'k2');
+select pg_temp.as_user('00000000-0000-4000-a000-0000000110c1');
+set role authenticated;
+select fabula.save_ops(jsonb_build_array(jsonb_build_object('rpc', 'badge_in', 'args', jsonb_build_object('p_badge', null, 'p_staff_id', '00000000-0000-4000-b000-0000000110f3', 'p_at', now() - interval '70 minutes'))),
+                       '11000000-0000-4000-a000-0000000110f4'::uuid, now() - interval '70 minutes', now() - interval '60 minutes') k3 \gset
+reset role;
+select set_config('request.jwt.claims', '', false);
+select pg_temp.ck('…a queued badge takes the time it was made as the database measures it (10 minutes ago), whatever the tablet''s clock',
+  (select abs(extract(epoch from clock_in - (now() - interval '10 minutes'))) < 5 from fabula.shifts where staff_id = '00000000-0000-4000-b000-0000000110f3' and clock_out is null), :'k3');
+
 -- ---------------------------------------------------------------- 6. save_ops: calibration, pest round, lab sample with the save id (item 3)
 select pg_temp.ck('save_ops accepts the three records', (select prosrc from pg_proc where oid = 'fabula.save_ops(jsonb,uuid,timestamp with time zone,timestamp with time zone)'::regprocedure)
   ~ 'record_calibration_check.*record_pest_inspection.*record_sample_taken');

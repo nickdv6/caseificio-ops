@@ -45,15 +45,21 @@ and smaller issues. Migrations `v110a` (security, people) and `v110b` (saves, wh
   of the public form is not taken. The Shopify order queue is claimed by one run (`trade_queue_claim`, 10 minutes) and each draft
   carries the tag `fq-<queue id>`: a run that finds it completes it or reports the order it became (`trade-portal/queue.ts`).
   A customer's new plan cannot change a delivery already confirmed; delivery windows only from `trade.windows`.
-- **People (items 8–10):** a badge-out queued on a tablet that is older than the open shift corrects the shift the database closed
-  by itself (it closed the new shift at 0 h); the other open access links stop when the password is saved (`access_link_done`,
-  called by `welcome`); «Cambia email» to the address already on the row moves a login left on the old one.
+- **People (items 8–10):** a badge-out sent late (queued on a tablet, accepted up to `labor.max_shift_hours` + 12 hours old) belongs to
+  the shift that was running then: if the database closed that one by itself, its real end is written; otherwise nothing changes, and
+  the open shift is never closed at a time before it started (it was closed at 0 h). The badge scans go through `save_ops`: sent at
+  once they take the database's time, queued the measured time of the scan, so a tablet clock that is off no longer moves them.
+  The other open access links stop when the password is saved (`access_link_done`, called by `welcome`); «Cambia email» to the
+  address already on the row moves a login left on the old one.
 - **Smaller (items 13–16):** the farm's 8 loads a day count only loads that stand; the backup reads a one-column key page after page
   from the last key; «&» escaped in Telegram's «Se ne occupa»; webhook and job secrets compared in constant time; the PO and
   Consorzio prints show the Rome date; a marketing post link must be http(s); the release STOPs when the app changes without a new
   `sw.js` version; `welcome` says which characters a password needs; the welcome page opened with no link says where links come
   from. sw `perla-v77`.
-- **Tests:** `prod-test/test_v110_security_saves.sql` 51/51; `tablet-test/v110_e2e.py` 13/13 (the old app fails its lost-reply,
+- **Review (1 High, 2 Medium, 4 Low, all fixed):** the late badge-out could stretch an old automatic close to days (119 h) and still
+  closed a split shift's afternoon at 0 h; `release.json` named v1.09; a paused plan was refused after the cut-off; the Shopify company
+  of an existing customer came from the request; the Manuale link (`food.manuale_url`) stays editable; `access_link_done` is retried.
+- **Tests:** `prod-test/test_v110_security_saves.sql` 57/57; `tablet-test/v110_e2e.py` 13/13 (the old app fails its lost-reply,
   storage and escaping checks); `supabase/functions/trade-portal/queue_test.ts` 4/4; `tools/release/test_release.py` 118.
   `v109_e2e.py` (C-19) reads the stored expiry instead of «now + 7 days» (it failed in the week before a change of time) and
   `test_shopify_sync_digest.sql` (E-33) checks a day ahead of the real one (it failed on 20/10 itself).

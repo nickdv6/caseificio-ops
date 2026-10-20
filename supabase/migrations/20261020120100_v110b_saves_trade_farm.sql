@@ -1,7 +1,8 @@
 -- v1.10b «Sicurezza e salvataggi» (20/10/2026) · saves, wholesale portal, farm (quality test 20/10, claude/quality-test-2026-10-20.md)
 --   1. Item 3: the calibration check, the pest round and the lab sample go through save_ops with the save id like the CCP readings,
 --      so a re-send after a lost reply returns the first answer instead of writing the record a second time (the tablet sends them so
---      from v1.10, perla-v77).
+--      from v1.10, perla-v77). The badge scans, which now go through save_ops too, take the database's time when sent at once and the
+--      measured time of the scan when queued: a tablet clock that is off no longer moves them.
 --   2. Item 13: the farm's 8 loads a day count only loads that were not cancelled (8 cancelled loads blocked the real one).
 --   3. Item 5: approving a trade application for an e-mail already in the register no longer overwrites that customer's name, P.IVA,
 --      SDI, PEC, phone and address with what the request says: blanks are filled, differences are listed for the office. The Shopify
@@ -22,6 +23,21 @@ begin
                   $s$'badge_in','badge_out','correct_batch_milk',
                                   'record_calibration_check','record_pest_inspection','record_sample_taken']$s$);
   if n = d then raise exception 'v110b: save_ops rpc list not found'; end if;
+  -- a badge scan carries the tablet's clock (p_at): sent at once it takes the database's time, queued it takes the time it was made as
+  -- the database measures it (p_client_at / p_client_now), so a tablet whose clock is off never puts a badge-out before the shift it
+  -- closes (the badge scans go through save_ops from v1.10; badge_out keeps a late time only for the shift that was running then)
+  d := n;
+  n := replace(d, $s$        elsif v_late and v_op ->> 'rpc' in ('close_open_task', 'log_batch_step') and not v_args ? 'p_at' then
+          v_args := v_args || jsonb_build_object('p_at', v_cat);
+        end if;
+$s$, $s$        elsif v_late and v_op ->> 'rpc' in ('close_open_task', 'log_batch_step') and not v_args ? 'p_at' then
+          v_args := v_args || jsonb_build_object('p_at', v_cat);
+        end if;
+        if v_op ->> 'rpc' in ('badge_in', 'badge_out') then
+          v_args := case when v_cat is null then v_args - 'p_at' else v_args || jsonb_build_object('p_at', v_cat) end;
+        end if;
+$s$);
+  if n = d then raise exception 'v110b: save_ops badge time anchor not found'; end if;
   execute n;
 end $mig$;
 
