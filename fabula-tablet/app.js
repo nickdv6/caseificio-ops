@@ -248,6 +248,8 @@
       if (error.code !== 'PGRST202') throw error;              // PGRST202 = server without save_ops yet: old way
       atomicOk = false;
     }
+    // v1.15: a DDT, its lines and its stock move are written together or not at all (the database refuses lines added later)
+    if (ops.some(o => o.table === 'shipments' || o.table === 'shipment_lines')) throw new Error('Spedizione non salvata: il DDT si registra solo tutto insieme. Riprova; se continua, avvisa l\'ufficio.');
     const out = st.out || (st.out = []);
     for (let k = st.done || 0; k < ops.length; k++) {
       const op = ops[k];

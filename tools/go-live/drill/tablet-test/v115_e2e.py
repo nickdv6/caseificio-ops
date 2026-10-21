@@ -120,6 +120,7 @@ try:
     # ================= a DDT of another day: no «Annulla» (ingrosso DDTs have no «partito» step) =================
     o3, sh3, ddt3 = order_and_pack(3)
     sql(f"update fabula.shipments set packed_at = packed_at - interval '1 day', created_at = created_at - interval '1 day' where id = '{sh3}'")
+    sql(f"update fabula.stock_moves set moved_at = moved_at - interval '1 day' where shipment_id = '{sh3}'")
     cp.reload(); cp.wait_for_selector('#ddt-list table', timeout=25000); cp.wait_for_timeout(800)
     row3 = cp.evaluate(f"(() => {{ const r = [...document.querySelectorAll('#ddt-list tr')].find(t => t.innerText.includes('{ddt3}')); return r ? r.innerText : ''; }})()")
     check("a DDT packed yesterday shows no «Annulla DDT» (it may have been delivered)", ddt3 in row3 and 'Annulla DDT' not in row3, row3.replace('\n', ' | '))

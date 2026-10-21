@@ -118,16 +118,32 @@ select pg_temp.ck('the trial''s day 3 counts only the live DDT',
 -- ============================== a DDT of another day: not annulled (wholesale and direct DDTs have no «partito» step) ==============================
 select id sh_w2 from fabula.shipments where sales_order_id = :'w' and status::text = 'picked' \gset
 update fabula.shipments set packed_at = packed_at - interval '1 day', created_at = created_at - interval '1 day' where id = :'sh_w2';
+update fabula.stock_moves set moved_at = moved_at - interval '1 day' where shipment_id = :'sh_w2';
 select pg_temp.ck('a DDT packed yesterday is not annulled: it may have been delivered (review of v1.15)',
   pg_temp.err(format($$select fabula.cancel_shipment(%L, 'consegnato male')$$, :'sh_w2')) like '22023%si annulla solo il giorno in cui è stato preparato%');
 update fabula.shipments set packed_at = packed_at + interval '1 day', created_at = created_at + interval '1 day' where id = :'sh_w2';
--- a DDT written without any stock move (status «planned», with lines): annulled, nothing comes back
+update fabula.stock_moves set moved_at = moved_at + interval '1 day' where shipment_id = :'sh_w2';
+-- a login can't bring an old DDT back to «today, not left»; and the day comes from the DDT's own stock moves anyway
+select pg_temp.as_user('00000000-0000-4000-a000-000000115a02');
+set role authenticated;
+select pg_temp.ck('a login can''t move a DDT''s packing time, Shopify fulfilment or status back (second review: a delivered DDT revived and annulled)',
+  pg_temp.err(format($$update fabula.shipments set packed_at = now() where id = %L$$, :'sh_w2')) like '42501%non tornano indietro%'
+  and pg_temp.err(format($$update fabula.shipments set status = 'planned' where id = %L$$, :'sh_w2')) like '42501%'
+  and pg_temp.err(format($$update fabula.shipments set shopify_fulfilled_at = now() - interval '1 day' where id = %L$$, :'sh_w2')) like '42501%');
+reset role;
+select pg_temp.as_user(null);
+update fabula.stock_moves set moved_at = moved_at - interval '1 day' where shipment_id = :'sh_w2';
+select pg_temp.ck('…and a DDT whose stock left yesterday is refused even with its packing time set to now (by the database owner)',
+  pg_temp.err(format($$select fabula.cancel_shipment(%L, 'riprovo')$$, :'sh_w2')) like '22023%si annulla solo il giorno%');
+update fabula.stock_moves set moved_at = moved_at + interval '1 day' where shipment_id = :'sh_w2';
+-- a DDT with lines and no linked stock move (e.g. written before v1.15): not annulled, it can't say what to give back
 insert into fabula.shipments (customer_id, status) values (:'cust', 'planned') returning id sh_p \gset
 insert into fabula.shipment_lines (shipment_id, product_id, lot_number, qty) values (:'sh_p', :'moz', 'LV-B', 25);
-select pg_temp.lot('LV-B') before_p \gset
-select fabula.cancel_shipment(:'sh_p', 'creato per errore') cp \gset
-select pg_temp.ck('a DDT that took no stock gives none back (it used to add its 25 kg of lines)',
-  (:'cp'::jsonb ->> 'kg_back')::numeric = 0 and pg_temp.lot('LV-B') = :'before_p'::numeric, :'cp');
+select pg_temp.ck('a DDT with lines but no linked stock move is refused (it used to give back its 25 kg of lines, then nothing silently)',
+  pg_temp.err(format($$select fabula.cancel_shipment(%L, 'creato per errore')$$, :'sh_p')) like '22023%non ha movimenti di magazzino collegati%');
+insert into fabula.shipments (customer_id, status) values (:'cust', 'planned') returning id sh_e \gset
+select fabula.cancel_shipment(:'sh_e', 'creato per errore') ce \gset
+select pg_temp.ck('…an empty DDT (no lines, no stock) is annulled with nothing to give back', (:'ce'::jsonb ->> 'kg_back')::numeric = 0, :'ce');
 
 -- ============================== goods that have left: not annulled ==============================
 select fabula.pack_order(:'s1', jsonb_build_array(jsonb_build_object('product_id', :'moz', 'lot_number', 'LV-B', 'qty', 2)), null, null, null, null, null, true) ->> 'shipment_id' sh_s1 \gset
@@ -170,6 +186,19 @@ select pg_temp.lot('LV-B') before_d \gset
 select fabula.cancel_shipment(:'sh_d', 'cliente sbagliato, era per un altro') c3 \gset
 select pg_temp.ck('a direct shipment is annulled too: its 3 kg back on LV-B, no order to ship',
   pg_temp.lot('LV-B') = :'before_d'::numeric + 3 and (:'c3'::jsonb ->> 'order_number') is null and not (:'c3'::jsonb ->> 'order_to_ship')::boolean, :'c3');
+
+-- ============================== the lot guard's split keeps the link ==============================
+insert into fabula.stock_moves (product_id, lot_number, expiry_date, qty, move_type, source) values (:'moz', 'LV-S', :'d'::date + 3, 3, 'production_out', 'test');
+begin;
+insert into fabula.shipments (customer_id, status) values (:'cust', 'picked') returning id sh_s \gset
+insert into fabula.shipment_lines (shipment_id, product_id, lot_number, qty) values (:'sh_s', :'moz', 'LV-S', 5);
+insert into fabula.stock_moves (product_id, lot_number, qty, move_type, source) values (:'moz', 'LV-S', -5, 'sale', 'office');
+commit;
+select pg_temp.ck('a linked move split by the lot guard (3 kg on LV-S, 2 kg FEFO from another lot) keeps the link on both parts',
+  (select count(*) from fabula.stock_moves where shipment_id = :'sh_s') = 2 and (select sum(qty) from fabula.stock_moves where shipment_id = :'sh_s') = -5,
+  (select string_agg(lot_number || ' ' || qty, ', ') from fabula.stock_moves where shipment_id = :'sh_s'));
+select fabula.cancel_shipment(:'sh_s', 'cliente sbagliato') cs \gset
+select pg_temp.ck('…and annulling gives back all 5 kg, each part to its own lot', (:'cs'::jsonb ->> 'kg_back')::numeric = 5 and pg_temp.lot('LV-S') = 3, :'cs');
 
 -- ============================== Shopify: an annulled online order is reserved again, and deducted when Shopify fulfils it ==============================
 insert into fabula.shopify_variant_map (variant_id, product_id, kg_per_unit, label) values ('gid://shopify/ProductVariant/115', :'moz', 0.5, 'Mozzarella 500 g (test)')

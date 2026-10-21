@@ -24,16 +24,19 @@ from a login (the yearly series must stay gap-free), and nothing undid the packi
 - **`cancel_shipment(id, reason)`** (Spedizioni = gestisce: titolare, socio, spedizioni; reason of 5+ characters) annuls a DDT **packed
   today** whose goods have not left: status `cancelled` (new value), with `cancelled_at`, `cancelled_by_id`, `cancel_reason`. The number
   stays in the series as «annullato». Ingrosso and direct DDTs have no «partito» step, so «today» is what stops a DDT delivered days ago
-  from being annulled into stock that no longer exists; in transit, delivered or fulfilled on Shopify are refused too (a return).
+  from being annulled into stock that no longer exists; «today» is the day of the DDT's own stock moves, which a login can't change. In
+  transit, delivered or fulfilled on Shopify are refused too (a return), and so is a DDT with lines but no linked stock move.
 - **What comes back is what the DDT took:** its own `sale` moves (`stock_moves.shipment_id`, set by `pack_order`; for the tablet's direct
-  shipment by the trigger `stock_moves_ship_link`, which links a move to the line of a DDT written in the same save), reversed with the
-  same date and source `ddt_annullato`, so the day's sales net out. Not the DDT's lines. A DDT that took no stock gives none back.
+  shipment by the trigger `stock_moves_a_ship_link`, which links a move to the line of a DDT written in the same save; the lot guard
+  carries the link into the rows it splits off), reversed with the same date and source `ddt_annullato`, so the day's sales net out.
+  Not the DDT's lines.
 - **The order:** a wholesale order goes back to `confirmed`, so it is in «Da spedire» again (an online order stayed `confirmed`); the lot
   the packing wrote on the order lines is cleared. «Stock already booked for this order» is now the net of its sale moves
   (`v_shopify_inventory_push`, `v_shopify_orders_recent`, `upsert_shopify_orders`): an annulled online order is reserved again and is
   deducted if Shopify then reports it fulfilled.
-- **Guards for logins:** no annulment by hand (insert or update), no change to an annulled DDT; a DDT's lines are written only with the
-  DDT itself (same save) and never changed or deleted afterwards (`shipment_lines_guard`). The delete refusal points to «Annulla DDT».
+- **Guards for logins:** no annulment by hand (insert or update), no change to an annulled DDT; packing time, Shopify fulfilment and
+  status never move back; a DDT's lines are written only with the DDT itself (same save) and never changed or deleted afterwards
+  (`shipment_lines_guard`). The delete refusal points to «Annulla DDT». The tablet never sends a DDT step by step.
 - **An annulled DDT is not a shipment:** `v_lot_distribution` (recalls), `recall_drill` (net sales of a lot), the go-live «Primo ordine
   vero preparato», the trial's day 3, `cancel_placeholder_orders`, and the evening check's «sold on a held lot» (positive moves are not
   sales). `v_shipment_doc` gives who annulled, when and why. If the Shopify sync fulfils an order just as its DDT is annulled,
@@ -43,7 +46,8 @@ from a login (the yearly series must stay gap-free), and nothing undid the packi
   ANNULLATO (banner, red badge, watermark on every printed page). The tablet's «🖨 Stampa DDT» after packing opens that page.
 - One `audit_log` row per annulment («Registro modifiche» → Spedizioni (DDT)). The new enum value is used only as text inside the
   migration: the release is one transaction, and a new enum value can't be used before it commits.
-- **Tests:** `prod-test/test_v115_cancel_ddt.sql` 35/35; browser `tablet-test/v115_e2e.py` 16/16.
+- **Tests:** `prod-test/test_v115_cancel_ddt.sql` 40/40; browser `tablet-test/v115_e2e.py` 16/16. Two independent reviews (2 High,
+  2 Medium and the Lows fixed before release).
 
 ## Only the floor tablet counts; every device has a name (v1.14)
 Re-audit of 19/10, item R-04 (and audit A-35). The go-live check «Tablet di produzione aggiornato» ticked for any device on the latest

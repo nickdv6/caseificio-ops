@@ -43,8 +43,19 @@ begin
   end if;
   return new;
 end $$;
-drop trigger if exists stock_moves_ship_link on fabula.stock_moves;
-create trigger stock_moves_ship_link before insert on fabula.stock_moves for each row execute function fabula.trg_stock_moves_ship_link();
+-- named to run before stock_moves_lot_guard (triggers run in name order), which carries the link into the rows it splits off (FEFO)
+drop trigger if exists stock_moves_a_ship_link on fabula.stock_moves;
+create trigger stock_moves_a_ship_link before insert on fabula.stock_moves for each row execute function fabula.trg_stock_moves_ship_link();
+do $mig$
+declare d text := pg_get_functiondef('fabula.trg_stock_move_guard()'::regprocedure);
+        a text := $a$    insert into fabula.stock_moves (moved_at, product_id, lot_number, expiry_date, qty, move_type, batch_id, sales_order_id, purchase_order_id, unit_cost_eur, reason, source)
+    values (new.moved_at, new.product_id, a->>'lot', (a->>'exp')::date, -(a->>'qty')::numeric, new.move_type, new.batch_id, new.sales_order_id, new.purchase_order_id, new.unit_cost_eur,$a$;
+        r text := $r$    insert into fabula.stock_moves (moved_at, product_id, lot_number, expiry_date, qty, move_type, batch_id, sales_order_id, purchase_order_id, unit_cost_eur, shipment_id, reason, source)   -- v1.15: shipment_id
+    values (new.moved_at, new.product_id, a->>'lot', (a->>'exp')::date, -(a->>'qty')::numeric, new.move_type, new.batch_id, new.sales_order_id, new.purchase_order_id, new.unit_cost_eur, new.shipment_id,$r$;
+begin
+  if (length(d) - length(replace(d, a, ''))) / length(a) <> 1 then raise exception 'v115a: trg_stock_move_guard split anchor not found exactly once'; end if;
+  execute replace(d, a, r);
+end $mig$;
 
 -- DDTs packed before v1.15: pack_order wrote «Spedizione <DDT> · <order>» on its moves
 update fabula.stock_moves m set shipment_id = sh.id
@@ -77,6 +88,12 @@ begin
   end if;
   if new.ddt_number is distinct from old.ddt_number then
     raise exception using errcode = '42501', message = format('Il numero del DDT (%s) lo dà il database e non si cambia', old.ddt_number);
+  end if;
+  -- v1.15: when it was packed and whether it left decide if it can still be annulled: a login never moves them back
+  if (new.packed_at, new.created_at, new.shopify_fulfilled_at, new.shopify_fulfillment_id) is distinct from (old.packed_at, old.created_at, old.shopify_fulfilled_at, old.shopify_fulfillment_id)
+     or array_position(array['planned', 'picked', 'in_transit', 'delivered', 'returned'], new.status::text)
+        < array_position(array['planned', 'picked', 'in_transit', 'delivered', 'returned'], old.status::text) then
+    raise exception using errcode = '42501', message = format('Il DDT %s: preparazione, partenza e stato non tornano indietro', old.ddt_number);
   end if;
   if (new.ship_date, new.customer_id, new.sales_order_id) is distinct from (old.ship_date, old.customer_id, old.sales_order_id) then
     raise exception using errcode = '42501', message = format('Data, cliente e ordine del DDT %s non si cambiano dopo l''emissione', old.ddt_number);
@@ -134,8 +151,13 @@ begin
       s.ddt_number, case when s.shopify_fulfilled_at is not null then 'evaso su Shopify il ' || to_char(s.shopify_fulfilled_at at time zone 'Europe/Rome', 'DD/MM HH24:MI')
                          when s.status::text = 'delivered' then 'consegnata' when s.status::text = 'returned' then 'resa' else 'in viaggio' end);
   end if;
-  -- the ingrosso and direct DDTs have no «partito» step: only a DDT packed today can still be in the cold room
-  v_day := (coalesce(s.packed_at, s.created_at) at time zone 'Europe/Rome')::date;
+  -- the ingrosso and direct DDTs have no «partito» step: only a DDT packed today can still be in the cold room. The day is the one of
+  -- the DDT's own stock moves (a login can't change them); a DDT with lines and no linked move can't say what to give back
+  select (min(x.moved_at) at time zone 'Europe/Rome')::date into v_day from fabula.stock_moves x where x.shipment_id = s.id and x.move_type = 'sale' and x.qty < 0;
+  if v_day is null and exists (select 1 from fabula.shipment_lines sl where sl.shipment_id = s.id and sl.qty > 0) then
+    raise exception using errcode = '22023', message = format('Il DDT %s non ha movimenti di magazzino collegati (registrato prima del 21/10/2026): da qui non si sa quanta merce rimettere in giacenza, quindi non si annulla.', s.ddt_number);
+  end if;
+  v_day := coalesce(v_day, (coalesce(s.packed_at, s.created_at) at time zone 'Europe/Rome')::date);
   if v_day <> v_today then
     raise exception using errcode = '22023', message = format('Il DDT %s è del %s: si annulla solo il giorno in cui è stato preparato, prima che la merce parta. Se la merce è tornata indietro, è un reso.',
       s.ddt_number, to_char(v_day, 'DD/MM'));
