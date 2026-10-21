@@ -18,6 +18,18 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## No Consorzio declaration before the DOP control (v1.11)
+Re-audit of 19/10, item R-01 (project doc `claude/golive-rescore-2026-10-19.md`). On 05/10 `consorzio_declaration()` proposed
+«Dichiarazione Consorzio 09/2026: 0 kg» for a dairy that is not ours yet; it stayed in «Da decidere» in every morning summary until it
+was rejected on 20/10, and the 1st-of-the-month job would have made a 0 kg October one on 01/11. Migration `v111a`.
+- **Setting `dop.rina_code`** (Configurazione → Sicurezza alimentare e DOP): the caseificio's RINA operator code for the DOP control,
+  empty until RINA's initial inspection. Not a protected setting.
+- **`consorzio_declaration(month)`:** with the code empty and no DOP lot in the month it proposes nothing and returns the month's
+  figures with `skipped: true` and `skip_it` (why, in Italian). With the code set, every month is proposed as before, 0 kg included.
+  DOP lots in a month without the code (the trial week) are proposed with one more check to see, `codice_rina`. The payload carries
+  `rina_code`. The pg_cron job, the approval, «Segna inviata» and the T-DOP task are unchanged.
+- **Tests:** `prod-test/test_v111_dop_declaration.sql` 14/14 (on the v1.10a code 8 fail: the cron call makes the 0 kg approval).
+
 ## Sicurezza e salvataggi: the fixes of the quality test of 20/10 (v1.10)
 A full test of v1.09 (project doc `claude/quality-test-2026-10-20.md`: every suite green, live = repo) and three independent reviews
 found no Critical issue but two ways for a socio profile to become Titolare, a tablet save path that could write a HACCP record twice,
@@ -837,6 +849,7 @@ system — lives here. Nothing is a paid app.
 - Consorzio DOP declaration (v0.63): pg_cron runs `consorzio_declaration()` on the 1st (05:30 UTC); it lands in Console → Oggi
   with the disciplinare checks (60 h, fat/protein, DOP suppliers, traceability) and a fee estimate (`dop.consorzio_eur_kg`, estimate).
   Approving it closes the month's T-DOP task. Sending it to the Consorzio stays manual until the official format is known.
+  Since v1.11 nothing is proposed while `dop.rina_code` is empty and the month has no DOP lot.
   Paid web orders not yet shipped count as demand for the next production day (`v_preorder_demand`).
 - Lot guard: system-allocated sales never drive a lot below zero (FEFO, then unassigned + notice);
   scanned sales keep the scanned lot and raise a notice to check the batch output weight.

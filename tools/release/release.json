@@ -1,6 +1,6 @@
 {
-  "version": "v1.10a",
-  "title_it": "Ritocchi: la pagina di benvenuto dice quanto vale il link secondo le impostazioni (non più «24 ore» fisso), un indice doppio del feed Bot tolto",
+  "version": "v1.11",
+  "title_it": "Dichiarazione al Consorzio solo quando serve: nessuna dichiarazione da 0 kg prima del codice RINA del caseificio",
   "order": [
     "database",
     "functions"
