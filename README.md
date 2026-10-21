@@ -18,6 +18,30 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## The database stands in for every bot (v1.12)
+Re-audit of 19/10, item R-02 (project doc `claude/golive-rescore-2026-10-19.md`). From 15/10 about 18:30 to 17/10 morning no Claude bot
+started (Nick's Claude usage ran out during a build session): the database stood in for 6 bots, but the morning brief, sales,
+marketing, the compliance calendar and the monthly review had none, so 16/10 had no brief and no Friday sales run. Migration `v112a`.
+- **`bot_fallback_agents()`** lists every Claude bot. `bot_fallback` (every 5 minutes) writes a missed bot's message ~45 minutes after
+  its time, «Esegui ora (versione del database)» works for all of them, and the watchdog waits its 20 extra minutes for them too.
+- **`bot_fallback_run`**, five new branches, each from the same data function the bot reads, with the bot's Italian shape (title,
+  «Da fare», «In breve») and without its comment:
+  - `daily_brief`: `daily_brief(yesterday)`; on Monday Saturday plus `weekly_brief()` («La settimana»). Read-only.
+  - `sales`: `sales_status()`: the contacts due (first 6), the plan, the pipeline, stale venues, customers to win back. Read-only:
+    the ready messages and the search for new venues stay with the bot.
+  - `marketing`: the bot's one write (quotes in hand → `in_approvazione`, a trigger makes the console approvals), then
+    `mkt_local_status()` + `mkt_weekly_status()`. The quote requests to suppliers stay with the bot.
+  - `compliance_calendar`: `compliance_calendar()` with its ready messages for technicians and the lab. Read-only.
+  - `monthly_review`: `monthly_review()`, which records the recall drill and the recipe proposals, as the bot's own call does.
+  Every read is kept for «Perché?» (by the database: not number-checked). New variables are `v_`-prefixed (the older branches alias
+  columns `k`, `m`, `v`).
+- **The marketing slot** (Monday and Thursday 07:53) was on live but in no migration: `v112a` adds it where missing.
+- **App** (sw `perla-v79`): Configurazione → Bot says what «Esegui ora» does for the five; «Bot fermi: cosa fare» (in the app and
+  SOP-14 rev. 3, `sop/bot_fermi.html/.pdf`) says every bot has a stand-in and only the bot's comment and ready texts wait.
+- **Tests:** `prod-test/test_v112_standins.sql` 33/33 (timing on fixed days, «Esegui ora», each stand-in on the real data functions
+  and on full data). Updated: `test_bot_fallback.sql` (Tuesday 08:10 now also runs the brief and the calendar) and
+  `test_audit_alerts.sql` (the brief's alarm says «Esegui ora»; an unknown bot is still refused).
+
 ## No Consorzio declaration before the DOP control (v1.11)
 Re-audit of 19/10, item R-01 (project doc `claude/golive-rescore-2026-10-19.md`). On 05/10 `consorzio_declaration()` proposed
 «Dichiarazione Consorzio 09/2026: 0 kg» for a dairy that is not ours yet; it stayed in «Da decidere» in every morning summary until it

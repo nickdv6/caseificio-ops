@@ -1,6 +1,6 @@
 {
-  "version": "v1.11",
-  "title_it": "Dichiarazione al Consorzio solo quando serve: nessuna dichiarazione da 0 kg prima del codice RINA del caseificio",
+  "version": "v1.12",
+  "title_it": "Il database sostituisce tutti i bot: anche brief del mattino, vendite, marketing, scadenze e revisione mensile quando i bot di Claude non partono",
   "order": [
     "database",
     "functions"

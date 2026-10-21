@@ -251,6 +251,12 @@
     ops_health: 'Fa il controllo serale del sistema e ne scrive il riepilogo.',
     sell_down: 'Prepara la proposta di promozione dei prodotti da vendere prima (da approvare).',
     backup_export: 'Avvia subito il backup completo del database (quello della notte).',
+    // v1.12 (R-02): every Claude bot has a database version now
+    daily_brief: 'Scrive il brief con i numeri di ieri (il lunedì: sabato e la settimana appena chiusa).',
+    sales: 'Riassume vendite, obiettivi e locali da contattare (i messaggi pronti e la ricerca di nuovi locali li fa solo il bot).',
+    marketing: 'Riassume campagna locale e contenuti e manda in approvazione i preventivi arrivati.',
+    compliance_calendar: 'Elenca scadenze e date mancanti (tarature, manutenzioni, attestati, analisi) con i messaggi pronti per tecnici e laboratorio.',
+    monthly_review: 'Chiude il mese appena finito: prova di richiamo, sicurezza alimentare, proposte di ricetta, costi e pacchetto per il commercialista.',
     // v1.02 (E-18): the Shopify jobs run in the database itself; «Esegui ora» starts them now
     shopify_orders: 'Copia subito da Shopify gli ordini online e del banco degli ultimi giorni e conferma su Shopify le spedizioni imballate.',
     shopify_customers: 'Copia subito da Shopify l\'elenco completo dei clienti (non disattiva nessuno se ne mancano troppi).',

@@ -34,10 +34,11 @@ insert into fabula.agent_runs (agent, started_at, finished_at, status, summary) 
 select fabula.bot_fallback('2026-10-12 21:25:00+02') r3 \gset
 select pg_temp.ck('a bot that ran is not replaced', not exists (select 1 from jsonb_array_elements(:'r3'::jsonb->'runs') x where x->>'agent' = 'ops_health'), :'r3');
 
--- 4. morning: procurement (06:20 + 45) and sell-down (07:23 + 45) at 08:10 on Tuesday; the 6-hour windows end at 12:20 and 13:23
+-- 4. morning: procurement (06:20 + 45) and sell-down (07:23 + 45) at 08:10 on Tuesday; the 6-hour windows end at 12:20 and 13:23.
+--    v1.12: the brief (06:47 + 45) and Tuesday's compliance calendar (07:17 + 45) have a stand-in too
 select fabula.bot_fallback('2026-10-13 08:10:00+02') r4 \gset
-select pg_temp.ck('08:10 runs procurement and sell_down',
-  (select array_agg(x->>'agent' order by x->>'agent') from jsonb_array_elements(:'r4'::jsonb->'runs') x) = array['procurement', 'sell_down'], :'r4');
+select pg_temp.ck('08:10 runs procurement and sell_down (and, since v1.12, the brief and the compliance calendar)',
+  (select array_agg(x->>'agent' order by x->>'agent') from jsonb_array_elements(:'r4'::jsonb->'runs') x) = array['compliance_calendar', 'daily_brief', 'procurement', 'sell_down'], :'r4');
 select pg_temp.ck('no fallback after the 6-hour window', (select count(*) from jsonb_array_elements((fabula.bot_fallback('2026-10-14 13:30:00+02'))->'runs') x where x->>'agent' in ('procurement', 'sell_down')) = 0);
 
 -- 5. ops_health stand-in on a day without a bot run (Wednesday 21:25) and backup re-send (21:15 + 45 = 22:00)
@@ -54,7 +55,7 @@ select pg_temp.ck('nightly backup re-sent once (a 21:05 latest backup does not c
 select fabula.bot_watchdog('2026-10-15 19:47:00+02') w1 \gset
 select pg_temp.ck('watchdog: covered bot not reported at grace + 10 min',
   not exists (select 1 from jsonb_array_elements(:'w1'::jsonb->'alerts') x where x->>'agent' = 'milk_planning'));
-select pg_temp.ck('watchdog: non-covered bot reported as before',
+select pg_temp.ck('watchdog: a bot with no run at all is reported once its grace (+ 20 min since v1.12, every bot is covered) has passed',
   exists (select 1 from jsonb_array_elements(:'w1'::jsonb->'alerts') x where x->>'agent' = 'daily_brief' and x->>'kind' = 'missed'));
 
 -- 7. a failing stand-in is logged as an error (the alarm bot reports it) and the others still run

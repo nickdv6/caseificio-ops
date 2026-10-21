@@ -212,9 +212,9 @@ select pg_temp.ck('E-33 …one Telegram message per incident, to the system topi
   and (select topic = 'infra' and text_html like '%admin.html#bots%' from fabula.notify_outbox where dedupe_key = 'inc:' || :inc_db)
   and (select count(*) from fabula.notify_outbox where dedupe_key like 'inc:%') = (select count(*) from fabula.bot_alerts where notified_at is not null and resolved_at is null),
   (select string_agg(dedupe_key || ' ' || title, ' | ') from fabula.notify_outbox where dedupe_key like 'inc:%'));
-select pg_temp.ck('E-21 …a bot the database stands in for says «Esegui ora»; the others say where to relaunch',
+select pg_temp.ck('E-21 …a bot the database stands in for says «Esegui ora» (since v1.12 every bot, the brief too)',
   (select body like '%Configurazione → Bot → «Esegui ora»%' from fabula.notify_outbox where dedupe_key = 'inc:' || :inc_pr)
-  and (select body like '%attività programmate di Claude%' from fabula.notify_outbox where dedupe_key = 'inc:' || :inc_db));
+  and (select body like '%Configurazione → Bot → «Esegui ora»%' from fabula.notify_outbox where dedupe_key = 'inc:' || :inc_db));
 select pg_temp.ck('E-33 the database scheduler that never ran is one incident too',
   (select count(*) from fabula.bot_alerts where agent = 'pg_cron' and kind = 'stuck' and resolved_at is null) = 1
   and (select label_it like 'Le automazioni del database non risultano mai partite:%' from fabula.bot_alerts where agent = 'pg_cron' and kind = 'stuck' and resolved_at is null));
@@ -349,14 +349,14 @@ select pg_temp.as_user(:'uff');
 set role authenticated;
 select pg_temp.err($q$select fabula.run_bot_fallback('wholesale_orders')$q$) e_x1 \gset
 select pg_temp.as_user(:'tit');
-select pg_temp.err($q$select fabula.run_bot_fallback('daily_brief')$q$) e_x2 \gset
+select pg_temp.err($q$select fabula.run_bot_fallback('bot_inesistente')$q$) e_x2 \gset
 select fabula.run_bot_fallback('wholesale_orders') x3 \gset
 select pg_temp.err($q$select fabula.run_bot_fallback('wholesale_orders')$q$) e_x4 \gset
 select fabula.run_bot_fallback('wholesale_orders', true) x5 \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
 select pg_temp.ck('E-21 «Esegui ora» needs «registra» in Sistema', :'e_x1' like 'Permesso negato: serve il livello 2%', :'e_x1');
-select pg_temp.ck('E-21 only the bots the database can stand in for', :'e_x2' like '«Brief del mattino e settimanale» non ha una versione del database%', :'e_x2');
+select pg_temp.ck('E-21 only the bots the database can stand in for (since v1.12 every scheduled bot; an unknown name is refused)', :'e_x2' like '%non ha una versione del database%', :'e_x2');
 select pg_temp.ck('E-21 run now: recorded as a manual database run, by whom, with one message',
   (select count(*) from fabula.agent_runs where agent = 'wholesale_orders' and details->>'via' = 'db_fallback' and details->>'manual' = 'true' and details->>'by' = 'Titolare A'
           and summary like 'Eseguito ora da Titolare A (versione del database)%') = 2
