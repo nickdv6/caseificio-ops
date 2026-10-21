@@ -1,6 +1,6 @@
 {
-  "version": "v1.12",
-  "title_it": "Il database sostituisce tutti i bot: anche brief del mattino, vendite, marketing, scadenze e revisione mensile quando i bot di Claude non partono",
+  "version": "v1.13",
+  "title_it": "Controllo dei numeri dei bot senza falsi allarmi: «invariati dal…», «(erano 3 il…)» e i conteggi per tipo delle scadenze",
   "order": [
     "database",
     "functions"

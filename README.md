@@ -18,6 +18,18 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## The number check without false alarms (v1.13)
+Re-audit of 19/10, item R-03. «Perché?» (v1.06) compares each number and date a bot writes with the data it read. In its first week it
+flagged 2 messages, both wrongly: Controllo sistema 19/10 («nomi provvisori: invariati dal 16/10» outside brackets, «(erano 3 il
+17/10)») and Manutenzioni e scadenze 20/10 («4 tarature, 11 manutenzioni, 6 attestati», counted by the bot: the data had only the total).
+Migration `v113a`.
+- **`_basis_tokens`** (message side only) also leaves out «invariat[oaie] dal/dall'/da/al dd/mm» anywhere, «(era|erano …)» in brackets and
+  «era/erano N il dd/mm»: rule 5 (REPEATS) notes about the previous message, whose numbers were checked then. A date or number next to
+  them is still checked; «erano» without a date is data.
+- **`compliance_calendar()`** returns `counts.by_kind` (bucket → kind → n), so the breakdown is in the data.
+- The flagged messages of the last 7 days are checked again with the new rule (a message whose data lacks a number stays flagged).
+- **Tests:** `prod-test/test_v113_number_check.sql` 14/14 (on the v1.12 code 8 fail).
+
 ## The database stands in for every bot (v1.12)
 Re-audit of 19/10, item R-02 (project doc `claude/golive-rescore-2026-10-19.md`). From 15/10 about 18:30 to 17/10 morning no Claude bot
 started (Nick's Claude usage ran out during a build session): the database stood in for 6 bots, but the morning brief, sales,
