@@ -35,7 +35,7 @@ tr.tot td{border-bottom:0;font-weight:600}
 button.danger{border-color:var(--warn);color:var(--warn);cursor:pointer}
 .incomplete{max-width:800px;margin:0 auto 12px;background:#fbe9e7;border:2px solid var(--warn);color:var(--warn);border-radius:8px;padding:10px 14px;font-weight:600}
 @media (max-width:600px){ .parties,.top,.sig{grid-template-columns:1fr} .doc{text-align:left} .sheet{padding:18px} }
-@media print{ .incomplete{display:none} body.blockprint .sheet{display:none} body.blockprint::before{content:'Documento incompleto: completa i dati azienda (Configurazione → Azienda) prima di stampare il DDT';display:block;padding:40px;font:600 18px sans-serif}
+@media print{ .sheet.voided::after{position:fixed} .incomplete{display:none} body.blockprint .sheet{display:none} body.blockprint::before{content:'Documento incompleto: completa i dati azienda (Configurazione → Azienda) prima di stampare il DDT';display:block;padding:40px;font:600 18px sans-serif}
   body{background:#fff;padding:0} .ctl{display:none} .sheet{border:0;border-radius:0;max-width:none;padding:0} :root{--paper:#fff;--fg:#000;--muted:#444;--rule:#bbb;--tile:#f2f2f2} }
 </style>
 </head>
@@ -66,6 +66,7 @@ button.danger{border-color:var(--warn);color:var(--warn);cursor:pointer}
   let level = null;
   const shipLevel = async () => { if (level !== null) return level; const { data } = await sb.rpc('my_permissions'); level = Number((data && data.areas && data.areas.spedizioni) || 0); return level; };
   let cur = null;
+  const romeDay = t => t ? new Date(t).toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' }) : null;
   async function show(ref) {
     const sheet = $('sheet'); $('cancel').hidden = true; sheet.classList.remove('voided'); cur = null;
     $('incomplete').hidden = true; $('print').disabled = false; document.body.classList.remove('blockprint');
@@ -118,7 +119,7 @@ button.danger{border-color:var(--warn);color:var(--warn);cursor:pointer}
       sheet.classList.add('voided');
       const when = d.cancelled_at ? new Date(d.cancelled_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '';
       sheet.insertAdjacentHTML('afterbegin', `<div class="void">DDT ANNULLATO il ${esc(when)}${d.cancelled_by ? ' da ' + esc(d.cancelled_by) : ''}: ${esc(d.cancel_reason || '')}. Non vale per il trasporto; il numero resta nel registro. La merce è tornata in giacenza.</div>`);
-    } else if (['planned', 'picked'].includes(d.status) && !d.shopify_fulfilled_at && await shipLevel() >= 3) $('cancel').hidden = false;
+    } else if (['planned', 'picked'].includes(d.status) && !d.shopify_fulfilled_at && (d.packed_at ? romeDay(d.packed_at) : d.ship_date) === romeDay(new Date()) && await shipLevel() >= 3) $('cancel').hidden = false;   // packed today only
   }
   $('cancel').onclick = async () => {
     const d = cur; if (!d) return;

@@ -248,4 +248,4 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
     «Spedizioni e DDT» on a phone as the titolare: the DDT just packed with «Annulla DDT»; a prompt left empty annuls nothing; with a reason
     the goods go back on the lot, the order is to ship again, the row reads «annullato» with who and why; the DDT page of an annulled DDT
     shows ANNULLATO (banner, red badge, watermark); on a live DDT page «Annulla questo DDT» shows for the titolare and not for a production
-    login, and annuls. Expect `FAILURES: none` (14 checks).
+    login, and annuls; a DDT packed yesterday has no «Annulla» in the register or on its page. Expect `FAILURES: none` (16 checks).

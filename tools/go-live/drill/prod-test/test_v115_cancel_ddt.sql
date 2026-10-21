@@ -41,8 +41,17 @@ select pg_temp.ck('packed: DDT numbered, stock down, order closed, lot on the or
   and (select status::text from fabula.sales_orders where id = :'w') = 'fulfilled' and (select lot_number from fabula.sales_order_lines where sales_order_id = :'w') = 'LV-A'
   and (select (c ->> 'done')::boolean from jsonb_array_elements(fabula.ops_dashboard() -> 'checks') c where c ->> 'key' = 'first_shipment'), :'p1');
 
+select pg_temp.ck('pack_order links its stock moves to the DDT (stock_moves.shipment_id)',
+  (select count(*) from fabula.stock_moves where shipment_id = :'sh1' and move_type = 'sale' and qty < 0) = 2);
+
 select pg_temp.as_user('00000000-0000-4000-a000-000000115a02');
 set role authenticated;
+select pg_temp.ck('a login can''t change, add or delete the lines of an issued DDT (review of v1.15: 4 kg became 40 and came back as stock)',
+  pg_temp.err(format($$update fabula.shipment_lines set qty = 40 where shipment_id = %L$$, :'sh1')) like '42501%non si cambiano dopo l''emissione%'
+  and pg_temp.err(format($$insert into fabula.shipment_lines (shipment_id, product_id, lot_number, qty) values (%L, %L, 'LV-B', 9)$$, :'sh1', :'moz')) like '42501%'
+  and pg_temp.err(format($$delete from fabula.shipment_lines where shipment_id = %L$$, :'sh1')) like '42501%');
+select pg_temp.ck('…nor write a DDT already annulled (in someone else''s name)',
+  pg_temp.err(format($$insert into fabula.shipments (customer_id, status, cancelled_by_id, cancel_reason) values (%L, 'cancelled', '10000000-0000-4000-a000-000000115a01', 'finto')$$, :'cust')) like '42501%');
 select pg_temp.ck('a production login (Spedizioni = registra) cannot annul a DDT',
   pg_temp.err(format($$select fabula.cancel_shipment(%L, 'lotto sbagliato')$$, :'sh1')) like '42501%', pg_temp.err(format($$select fabula.cancel_shipment(%L, 'lotto sbagliato')$$, :'sh1')));
 select pg_temp.ck('…nor delete it: the message says where it is annulled',
@@ -52,6 +61,8 @@ select pg_temp.ck('…nor set it «cancelled» by hand (the goods would not go b
   and pg_temp.err(format($$update fabula.shipments set cancel_reason = 'x', cancelled_at = now() where id = %L$$, :'sh1')) like '42501%');
 reset role;
 
+-- even lines changed behind the app's back (here as the database owner) do not create stock: what comes back is what the DDT's moves took
+update fabula.shipment_lines set qty = 40 where shipment_id = :'sh1' and lot_number = 'LV-A';
 select pg_temp.as_user('00000000-0000-4000-a000-000000115a01');
 set role authenticated;
 select pg_temp.ck('a reason is required (at least 5 characters)',
@@ -59,7 +70,7 @@ select pg_temp.ck('a reason is required (at least 5 characters)',
 select fabula.cancel_shipment(:'sh1', '  lotto   sbagliato: andava tutto dal LV-B ') c1 \gset
 reset role;
 select pg_temp.as_user(null);
-select pg_temp.ck('the titolare annuls it: 2 lines, 6 kg back, the order is to ship again',
+select pg_temp.ck('the titolare annuls it: 6 kg back (what the DDT took, not the 40 kg a changed line says), the order is to ship again',
   (:'c1'::jsonb ->> 'ok')::boolean and (:'c1'::jsonb ->> 'lines_back')::int = 2 and (:'c1'::jsonb ->> 'kg_back')::numeric = 6
   and (:'c1'::jsonb ->> 'order_to_ship')::boolean and :'c1'::jsonb ->> 'ddt_number' = :'ddt1', :'c1');
 select pg_temp.ck('the DDT keeps its number, «cancelled», with when, who and why (spaces tidied)',
@@ -104,6 +115,20 @@ select pg_temp.ck('the trial''s day 3 counts only the live DDT',
   (select s ->> 'detail' from jsonb_array_elements(fabula.trial_check(:'d'::date) -> 'steps') s where s ->> 'step' like 'Giorno 3 · ordine preparato%') = '1 · DDT ' || (:'p2'::jsonb ->> 'ddt_number'),
   (select s::text from jsonb_array_elements(fabula.trial_check(:'d'::date) -> 'steps') s where s ->> 'step' like 'Giorno 3 · ordine preparato%'));
 
+-- ============================== a DDT of another day: not annulled (wholesale and direct DDTs have no «partito» step) ==============================
+select id sh_w2 from fabula.shipments where sales_order_id = :'w' and status::text = 'picked' \gset
+update fabula.shipments set packed_at = packed_at - interval '1 day', created_at = created_at - interval '1 day' where id = :'sh_w2';
+select pg_temp.ck('a DDT packed yesterday is not annulled: it may have been delivered (review of v1.15)',
+  pg_temp.err(format($$select fabula.cancel_shipment(%L, 'consegnato male')$$, :'sh_w2')) like '22023%si annulla solo il giorno in cui è stato preparato%');
+update fabula.shipments set packed_at = packed_at + interval '1 day', created_at = created_at + interval '1 day' where id = :'sh_w2';
+-- a DDT written without any stock move (status «planned», with lines): annulled, nothing comes back
+insert into fabula.shipments (customer_id, status) values (:'cust', 'planned') returning id sh_p \gset
+insert into fabula.shipment_lines (shipment_id, product_id, lot_number, qty) values (:'sh_p', :'moz', 'LV-B', 25);
+select pg_temp.lot('LV-B') before_p \gset
+select fabula.cancel_shipment(:'sh_p', 'creato per errore') cp \gset
+select pg_temp.ck('a DDT that took no stock gives none back (it used to add its 25 kg of lines)',
+  (:'cp'::jsonb ->> 'kg_back')::numeric = 0 and pg_temp.lot('LV-B') = :'before_p'::numeric, :'cp');
+
 -- ============================== goods that have left: not annulled ==============================
 select fabula.pack_order(:'s1', jsonb_build_array(jsonb_build_object('product_id', :'moz', 'lot_number', 'LV-B', 'qty', 2)), null, null, null, null, null, true) ->> 'shipment_id' sh_s1 \gset
 select fabula.mark_shopify_fulfilled(:'sh_s1', 'gid://shopify/Fulfillment/1') m1 \gset
@@ -127,13 +152,60 @@ select pg_temp.ck('if the sync fulfils it on Shopify just then: the DDT stays an
   and exists (select 1 from fabula.bot_messages where agent = 'shopify_orders' and severity = 'alert' and title = 'Ordine S-ANN2 evaso su Shopify, ma il suo DDT ' || (select ddt_number from fabula.shipments where id = :'sh_s2') || ' è annullato'));
 
 -- ============================== a direct shipment from a lot (no order) ==============================
+-- as the tablet's save does it: the DDT, its line and the stock move in one transaction, from a login
+select pg_temp.as_user('00000000-0000-4000-a000-000000115a02');
+begin;
+set local role authenticated;
 insert into fabula.shipments (customer_id, status, driver_id) values (:'cust', 'picked', '10000000-0000-4000-a000-000000115a02') returning id sh_d, ddt_number ddt_d \gset
 insert into fabula.shipment_lines (shipment_id, product_id, lot_number, qty) values (:'sh_d', :'moz', 'LV-B', 3);
 insert into fabula.stock_moves (product_id, lot_number, qty, move_type, source) values (:'moz', 'LV-B', -3, 'sale', 'tablet');
+commit;
+select pg_temp.as_user(null);
+select pg_temp.ck('the direct shipment''s stock move is linked to its DDT by the database (same save, same product, lot and kg)',
+  (select count(*) from fabula.stock_moves where shipment_id = :'sh_d' and qty = -3) = 1);
+insert into fabula.stock_moves (product_id, lot_number, qty, move_type, source) values (:'moz', 'LV-B', -3, 'sale', 'tablet');
+select pg_temp.ck('…a sale of the same kg in another save is not', (select count(*) from fabula.stock_moves where shipment_id = :'sh_d') = 1);
+insert into fabula.stock_moves (product_id, lot_number, qty, move_type, source) values (:'moz', 'LV-B', 3, 'adjustment', 'test');
 select pg_temp.lot('LV-B') before_d \gset
 select fabula.cancel_shipment(:'sh_d', 'cliente sbagliato, era per un altro') c3 \gset
 select pg_temp.ck('a direct shipment is annulled too: its 3 kg back on LV-B, no order to ship',
   pg_temp.lot('LV-B') = :'before_d'::numeric + 3 and (:'c3'::jsonb ->> 'order_number') is null and not (:'c3'::jsonb ->> 'order_to_ship')::boolean, :'c3');
+
+-- ============================== Shopify: an annulled online order is reserved again, and deducted when Shopify fulfils it ==============================
+insert into fabula.shopify_variant_map (variant_id, product_id, kg_per_unit, label) values ('gid://shopify/ProductVariant/115', :'moz', 0.5, 'Mozzarella 500 g (test)')
+on conflict (variant_id) do nothing;
+select fabula.upsert_shopify_orders(jsonb_build_array(jsonb_build_object(
+  'id', 'gid://shopify/Order/9115', 'name', '#9115', 'source_name', 'web', 'financial_status', 'PAID', 'fulfillment_status', 'UNFULFILLED',
+  'created_at', now()::text, 'updated_at', now()::text, 'subtotal', 24, 'tax', 1, 'total', 25,
+  'line_items', jsonb_build_array(jsonb_build_object('variant_id', 'gid://shopify/ProductVariant/115', 'title', 'Mozzarella 500 g', 'quantity', 4, 'price', 6, 'tax_rate', 4))))) u1 \gset
+select id s9 from fabula.sales_orders where shopify_order_id = 'gid://shopify/Order/9115' \gset
+select fabula.pack_order(:'s9', jsonb_build_array(jsonb_build_object('product_id', :'moz', 'lot_number', 'LV-B', 'qty', 2)), null, null, null, null, null, true) ->> 'shipment_id' sh9 \gset
+select pg_temp.ck('packed: the console shows the stock as booked for the order', (select stock_booked from fabula.v_shopify_orders_recent where order_number = '#9115'));
+select fabula.cancel_shipment(:'sh9', 'lotto sbagliato') is not null c9 \gset
+select pg_temp.ck('annulled: no longer booked (its sale moves net to 0), so the online stock reserves it again',
+  not (select stock_booked from fabula.v_shopify_orders_recent where order_number = '#9115'));
+select coalesce(sum(qty), 0) before9 from fabula.stock_moves where product_id = :'moz' \gset
+select fabula.upsert_shopify_orders(jsonb_build_array(jsonb_build_object(
+  'id', 'gid://shopify/Order/9115', 'name', '#9115', 'source_name', 'web', 'financial_status', 'PAID', 'fulfillment_status', 'FULFILLED',
+  'created_at', now()::text, 'updated_at', (now() + interval '1 minute')::text, 'subtotal', 24, 'tax', 1, 'total', 25,
+  'line_items', jsonb_build_array(jsonb_build_object('variant_id', 'gid://shopify/ProductVariant/115', 'title', 'Mozzarella 500 g', 'quantity', 4, 'price', 6, 'tax_rate', 4))))) u2 \gset
+select pg_temp.ck('if the office then fulfils it on Shopify by hand, the sync deducts its 2 kg (before: nothing, the old moves counted as booked)',
+  (select status::text from fabula.sales_orders where id = :'s9') = 'fulfilled' and (select sum(qty) from fabula.stock_moves where product_id = :'moz') = :'before9'::numeric - 2
+  and (select coalesce(sum(qty), 0) from fabula.stock_moves where sales_order_id = :'s9' and move_type = 'sale') = -2,
+  (select string_agg(qty || ' ' || coalesce(source, ''), ', ') from fabula.stock_moves where sales_order_id = :'s9'));
+
+-- ============================== «sold on a held lot»: the give-back is not a sale ==============================
+insert into fabula.stock_moves (product_id, lot_number, expiry_date, qty, move_type, source) values (:'moz', 'LV-H', :'d'::date + 6, 4, 'production_out', 'test');
+insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, output_kg, source) values (:'d', 'LV-H', :'moz', 20, 4, 'test');
+insert into fabula.sales_orders (order_number, channel, order_date, customer_id, status, source) values ('W-HOLD', 'wholesale', :'d', :'cust', 'confirmed', 'test') returning id wh \gset
+insert into fabula.sales_order_lines (sales_order_id, product_id, qty, unit_price_eur, iva_rate) values (:'wh', :'moz', 4, 12, 4);
+select fabula.pack_order(:'wh', jsonb_build_array(jsonb_build_object('product_id', :'moz', 'lot_number', 'LV-H', 'qty', 4)), null, null, null, null, null, true) ->> 'shipment_id' shh \gset
+update fabula.production_batches set food_safety_hold = true, hold_reason = 'esito laboratorio', hold_at = now() where batch_lot = 'LV-H';
+select fabula.cancel_shipment(:'shh', 'lotto bloccato dopo la preparazione') is not null ch \gset
+select pg_temp.ck('a DDT annulled because its lot was put on hold: the lot is back in stock, and the evening check does not call the give-back a sale on a held lot',
+  pg_temp.lot('LV-H') = 4
+  and not exists (select 1 from jsonb_each(fabula.ops_health_check(:'d'::date)) j(k, x), jsonb_array_elements(case when jsonb_typeof(x) = 'array' then x else '[]'::jsonb end) e
+                   where e ->> 'text' like 'Vendite%bloccati%LV-H%'));
 
 -- ============================== grants ==============================
 select pg_temp.ck('grants: logins (the function checks Spedizioni = gestisce), never anon; accepted by the security scan',

@@ -79,8 +79,8 @@ try:
     ctx, cp, asked = page_as(b, OWNER, 'console.html#ops', logs, width=420, answers=answers)
     cp.wait_for_selector('#ddt-list table', timeout=25000); cp.wait_for_timeout(800)
     row = cp.evaluate(f"(() => {{ const r = [...document.querySelectorAll('#ddt-list tr')].find(t => t.innerText.includes('{ddt1}')); return r ? r.innerText : ''; }})()")
-    check('the register lists the DDT just packed, «preparato, non partito», with «Annulla DDT»',
-          f'Trattoria E2E {RUN}' in row and 'preparato, non partito' in row and 'Annulla DDT' in row, row.replace('\n', ' | '))
+    check('the register lists the DDT just packed, «preparato», with «Annulla DDT»',
+          f'Trattoria E2E {RUN}' in row and 'preparato' in row and 'Annulla DDT' in row, row.replace('\n', ' | '))
     sw = cp.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
     check('on a phone the page does not scroll sideways', sw)
     btn = f"[...document.querySelectorAll('#ddt-list [data-cancel-ddt]')].find(x => x.dataset.cancelDdt === '{sh1}')"
@@ -117,6 +117,15 @@ try:
     op2.click('#cancel'); op2.wait_for_selector('#sheet .void', timeout=20000)
     check('…which annuls it and shows it annulled', sql(f"select status from fabula.shipments where id = '{sh2}'") == 'cancelled' and lot() == 30
           and op2.evaluate("document.getElementById('cancel').hidden"))
+    # ================= a DDT of another day: no «Annulla» (ingrosso DDTs have no «partito» step) =================
+    o3, sh3, ddt3 = order_and_pack(3)
+    sql(f"update fabula.shipments set packed_at = packed_at - interval '1 day', created_at = created_at - interval '1 day' where id = '{sh3}'")
+    cp.reload(); cp.wait_for_selector('#ddt-list table', timeout=25000); cp.wait_for_timeout(800)
+    row3 = cp.evaluate(f"(() => {{ const r = [...document.querySelectorAll('#ddt-list tr')].find(t => t.innerText.includes('{ddt3}')); return r ? r.innerText : ''; }})()")
+    check("a DDT packed yesterday shows no «Annulla DDT» (it may have been delivered)", ddt3 in row3 and 'Annulla DDT' not in row3, row3.replace('\n', ' | '))
+    ctx5, op3, _ = page_as(b, OWNER, f'spedizione.html?id={sh3}', logs)
+    op3.wait_for_selector('#sheet .top', timeout=20000); op3.wait_for_timeout(1500)
+    check('…nor on its DDT page', op3.evaluate("document.getElementById('cancel').hidden"))
     check('no page errors', not logs, ' | '.join(logs)[:300])
     b.close()
 finally:

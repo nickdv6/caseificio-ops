@@ -1096,7 +1096,8 @@
 
   // v1.15: the DDT register of the last 30 days, annulled DDTs included (their number stays in the series). «Annulla DDT» while the
   // goods have not left (Spedizioni = gestisce): stock back on its lots, the order back in «Da spedire», the reason in the register.
-  const SSTATUS = { planned: ['da preparare', 'status'], picked: ['preparato, non partito', ''], in_transit: ['partito', 'ok'], delivered: ['consegnato', 'ok'], returned: ['reso', 'status'], cancelled: ['annullato', 'ko'] };
+  // only a DDT packed today can still be in the cold room: ingrosso and direct DDTs have no «partito» step (the database checks it too)
+  const SSTATUS = { planned: ['da preparare', 'status'], picked: ['preparato', ''], in_transit: ['partito', 'ok'], delivered: ['consegnato', 'ok'], returned: ['reso', 'status'], cancelled: ['annullato', 'ko'] };
   const ddtKg = d => (d.lines || []).reduce((a, l) => a + Number(l.qty || 0), 0);
   async function loadShipments() {
     const box = $('ddt-list'), card = $('ddt-card'); if (!box) return;
@@ -1106,9 +1107,10 @@
       .gte('ship_date', daysAgo(30)).order('ddt_number', { ascending: false }).limit(60);
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessun DDT negli ultimi 30 giorni.</div>'; return; }
-    const canCancel = PERM.can('spedizioni', 3), open = d => ['planned', 'picked'].includes(d.status) && !d.shopify_fulfilled_at;
+    const today = UI.romeISO(), canCancel = PERM.can('spedizioni', 3);
+    const open = d => ['planned', 'picked'].includes(d.status) && !d.shopify_fulfilled_at && (d.packed_at ? UI.romeISO(new Date(d.packed_at)) : d.ship_date) === today;
     const nOpen = data.filter(open).length, nCanc = data.filter(d => d.status === 'cancelled').length;
-    box.innerHTML = `<div class="status" style="margin-bottom:6px">${data.length} DDT${nOpen ? ` · <b>${nOpen} preparati, non partiti</b>` : ''}${nCanc ? ` · ${nCanc} annullati` : ''}</div>`
+    box.innerHTML = `<div class="status" style="margin-bottom:6px">${data.length} DDT${nOpen ? ` · <b>${nOpen} preparati oggi</b> (si annullano fino a stasera, se la merce non è partita)` : ''}${nCanc ? ` · ${nCanc} annullati` : ''}</div>`
       + '<table class="nw2"><tr><th>DDT</th><th>Giorno</th><th>Cliente</th><th>Ordine</th><th class="num">kg</th><th>Stato</th><th></th></tr>' + data.map(d => {
         const [lbl, cls] = SSTATUS[d.status] || [d.status, ''];
         const when = d.cancelled_at ? new Date(d.cancelled_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '';
