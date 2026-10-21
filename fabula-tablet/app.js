@@ -335,8 +335,12 @@
         p_failed: fresh.map(f => ({ qid: f.qid, ops: f.ops, error: f.error, code: f.code, failed_at: f.failed_at })), p_user_agent: navigator.userAgent.slice(0, 200) }), 8000);
       if (error) return;                                      // older database or no network: try again later
       if (fresh.length) { try { localStorage.setItem(REPK, JSON.stringify([...rep, ...fresh.map(f => f.qid)].slice(-500))); } catch {} showPending(); }
+      // v1.14 (R-04, A-35): the name given in Configurazione → Dispositivi; the tablet uses it for its own records from now on
+      if (data && data.name && data.name !== CFG.device) { CFG.device = data.name; try { localStorage.setItem('fabula_device', data.name); } catch {} renderWho(); }
+      // v1.14: «new version» only when the app in line is newer than this one (the hourly site check can lag a release by an hour)
+      const vn = v => Number((String(v || '').match(/perla-v(\d+)/) || [])[1] || 0);
       const bn = $('update-banner');
-      if (bn) bn.style.display = data && data.live_version && ver && data.live_version !== ver ? '' : 'none';
+      if (bn) bn.style.display = data && data.live_version && ver && vn(ver) < vn(data.live_version) ? '' : 'none';
     } catch (e) { console.warn('checkin', e); } finally { checkingIn = false; }
   }
   setInterval(checkin, 5 * 60000);
@@ -862,7 +866,8 @@
     const o = operator && (!opIdle() || busy()) ? operator : null;
     w.textContent = o ? `👤 ${o.full_name} · cambia` : '👤 Chi registra? tocca qui';
     w.className = 'who' + (o ? '' : ' none');
-    const a = $('acct'); if (a) a.textContent = `Tablet collegato come ${staff.full_name}`;
+    // v1.14: the device's name and code, the same as in Configurazione → Utenti e accessi → Dispositivi
+    const a = $('acct'); if (a) a.textContent = `Tablet «${CFG.device}» · codice ${String(deviceUid()).slice(0, 4).toUpperCase()} · collegato come ${staff.full_name}`;
   }
   // the people who can record (kept on the tablet: a badge scan works offline too)
   const opList = () => { const c = readObj(OPLK); return Array.isArray(c.list) ? c.list : []; };

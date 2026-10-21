@@ -27,7 +27,8 @@ do $$ begin perform fabula.device_checkin('dev-xyz999', 'x', 'v', 0, null); rais
 select pg_temp.ck('a login that is not staff cannot check in', not exists (select 1 from fabula.devices where device_uid = 'dev-xyz999'));
 select set_config('request.jwt.claims', '', false);
 
--- 2. device_watch
+-- 2. device_watch (v1.14: the old-app warning is only for floor tablets: this one is marked and keeps the name «tablet-1»)
+select fabula.set_device('dev-abc123', 'tablet-1', true) is not null fl \gset
 select fabula.device_watch() w1 \gset
 select pg_temp.ck('records waiting > 2 h and old app a day after release: one warning each',
   (select count(*) from jsonb_array_elements(:'w1'::jsonb->'warnings')) = 2

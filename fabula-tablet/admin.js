@@ -680,6 +680,7 @@
       const all = document.createElement('a'); all.className = 'btn sm sec'; all.style.cssText = 'text-decoration:none;display:inline-block;margin-top:8px'; all.target = '_blank';
       all.textContent = `Stampa tutti i badge (${withBadge.length})`; all.href = 'labels.html?' + q; box.append(all); }
     loadNotify().catch(e => toast(e.message || String(e), 'err'));   // v0.96 (E-01)
+    loadDevices().catch(e => toast(e.message || String(e), 'err'));   // v1.14 (R-04)
     loadFarmLinks().catch(e => toast(e.message || String(e), 'err'));   // v1.03 (FARM-04)
     // matrix
     const mbox = $('roles-matrix'); const lv = {}; (perms || []).forEach(x => { lv[x.role_code + '|' + x.area] = x.level; });
@@ -728,7 +729,7 @@
   async function loadSettingNames() { if (Object.keys(SETNAME).length) return; const { data } = await sb.from('settings').select('key, description'); (data || []).forEach(r => { SETNAME[r.key] = r.description || r.key; }); }
   const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',
     compliance_deadlines: 'Scadenze', haccp_control_points: 'Punti HACCP', process_steps: 'Processo', supplier_products: 'Condizioni fornitori', supplier_prices: 'Listini',
-    farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni' };
+    farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni', devices: 'Dispositivi' };
   const AUD_A = { insert: 'aggiunto', update: 'modificato', delete: 'eliminato' };
   const short = v => { if (v == null) return '∅'; const s = typeof v === 'object' ? JSON.stringify(v) : String(v); return s.length > 60 ? s.slice(0, 57) + '…' : s; };  async function loadAudit() {
     const sel = $('aud-table'); if (sel.options.length === 1) Object.entries(AUD_T).forEach(([k, l]) => sel.add(new Option(l, k)));
@@ -981,6 +982,56 @@
       <a class="btn sm sec" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(d.url)}">Apri</a></div></div></div>`;
     try { if (window.QRCode) new QRCode(box.querySelector('.nt-qr'), { text: d.url, width: 132, height: 132 }); } catch {}
     box.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(d.url); toast('Link copiato'); } catch { box.querySelector('input').select(); } };
+  }
+  // v1.14 (R-04, audit A-35): the tablets, phones and computers that open the tablet app. Each one gets a name, and the floor tablet(s)
+  // are marked: only those count for «Tablet di produzione aggiornato» and get the «app vecchia» warning. The row of the device this
+  // page is open on says «questo dispositivo» (same id as the tablet app in this browser), so the tablet is found by opening this page on it.
+  async function loadDevices() {
+    const box = $('devices'), card = $('devices-card'); if (!box) return;
+    if (!PERM.can('sistema', 1)) { card.hidden = true; return; }
+    const { data, error } = await sb.rpc('device_list');
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    let here = null; try { here = localStorage.getItem('perla_device_uid'); } catch {}
+    const list = data.devices || [], edit = !!data.can_edit;
+    const touchMac = navigator.maxTouchPoints > 1;            // an iPad on Safari calls itself «Macintosh»: only the device itself can tell
+    const kind = d => d.device_uid === here && d.kind === 'Mac o iPad' ? (touchMac ? 'iPad' : 'Mac') : d.kind;
+    const suggest = d => d.device_uid === here && d.kind === 'Mac o iPad' ? d.name.replace('Mac o iPad', kind(d)) : d.name;
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<div class="empty">Nessun dispositivo ancora: apri l\'app del tablet una volta, con il Wi-Fi.</div>'; return; }
+    const floors = list.filter(d => d.floor).length;
+    const head = document.createElement('p'); head.style.margin = '6px 0';
+    head.innerHTML = floors ? `${floors === 1 ? '1 tablet del caseificio' : floors + ' tablet del caseificio'} · app in linea: <b>${esc(data.live_version || '?')}</b>`
+      : `<span class="ko">Nessun dispositivo è segnato come «Tablet del caseificio»</span>: finché manca, «Tablet di produzione aggiornato» resta da fare.`;
+    box.append(head);
+    const t = document.createElement('table');
+    t.innerHTML = `<tr><th>Nome</th><th>Cosa è</th><th>Ultimo uso</th><th>App</th><th>Tablet del caseificio</th>${edit ? '<th></th>' : ''}</tr>`;
+    list.forEach(d => {
+      const tr = document.createElement('tr');
+      if (Date.now() - new Date(d.last_seen_at) > 30 * 864e5) tr.style.opacity = '.6';
+      // the code is also on the tablet's home screen, at the bottom («Tablet … · codice …»): a tablet app installed on the home screen
+      // keeps its own storage, so «questo dispositivo» shows only when this page is opened in the same app
+      const mine = `<br><small class="status">codice ${esc(String(d.device_uid).slice(0, 4).toUpperCase())}</small>${d.device_uid === here ? ' <small class="ok">questo dispositivo</small>' : ''}`;
+      tr.innerHTML = `<td>${edit ? `<input type="text" maxlength="40" data-name value="${esc(d.named ? d.label : '')}" placeholder="${esc(suggest(d))}" aria-label="Nome del dispositivo" style="min-width:160px">` : `<b>${esc(d.name)}</b>`}${mine}</td>
+        <td>${esc(kind(d))}</td>
+        <td class="nw">${esc(ntTime(d.last_seen_at))}${d.staff ? '<br><small>' + esc(d.staff) + '</small>' : ''}</td>
+        <td class="nw">${esc(d.app_version || '—')} ${d.latest ? '<small class="ok">aggiornata</small>' : '<small class="ko">vecchia</small>'}${d.queue_len ? `<br><small class="ko">${d.queue_len} da inviare</small>` : ''}</td>
+        <td>${edit ? `<label style="text-transform:none;letter-spacing:0;font-weight:400"><input type="checkbox" data-floor${d.floor ? ' checked' : ''}> sì</label>` : d.floor ? '<b>sì</b>' : '—'}</td>`;
+      if (edit) {
+        const td = document.createElement('td');
+        td.append(saveBtn(async () => {
+          const name = tr.querySelector('[data-name]').value.trim() || suggest(d), floor = tr.querySelector('[data-floor]').checked;
+          const { error } = await sb.rpc('set_device', { p_device_uid: d.device_uid, p_label: name, p_floor: floor });
+          if (error) throw error;
+          if (d.device_uid === here) { try { localStorage.setItem('fabula_device', name); } catch {} }
+          UI.after(loadDevices);
+        }));
+        tr.append(td);
+      }
+      t.append(tr);
+    });
+    const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(t); box.append(wrap);
+    if (edit) { const h = document.createElement('div'); h.className = 'hint'; h.style.marginTop = '6px';
+      h.textContent = 'Nome vuoto = quello suggerito in grigio. Il tablet prende il nuovo nome al prossimo collegamento (entro 5 minuti).'; box.append(h); }
   }
   async function loadNotify() {
     const meBox = $('notify-me'), allBox = $('notify-all'); if (!meBox) return;

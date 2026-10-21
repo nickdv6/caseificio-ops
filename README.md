@@ -18,6 +18,28 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## Only the floor tablet counts; every device has a name (v1.14)
+Re-audit of 19/10, item R-04 (and audit A-35). The go-live check «Tablet di produzione aggiornato» ticked for any device on the latest
+app: a socio's iPhone turned it green on 19/10. Every device was «tablet-1», so nobody could tell the floor tablet from a phone.
+Migration `v114a`, app `perla-v80`.
+- **`devices.floor`, `named_at`, `named_by`.** Configurazione → Utenti e accessi → **Dispositivi** (`device_list()`, Sistema ≥ vede)
+  lists every device: name, what it is (from the browser; an iPad on Safari reads «Mac o iPad»), who used it last, app (aggiornata /
+  vecchia), records waiting, and a code. The titolare or a socio (Sistema = gestisce, `set_device()`) names it and ticks «Tablet del
+  caseificio». Names are unique and 2–40 characters; each change goes to «Registro modifiche» (Dispositivi).
+- **The code** (first 4 characters of the device id) is also on the tablet's Home, at the bottom: «Tablet «…» · codice …». An app
+  installed on the home screen keeps its own storage, so the code is how the tablet is found in the list.
+- **A named device keeps its name.** `device_checkin` no longer overwrites it with the tablet's `?device=` label and returns it; the
+  tablet adopts it (its records and refused saves carry it). Messages call an unnamed device by what it is and who used it («iPhone
+  di Nick»).
+- **Only floor tablets count** for `ops_dashboard()` «tablet_checkin» (seen within 2 days, latest app) and the trial's «Giorno 1 ·
+  tablet di produzione collegato»; the detail names the tablet or says how to mark one. `device_watch` warns about an old app only on
+  floor tablets; records waiting too long are still warned on every device.
+- **«Latest app» = that version or newer** (`_app_ver_num`): the hourly site check can lag a release by up to an hour. The tablet's
+  «Aggiorna» banner now shows only when the app in line is newer than its own (before, an up-to-date tablet was told to update
+  during that hour).
+- **Tests:** `prod-test/test_v114_floor_tablet.sql` 25/25; `infra-test/test_devices_watchdog.sql` marks its tablet as floor;
+  browser `tablet-test/v114_e2e.py` 16/16 (check-in, the card on a phone, naming, the tablet adopting the name, the banner).
+
 ## The number check without false alarms (v1.13)
 Re-audit of 19/10, item R-03. «Perché?» (v1.06) compares each number and date a bot writes with the data it read. In its first week it
 flagged 2 messages, both wrongly: Controllo sistema 19/10 («nomi provvisori: invariati dal 16/10» outside brackets, «(erano 3 il

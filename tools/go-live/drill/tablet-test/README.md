@@ -237,3 +237,9 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
     still on app.bubalina.it; a password refused for its kinds of character says so; «Cambia email» moves a login left on the old
     address; the welcome page with no link says where links come from and (v1.10a) how long a link lasts, from the settings.
     Expect `FAILURES: none` (14 checks). Run it after v109_e2e.
+
+33. `python3 v114_e2e.py` (v1.14 «Dispositivi», R-04; pages on :8794; restore_drill with v114a and PostgREST on :3000) — the tablet checks
+    in as «tablet-1» and shows its name and code on Home; Configurazione → Utenti e accessi → Dispositivi on a phone lists it with the
+    same code, what it is and who used it; the titolare names it and ticks «Tablet del caseificio» (database, «Registro modifiche»,
+    go-live check); the tablet adopts the name at its next check-in; «Aggiorna» only when the app in line is newer than the tablet's.
+    It clears `fabula.devices` first. Expect `FAILURES: none` (16 checks).
