@@ -29,6 +29,10 @@ tr.tot td{border-bottom:0;font-weight:600}
 .sig{margin-top:30px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:30px;font-size:.85rem;color:var(--muted)}.sig div{border-top:1px solid var(--rule);padding-top:4px}
 .empty{color:var(--muted);font-style:italic}
 .badge{display:inline-block;font-family:var(--display);font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--accent);color:#fff;margin-left:8px;vertical-align:middle}
+/* v1.15: an annulled DDT shows it on screen and on paper */
+.sheet{position:relative}.void{border:3px solid var(--warn);color:var(--warn);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-weight:600}
+.sheet.voided::after{content:'ANNULLATO';position:absolute;top:38%;left:0;right:0;text-align:center;font:700 92px/1 var(--display);color:rgba(180,71,44,.16);transform:rotate(-18deg);pointer-events:none}
+button.danger{border-color:var(--warn);color:var(--warn);cursor:pointer}
 .incomplete{max-width:800px;margin:0 auto 12px;background:#fbe9e7;border:2px solid var(--warn);color:var(--warn);border-radius:8px;padding:10px 14px;font-weight:600}
 @media (max-width:600px){ .parties,.top,.sig{grid-template-columns:1fr} .doc{text-align:left} .sheet{padding:18px} }
 @media print{ .incomplete{display:none} body.blockprint .sheet{display:none} body.blockprint::before{content:'Documento incompleto: completa i dati azienda (Configurazione → Azienda) prima di stampare il DDT';display:block;padding:40px;font:600 18px sans-serif}
@@ -36,7 +40,7 @@ tr.tot td{border-bottom:0;font-weight:600}
 </style>
 </head>
 <body>
-<div class="ctl"><label for="id">Spedizione</label><input type="text" id="id" placeholder="DDT-2026-0001 o id" style="width:230px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
+<div class="ctl"><label for="id">Spedizione</label><input type="text" id="id" placeholder="DDT-2026-0001 o id" style="width:230px"><button class="p" id="go">Mostra</button><button id="print">Stampa / PDF</button><button id="cancel" class="danger" hidden>Annulla questo DDT</button><a href="console.html#ops" style="color:var(--muted);margin-left:auto">← console</a></div>
 <div class="incomplete" id="incomplete" hidden></div>
 <div class="sheet" id="sheet"><div class="empty">Accedi dalla console o dal tablet, poi indica il numero DDT.</div></div>
 <script src="vendor/supabase.js"></script>
@@ -58,8 +62,12 @@ tr.tot td{border-bottom:0;font-weight:600}
   const companyGaps = (cs, legal, piva, address) => !cs || !cs.length ? ['i dati azienda (non letti: ricarica la pagina)']
     : [!String(legal || '').trim() && 'ragione sociale', !/^(IT)?\s*\d{11}$/i.test(String(piva || '').trim()) && 'P.IVA', !String(address || '').trim() && 'indirizzo'].filter(Boolean);
   const addressWarn = (cs, address) => cs && cs.length && String(address || '').trim() && !isStreet(String(address)) ? `Controlla l'indirizzo dell'azienda («${String(address).trim()}»): manca la via con il numero? (Configurazione → Azienda)` : '';
+  // v1.15: «Annulla questo DDT» for who manages shipments (Spedizioni = gestisce), while the goods have not left; the database checks again
+  let level = null;
+  const shipLevel = async () => { if (level !== null) return level; const { data } = await sb.rpc('my_permissions'); level = Number((data && data.areas && data.areas.spedizioni) || 0); return level; };
+  let cur = null;
   async function show(ref) {
-    const sheet = $('sheet');
+    const sheet = $('sheet'); $('cancel').hidden = true; sheet.classList.remove('voided'); cur = null;
     $('incomplete').hidden = true; $('print').disabled = false; document.body.classList.remove('blockprint');
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { sheet.innerHTML = '<div class="empty">Non sei collegato: apri prima la <a href="console.html">console</a> ed entra.</div>'; return; }
@@ -81,7 +89,7 @@ tr.tot td{border-bottom:0;font-weight:600}
     sheet.innerHTML = `
       <div class="top">
         <div><h1>${esc(BRAND.name)}</h1><div class="sub">${esc([C.legal_name, C.address || 'Agropoli (SA)', C.piva ? 'P.IVA ' + C.piva : '', C.email, C.phone].filter(Boolean).join(' · '))}</div></div>
-        <div class="doc"><div class="l">${online ? 'Packing list · ordine online' : 'Documento di trasporto'}</div><div class="n">${esc(d.ddt_number)}</div><div class="l">${fmtD(d.ship_date)}${online ? ' · ordine ' + esc(d.order_number) : ''} <span class="badge">${esc({ picked: 'preparato', in_transit: 'spedito', delivered: 'consegnato', planned: 'pianificato', returned: 'reso' }[d.status] || d.status)}</span></div></div>
+        <div class="doc"><div class="l">${online ? 'Packing list · ordine online' : 'Documento di trasporto'}</div><div class="n">${esc(d.ddt_number)}</div><div class="l">${fmtD(d.ship_date)}${online ? ' · ordine ' + esc(d.order_number) : ''} <span class="badge"${d.status === 'cancelled' ? ' style="background:var(--warn)"' : ''}>${esc({ picked: 'preparato', in_transit: 'spedito', delivered: 'consegnato', planned: 'pianificato', returned: 'reso', cancelled: 'annullato' }[d.status] || d.status)}</span></div></div>
       </div>
       <div class="parties">
         <div class="box"><div class="l">Destinatario</div><b>${esc(destName)}</b>${destAddr.map(x => `<div>${esc(x)}</div>`).join('')}${d.customer_piva ? `<div>P.IVA ${esc(d.customer_piva)}</div>` : ''}${(a.phone || d.customer_phone) ? `<div>${esc(a.phone || d.customer_phone)}</div>` : ''}${(d.order_email || d.customer_email) ? `<div>${esc(d.order_email || d.customer_email)}</div>` : ''}${
@@ -105,7 +113,26 @@ tr.tot td{border-bottom:0;font-weight:600}
                : `<div class="note">Il presente documento di trasporto è emesso ai sensi del DPR 472/1996. Fattura differita entro il 15 del mese successivo. Merce viaggia a rischio del destinatario, in regime refrigerato.</div>
       <div class="sig"><div>Firma conducente</div><div>Firma destinatario</div><div>Per ${esc(BRAND.name)}</div></div>`}`;
     BRAND.title(d.ddt_number);
+    cur = d;
+    if (d.status === 'cancelled') {
+      sheet.classList.add('voided');
+      const when = d.cancelled_at ? new Date(d.cancelled_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '';
+      sheet.insertAdjacentHTML('afterbegin', `<div class="void">DDT ANNULLATO il ${esc(when)}${d.cancelled_by ? ' da ' + esc(d.cancelled_by) : ''}: ${esc(d.cancel_reason || '')}. Non vale per il trasporto; il numero resta nel registro. La merce è tornata in giacenza.</div>`);
+    } else if (['planned', 'picked'].includes(d.status) && !d.shopify_fulfilled_at && await shipLevel() >= 3) $('cancel').hidden = false;
   }
+  $('cancel').onclick = async () => {
+    const d = cur; if (!d) return;
+    const kg = (d.lines || []).reduce((a, l) => a + Number(l.qty || 0), 0);
+    const back = d.order_number ? `l'ordine ${d.order_number} torna in «Da spedire» sul tablet` : 'la spedizione diretta resta annullata';
+    const why = (prompt(`Annullare il DDT ${d.ddt_number} (${d.customer || 'cliente'}, ${num(kg)} kg)?\n\nLa merce torna in giacenza sui suoi lotti, ${back} e il numero resta nel registro come annullato. Se la merce è già partita, non annullarlo: è un reso.\n\nMotivo (obbligatorio):`) || '').trim();
+    if (!why) return;
+    $('cancel').disabled = true;
+    try {
+      const { data: r, error } = await sb.rpc('cancel_shipment', { p_shipment_id: d.shipment_id, p_reason: why });
+      if (error) { $('incomplete').textContent = error.message; $('incomplete').hidden = false; return; }
+      await show(d.shipment_id);
+    } finally { $('cancel').disabled = false; }
+  };
   const fromUrl = new URLSearchParams(location.search).get('id') || new URLSearchParams(location.search).get('ddt');
   if (fromUrl) { $('id').value = fromUrl; show(fromUrl); } else show(null);
   $('go').onclick = () => { const v = $('id').value.trim(); history.replaceState(null, '', '?id=' + encodeURIComponent(v)); show(v); };

@@ -243,3 +243,9 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
     same code, what it is and who used it; the titolare names it and ticks «Tablet del caseificio» (database, «Registro modifiche»,
     go-live check); the tablet adopts the name at its next check-in; «Aggiorna» only when the app in line is newer than the tablet's.
     It clears `fabula.devices` first. Expect `FAILURES: none` (16 checks).
+
+34. `python3 v115_e2e.py` (v1.15 «Annulla DDT»; pages on :8795; restore_drill with v115a and PostgREST on :3000) — Console → Operazioni →
+    «Spedizioni e DDT» on a phone as the titolare: the DDT just packed with «Annulla DDT»; a prompt left empty annuls nothing; with a reason
+    the goods go back on the lot, the order is to ship again, the row reads «annullato» with who and why; the DDT page of an annulled DDT
+    shows ANNULLATO (banner, red badge, watermark); on a live DDT page «Annulla questo DDT» shows for the titolare and not for a production
+    login, and annuls. Expect `FAILURES: none` (14 checks).

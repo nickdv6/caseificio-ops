@@ -729,7 +729,7 @@
   async function loadSettingNames() { if (Object.keys(SETNAME).length) return; const { data } = await sb.from('settings').select('key, description'); (data || []).forEach(r => { SETNAME[r.key] = r.description || r.key; }); }
   const AUD_T = { settings: 'Parametri', approvals: 'Approvazioni', recipes: 'Ricette', standing_orders: 'Ordini fissi', staff: 'Personale', products: 'Prodotti', equipment: 'Macchine',
     compliance_deadlines: 'Scadenze', haccp_control_points: 'Punti HACCP', process_steps: 'Processo', supplier_products: 'Condizioni fornitori', supplier_prices: 'Listini',
-    farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni', devices: 'Dispositivi' };
+    farm_supply: 'Latte Masseria', shopify_variant_map: 'Prodotti Shopify', training_courses: 'Corsi', rota_entries: 'Turni', devices: 'Dispositivi', shipments: 'Spedizioni (DDT)' };
   const AUD_A = { insert: 'aggiunto', update: 'modificato', delete: 'eliminato' };
   const short = v => { if (v == null) return '∅'; const s = typeof v === 'object' ? JSON.stringify(v) : String(v); return s.length > 60 ? s.slice(0, 57) + '…' : s; };  async function loadAudit() {
     const sel = $('aud-table'); if (sel.options.length === 1) Object.entries(AUD_T).forEach(([k, l]) => sel.add(new Option(l, k)));

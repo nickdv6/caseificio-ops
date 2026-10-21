@@ -1,13 +1,11 @@
 {
-  "version": "v1.14",
-  "title_it": "Conta solo il tablet del caseificio: ogni dispositivo ha un nome (Configurazione → Utenti e accessi → Dispositivi)",
+  "version": "v1.15",
+  "title_it": "«Annulla DDT»: un ordine preparato male si annulla finché la merce non è partita (Console → Operazioni → Spedizioni e DDT)",
   "order": [
     "database",
     "functions"
   ],
   "force": [],
-  "after_it": [
-    "Quando il tablet del caseificio c'è: aprilo una volta con il Wi-Fi, leggi il codice in fondo alla sua schermata e in Configurazione → Utenti e accessi → Dispositivi dagli un nome e segna «Tablet del caseificio»"
-  ],
+  "after_it": [],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }

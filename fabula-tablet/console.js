@@ -490,7 +490,7 @@
                    if (/^\d{1,12}$/.test(p.perche || '')) UI.why.open(p.perche); },   // v1.06: the «perché» link in Telegram, console.html#oggi&perche=<id>
     loaders: {
       oggi: loadOggi,
-      ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders()]); },
+      ops: async () => { const b = await getBrief(); renderProcurement(b.procurement_signals); await Promise.all([renderPoSend(), renderWholesale(), loadMilk7(), loadEffluent(), loadShopifyOrders(), loadShipments()]); },
       trend: loadTrend,
       anag: () => Promise.all([loadParties(), loadTerms(), window.SUPPLIES.load()]),
       ricette: () => Promise.all([loadRecipes(), loadPresets()]),
@@ -1092,6 +1092,44 @@
       const wrap = document.createElement('div'); wrap.style.overflowX = 'auto'; wrap.append(tbl); card.append(wrap); box.append(card);
     });
     const note = document.createElement('div'); note.className = 'hint'; note.textContent = 'Le dosi attuali sono segnaposto finché i partner non confermano caglio, sale, acido citrico e imballi reali. La revisione mensile propone correzioni quando i casari dosano sistematicamente in modo diverso.'; box.append(note);
+  }
+
+  // v1.15: the DDT register of the last 30 days, annulled DDTs included (their number stays in the series). «Annulla DDT» while the
+  // goods have not left (Spedizioni = gestisce): stock back on its lots, the order back in «Da spedire», the reason in the register.
+  const SSTATUS = { planned: ['da preparare', 'status'], picked: ['preparato, non partito', ''], in_transit: ['partito', 'ok'], delivered: ['consegnato', 'ok'], returned: ['reso', 'status'], cancelled: ['annullato', 'ko'] };
+  const ddtKg = d => (d.lines || []).reduce((a, l) => a + Number(l.qty || 0), 0);
+  async function loadShipments() {
+    const box = $('ddt-list'), card = $('ddt-card'); if (!box) return;
+    if (!PERM.can('spedizioni', 1)) { card.hidden = true; return; }
+    const { data, error } = await sb.from('v_shipment_doc')
+      .select('shipment_id, ddt_number, ship_date, status, channel, order_number, customer, lines, packed_by, packed_at, cancelled_at, cancel_reason, cancelled_by, shopify_fulfilled_at')
+      .gte('ship_date', daysAgo(30)).order('ddt_number', { ascending: false }).limit(60);
+    if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    if (!data || !data.length) { box.innerHTML = '<div class="empty">Nessun DDT negli ultimi 30 giorni.</div>'; return; }
+    const canCancel = PERM.can('spedizioni', 3), open = d => ['planned', 'picked'].includes(d.status) && !d.shopify_fulfilled_at;
+    const nOpen = data.filter(open).length, nCanc = data.filter(d => d.status === 'cancelled').length;
+    box.innerHTML = `<div class="status" style="margin-bottom:6px">${data.length} DDT${nOpen ? ` · <b>${nOpen} preparati, non partiti</b>` : ''}${nCanc ? ` · ${nCanc} annullati` : ''}</div>`
+      + '<table class="nw2"><tr><th>DDT</th><th>Giorno</th><th>Cliente</th><th>Ordine</th><th class="num">kg</th><th>Stato</th><th></th></tr>' + data.map(d => {
+        const [lbl, cls] = SSTATUS[d.status] || [d.status, ''];
+        const when = d.cancelled_at ? new Date(d.cancelled_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : '';
+        const why = d.status === 'cancelled' ? `<br><small>${esc(when)}${d.cancelled_by ? ' · ' + esc(d.cancelled_by) : ''}: ${esc(d.cancel_reason || '')}</small>` : '';
+        const btn = canCancel && open(d) ? `<button class="btn sm sec" data-cancel-ddt="${esc(d.shipment_id)}">Annulla DDT</button>` : '';
+        return `<tr${d.status === 'cancelled' ? ' style="opacity:.75"' : ''}><td><a class="lnk" href="spedizione.html?id=${encodeURIComponent(d.shipment_id)}" target="_blank" rel="noopener">${esc(d.ddt_number)}</a></td>`
+          + `<td>${esc(fmtD(d.ship_date).slice(0, 5))}</td><td>${esc(d.customer || '—')}</td><td>${esc(d.order_number || 'diretta')}</td><td class="num">${num(ddtKg(d))}</td>`
+          + `<td><span class="${cls}">${esc(lbl)}</span>${why}</td><td>${btn}</td></tr>`; }).join('') + '</table>';
+    box.querySelectorAll('[data-cancel-ddt]').forEach(b => b.onclick = () => cancelDdt(data.find(d => d.shipment_id === b.dataset.cancelDdt), b));
+  }
+  async function cancelDdt(d, b) {
+    if (!d) return;
+    const back = d.order_number ? `l'ordine ${d.order_number} torna in «Da spedire» sul tablet` : 'la spedizione diretta resta annullata';
+    const why = (prompt(`Annullare il DDT ${d.ddt_number} (${d.customer || 'cliente'}, ${num(ddtKg(d))} kg)?\n\nLa merce torna in giacenza sui suoi lotti, ${back} e il numero resta nel registro come annullato. Se la merce è già partita, non annullarlo: è un reso.\n\nMotivo (obbligatorio):`) || '').trim();
+    if (!why) return;
+    await act(b, async () => {
+      const { data: r, error } = await sb.rpc('cancel_shipment', { p_shipment_id: d.shipment_id, p_reason: why });
+      if (error) throw error;
+      toast(`${r.ddt_number} annullato: ${num(r.kg_back)} kg di nuovo in giacenza${r.order_to_ship ? ` · ${r.order_number} di nuovo da spedire` : ''}`);
+      await Promise.all([loadShipments(), loadShopifyOrders(), renderWholesale()]);
+    });
   }
 
   const OSTATUS = { draft: ['non pagato', 'status'], confirmed: ['pagato · da spedire', 'ko'], fulfilled: ['spedito', 'ok'], cancelled: ['annullato', 'status'], refunded: ['rimborsato', 'status'] };

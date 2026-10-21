@@ -18,6 +18,27 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## «Annulla DDT» (v1.15)
+Backlog from v1.04 (Fulfilment on the go-live board): a wrongly packed order was a dead end. A numbered DDT can't be deleted or changed
+from a login (the yearly series must stay gap-free), and nothing undid the packing. Migration `v115a`, app `perla-v81`.
+- **`cancel_shipment(id, reason)`** (Spedizioni = gestisce: titolare, socio, spedizioni; reason of 5+ characters) annuls a DDT whose goods
+  have not left: status `cancelled` (new value), with `cancelled_at`, `cancelled_by_id`, `cancel_reason`. The number stays in the series
+  as «annullato». Each line goes back to stock on its own lot as a `sale` move with the opposite sign (source `ddt_annullato`), so the day's
+  sales net out. A wholesale order goes back to `confirmed`, so it is in «Da spedire» again (an online order stayed `confirmed`); the lot
+  the packing wrote on the order lines is cleared. One row in `audit_log` («Registro modifiche» → Spedizioni (DDT)).
+- **Goods that have left are not annulled** (in transit, delivered, fulfilled on Shopify): that is a return.
+- **By hand from a login** (trigger `shipments_ddt_guard`, now on every update): no setting or clearing the annulment, no change to an
+  annulled DDT; the delete refusal now points to «Annulla DDT».
+- **An annulled DDT is not a shipment:** `v_lot_distribution` (recalls) leaves it out, and so do the go-live «Primo ordine vero preparato»
+  and the trial's day 3. `v_shipment_doc` gives who annulled, when and why. If the Shopify sync fulfils an order just as its DDT is
+  annulled, `mark_shopify_fulfilled` keeps the DDT annulled and posts an alert to cancel the fulfilment on Shopify.
+- **Where:** Console → Operazioni → **Spedizioni e DDT · 30 giorni** (the register, annulled DDTs included, with «Annulla DDT»), and the
+  DDT page (`spedizione.html`): «Annulla questo DDT» for who manages shipments; an annulled DDT shows ANNULLATO (banner, red badge,
+  watermark, on paper too). The tablet's «🖨 Stampa DDT» after packing opens that page.
+- The new enum value is used only as text inside the migration: the release is one transaction, and a new enum value can't be used
+  before it commits.
+- **Tests:** `prod-test/test_v115_cancel_ddt.sql` 24/24; browser `tablet-test/v115_e2e.py` 14/14.
+
 ## Only the floor tablet counts; every device has a name (v1.14)
 Re-audit of 19/10, item R-04 (and audit A-35). The go-live check «Tablet di produzione aggiornato» ticked for any device on the latest
 app: a socio's iPhone turned it green on 19/10. Every device was «tablet-1», so nobody could tell the floor tablet from a phone.
