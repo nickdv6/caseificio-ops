@@ -38,8 +38,16 @@ marketing, the compliance calendar and the monthly review had none, so 16/10 had
 - **The marketing slot** (Monday and Thursday 07:53) was on live but in no migration: `v112a` adds it where missing.
 - **App** (sw `perla-v79`): Configurazione → Bot says what «Esegui ora» does for the five; «Bot fermi: cosa fare» (in the app and
   SOP-14 rev. 3, `sop/bot_fermi.html/.pdf`) says every bot has a stand-in and only the bot's comment and ready texts wait.
-- **Tests:** `prod-test/test_v112_standins.sql` 33/33 (timing on fixed days, «Esegui ora», each stand-in on the real data functions
-  and on full data). Updated: `test_bot_fallback.sql` (Tuesday 08:10 now also runs the brief and the calendar) and
+- **Review (independent agent, 1 High, 5 Medium, small ones), fixed before release:** the brief offered expired and held lots at the
+  counter (now: expired ones «⚠ da ritirare», held ones never; still-open NCs count too); the monthly review printed held lots as JSON
+  and called a month with CCP gaps «chiuso» (info); «Esegui ora» on the monthly review mid-month re-ran it without asking
+  (`run_bot_fallback` now looks back to the month's slot); marketing said «Niente da fare» with a decision waiting; sales counted at
+  most 15 contacts and listed closed stages as open. Also: units and Italian numbers in the NC line, approval ages from today,
+  «e un'altra», «scadenza 11/10», «Apertura oggi / Aperto dal», B&B, product names in recipe lines, «SIMULAZIONE ·» titles.
+  Left as they are: a late Claude bot after a monthly stand-in records a second recall drill; «Esegui ora» (Sistema 2) can move
+  quotes to approval and create recipe approvals without marketing or HACCP rights (they still need approving).
+- **Tests:** `prod-test/test_v112_standins.sql` 38/38 (timing on fixed days, «Esegui ora», each stand-in on the real data functions
+  and on full data, the review's cases). Updated: `test_bot_fallback.sql` (Tuesday 08:10 now also runs the brief and the calendar) and
   `test_audit_alerts.sql` (the brief's alarm says «Esegui ora»; an unknown bot is still refused).
 
 ## No Consorzio declaration before the DOP control (v1.11)

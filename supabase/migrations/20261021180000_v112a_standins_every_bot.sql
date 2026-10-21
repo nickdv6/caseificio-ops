@@ -40,7 +40,7 @@ CREATE OR REPLACE FUNCTION fabula.bot_fallback_run(p_agent text, p_day date)
 AS $function$
 declare r jsonb; x jsonb; sev text := 'warn'; ttl text; body text; summ text; n int; d date; v_fs text; v_other text;
         v_k int; v_m int; v_n2 int; v_t jsonb; v_w jsonb; v_txt text; v_txt2 text; v_txt3 text; v_nc text; v_exp text; v_when text; v_month text;
-        v_todo text[]; v_lines text[]; v_num numeric; v_num2 numeric; v_cnt int;   -- v1.12 (R-02)
+        v_todo text[]; v_lines text[]; v_num numeric; v_num2 numeric; v_cnt int; v_old text; v_open int; v_gap text;   -- v1.12 (R-02)
 begin
   case p_agent
   when 'milk_planning' then
@@ -150,14 +150,15 @@ begin
     v_todo := '{}'; v_lines := '{}';
     -- requests waiting: the milk plan first, then the oldest
     select count(*), count(*) filter (where ap->>'requested_by' = 'agent:milk_planning'),
-           string_agg(format('• Decidi: %s%s', ap->>'summary',
-                             case when coalesce((ap->>'age_days')::int, 0) > 0 then format(' (in attesa da %s)', fabula.it_n((ap->>'age_days')::int, 'giorno', 'giorni')) else '' end),
+           string_agg(format('• Decidi: %s%s', ap->>'summary',     -- age_days counts to the brief's day: from today it is p_day - d more
+                             case when coalesce((ap->>'age_days')::int, 0) + (p_day - d) > 0
+                                  then format(' (in attesa da %s)', fabula.it_n(coalesce((ap->>'age_days')::int, 0) + (p_day - d), 'giorno', 'giorni')) else '' end),
                       E'\n' order by rn) filter (where rn <= 3)
       into n, v_k, v_txt
       from (select ap, row_number() over (order by coalesce(ap->>'requested_by' = 'agent:milk_planning', false) desc, coalesce((ap->>'age_days')::int, 0) desc) rn
               from jsonb_array_elements(coalesce(r->'pending_approvals', '[]'::jsonb)) ap) pa;
     if n > 0 then
-      v_todo := v_todo || (v_txt || case when n > 3 then format(E'\n• … e altre %s', n - 3) else '' end || E'\n  Dove: Console → Da approvare');
+      v_todo := v_todo || (v_txt || case when n = 4 then E'\n• … e un''altra' when n > 4 then format(E'\n• … e altre %s', n - 3) else '' end || E'\n  Dove: Console → Da approvare');
     end if;
     -- HACCP records of the day that are missing (none are asked before the start: daily_brief empties them)
     select count(*), string_agg(coalesce(cp.name, mc #>> '{}'), ', ' order by cp.sort nulls last, mc #>> '{}')
@@ -174,17 +175,27 @@ begin
       v_todo := v_todo || format('• Manca la lettura serale di %s: %s', v_when, v_other);
       v_m := v_m + 1;
     end if;
-    select string_agg(format('⚠ Non conformità %s di %s: %s%s', coalesce(cp.name, nc->>'point'), v_when, nc->>'value', coalesce(' · ' || nullif(nc->>'action', ''), '')), E'\n')
+    select string_agg(format('⚠ Non conformità %s di %s: %s%s%s', coalesce(cp.name, nc->>'point'), v_when,
+                             case when jsonb_typeof(nc->'value') = 'number' then fabula.it_qty((nc->>'value')::numeric) else nc->>'value' end,
+                             coalesce(' ' || nullif(cp.unit, ''), ''), coalesce(' · ' || nullif(nc->>'action', ''), '')), E'\n')
       into v_nc
       from jsonb_array_elements(coalesce(r #> '{haccp,non_conformities}', '[]'::jsonb)) nc
       left join fabula.haccp_control_points cp on cp.code = nc->>'point';
-    -- finished goods expiring today or tomorrow
-    select string_agg(format('%s lotto %s, %s kg (scade %s)', coalesce(pr.name, sf->>'sku'), sf->>'lot', fabula.it_qty((sf->>'kg')::numeric), fabula.it_day((sf->>'expires')::date)),
-                      '; ' order by sf->>'expires')
-      into v_exp
+    -- finished goods (review 21/10): expired ones are to be withdrawn, those expiring today or tomorrow pushed at the counter; a lot on
+    -- hold is never offered for sale (the HACCP channels speak about it)
+    select string_agg(format('%s lotto %s, %s kg (scaduto %s)', coalesce(pr.name, sf->>'sku'), sf->>'lot', fabula.it_qty((sf->>'kg')::numeric), fabula.it_day((sf->>'expires')::date)),
+                      '; ' order by sf->>'expires') filter (where (sf->>'expires')::date < p_day),
+           string_agg(format('%s lotto %s, %s kg (scade %s)', coalesce(pr.name, sf->>'sku'), sf->>'lot', fabula.it_qty((sf->>'kg')::numeric), fabula.it_day((sf->>'expires')::date)),
+                      '; ' order by sf->>'expires') filter (where (sf->>'expires')::date between p_day and p_day + 1)
+      into v_old, v_exp
       from jsonb_array_elements(coalesce(r->'stock_finished', '[]'::jsonb)) sf left join fabula.products pr on pr.sku = sf->>'sku'
-     where (sf->>'expires')::date <= p_day + 1;
+     where not exists (select 1 from fabula.v_lots_on_hold lh where lh.batch_lot = sf->>'lot');
+    if v_old is not null then v_todo := v_todo || ('⚠ Scaduti, da ritirare (non venderli): ' || v_old); end if;
     if v_exp is not null then v_todo := v_todo || ('• Spingi al banco: ' || v_exp); end if;
+    v_open := coalesce((r #>> '{tasks,open_non_conformities}')::int, 0);
+    if v_open > 0 then
+      v_todo := v_todo || format('⚠ %s (Autocontrollo → Non conformità)', fabula.it_n(v_open, 'non conformità ancora aperta', 'non conformità ancora aperte'));
+    end if;
     if jsonb_array_length(coalesce(r->'procurement_signals', '[]'::jsonb)) > 0 then
       v_todo := v_todo || format('• Scorte: %s sotto la soglia (l''ordine proposto è in Console → Da approvare, se il fornitore c''è)',
                                  fabula.it_n(jsonb_array_length(r->'procurement_signals'), 'materiale', 'materiali'));
@@ -235,13 +246,17 @@ begin
       v_lines := v_lines || format('• Attestati HACCP in scadenza entro 30 giorni: %s (Autocontrollo → Formazione)', jsonb_array_length(r #> '{tasks,training_expiring}'));
     end if;
     ttl := case when v_nc is not null then format('⚠ Non conformità HACCP di %s: vedi Autocontrollo', v_when)
+                when v_old is not null then '⚠ Prodotti scaduti in magazzino: ritirali'
+                when v_open > 0 then format('⚠ %s da chiudere (Autocontrollo)', fabula.it_n(v_open, 'non conformità aperta', 'non conformità aperte'))
                 when v_k > 0 then 'Approva il piano latte (Console → Da approvare)'
                 when v_m > 0 then format('Registra i controlli HACCP di %s (%s)', v_when, fabula.it_n(v_m, 'mancante', 'mancanti'))
                 when n > 0 then format('%s da decidere (Console → Da approvare)', fabula.it_n(n, 'richiesta', 'richieste'))
                 when v_exp is not null then 'Spingi al banco i prodotti in scadenza'
                 else format('%s tutto in ordine', upper(left(v_when, 1)) || substr(v_when, 2)) end;
-    sev := case when v_nc is not null or v_k > 0 or (v_m > 0 and jsonb_array_length(coalesce(r->'production', '[]'::jsonb)) > 0) then 'alert'
+    sev := case when v_nc is not null or v_old is not null or v_open > 0 or v_k > 0
+                     or (v_m > 0 and jsonb_array_length(coalesce(r->'production', '[]'::jsonb)) > 0) then 'alert'
                 when n > 0 or v_m > 0 or v_exp is not null then 'warn' else 'info' end;
+    if coalesce((r->>'is_simulation')::boolean, false) then ttl := 'SIMULAZIONE · ' || ttl; end if;
     summ := ttl;
     body := concat_ws(E'\n\n', v_nc,
                       case when cardinality(v_todo) > 0 then E'Da fare:\n' || array_to_string(v_todo, E'\n') end,
@@ -278,20 +293,28 @@ begin
     -- the numbers and the contacts due; the ready messages and the search for new venues stay with the bot
     r := fabula.sales_status(p_day);
     select count(*), count(*) filter (where coalesce((ad->>'overdue_days')::int, 0) > 0),
-           string_agg(format('• %s (%s, %s%s) · %s%s', ad->>'name', ad->>'segment', ad->>'town', coalesce(', ' || nullif(ad->>'phone', ''), ''),
+           string_agg(format('• %s (%s, %s%s) · %s%s', ad->>'name', case ad->>'segment' when 'bnb' then 'B&B' else ad->>'segment' end, ad->>'town',
+                             coalesce(', ' || nullif(ad->>'phone', ''), ''),
                              coalesce(nullif(ad->>'next_action', ''), 'da contattare'),
                              case when coalesce((ad->>'overdue_days')::int, 0) > 0 then format(' · %s di ritardo', fabula.it_n((ad->>'overdue_days')::int, 'giorno', 'giorni')) else '' end),
                       E'\n' order by rn) filter (where rn <= 6)
       into n, v_k, v_txt
       from jsonb_array_elements(coalesce(r->'actions_due', '[]'::jsonb)) with ordinality al(ad, rn);
+    -- sales_status lists at most 15: the counts come from the leads themselves (same rule: open stage, action due by tomorrow)
+    select greatest(n, count(*)::int), greatest(v_k, (count(*) filter (where sl.next_action_date < p_day))::int) into n, v_k
+      from fabula.sales_leads sl where sl.stage in ('nuovo', 'contattato', 'degustazione', 'offerta') and sl.next_action_date <= p_day + 1;
     v_lines := array[case when coalesce((r->>'plan_missing')::boolean, false) then '• Obiettivi non attivi: manca la data di apertura (Configurazione → Parametri → Marketing)'
                           when (r->>'plan_start')::date > p_day then format('• Obiettivi dal %s · vendite del mese € %s', fabula.it_day((r->>'plan_start')::date),
                                                                              fabula.it_num((r #>> '{totals,mtd_revenue_eur}')::numeric, 0))
                           else format('• Totale del mese: %s kg al giorno, obiettivo %s · € %s su € %s', fabula.it_num((r #>> '{totals,mtd_kg_day}')::numeric, 1),
                                       fabula.it_num((r #>> '{totals,target_kg_day}')::numeric, 1), fabula.it_num((r #>> '{totals,mtd_revenue_eur}')::numeric, 0),
                                       fabula.it_num((r #>> '{totals,month_target_eur}')::numeric, 0)) end];
-    select '• Locali aperti: ' || coalesce(r #>> '{pipeline,active_n}', '0') || coalesce(' (' || string_agg(format('%s %s', bs->>'stage', bs->>'n'), ', ') || ')', '')
-      into v_txt2 from jsonb_array_elements(coalesce(r #> '{pipeline,by_stage}', '[]'::jsonb)) bs;
+    select '• Locali aperti: ' || coalesce(r #>> '{pipeline,active_n}', '0') || coalesce(' (' || string_agg(format('%s %s', bs->>'n',
+             case bs->>'stage' when 'nuovo' then case when (bs->>'n')::int = 1 then 'nuovo' else 'nuovi' end
+                               when 'contattato' then case when (bs->>'n')::int = 1 then 'contattato' else 'contattati' end
+                               when 'degustazione' then 'in degustazione' else 'con offerta' end), ', ') || ')', '')
+      into v_txt2 from jsonb_array_elements(coalesce(r #> '{pipeline,by_stage}', '[]'::jsonb)) bs
+     where bs->>'stage' in ('nuovo', 'contattato', 'degustazione', 'offerta');
     v_lines := v_lines || v_txt2;
     select '• Fermi da riprendere: ' || string_agg(format('%s (%s)', st->>'name',
              case when st->>'days_since_contact' is null then 'mai sentito' else fabula.it_n((st->>'days_since_contact')::int, 'giorno', 'giorni') end), ', ' order by rn) filter (where rn <= 5)
@@ -336,14 +359,18 @@ begin
     if v_n2 > 0 then v_todo := v_todo || format('• In attesa di decisione: %s, € %s (Console → Da approvare)', v_n2, fabula.it_num(v_num, 0)); end if;
     if v_cnt > 0 then v_todo := v_todo || format('• Preventivi da chiedere entro 3 settimane (%s): %s', v_cnt, v_txt3); end if;
     if v_m > 0 then
-      v_todo := v_todo || (select format('• Permessi da chiedere: %s, il primo serve entro %s%s', v_m, fabula.it_day(min((pt->>'planned_on')::date)),
+      v_todo := v_todo || (select format('• Permessi da chiedere: %s%s%s', v_m,
+                                         case when min((pt->>'planned_on')::date) is not null then ', il primo serve entro ' || fabula.it_day(min((pt->>'planned_on')::date)) else '' end,
                                          case when v_m <= 3 then ' (' || string_agg(pt->>'title', '; ') || ')' else '' end)
                              from jsonb_array_elements(r #> '{local,permits_to_request}') pt);
     end if;
     if coalesce((r #>> '{local,opening_missing}')::boolean, false) then
       v_todo := v_todo || '• Imposta la data di apertura (Configurazione → Parametri → Marketing): senza data le scadenze di insegne e permessi non si calcolano.'::text;
     else
-      v_lines := v_lines || format('• Apertura %s, tra %s', fabula.it_day((r #>> '{local,opening_date}')::date), fabula.it_n((r #>> '{local,days_to_opening}')::int, 'giorno', 'giorni'));
+      v_lines := v_lines || case when (r #>> '{local,days_to_opening}')::int > 0
+                                 then format('• Apertura %s, tra %s', fabula.it_day((r #>> '{local,opening_date}')::date), fabula.it_n((r #>> '{local,days_to_opening}')::int, 'giorno', 'giorni'))
+                                 when (r #>> '{local,days_to_opening}')::int = 0 then '• Apertura oggi'
+                                 else format('• Aperto dal %s', fabula.it_day((r #>> '{local,opening_date}')::date)) end;
     end if;
     v_lines := v_lines || (select format('• Budget della campagna € %s: impegnati € %s, spesi € %s', fabula.it_num(coalesce(sum((cg->>'planned_eur')::numeric), 0), 0),
                                          fabula.it_num(coalesce(sum((cg->>'committed_eur')::numeric), 0), 0), fabula.it_num(coalesce(sum((cg->>'spent_eur')::numeric), 0), 0))
@@ -352,7 +379,8 @@ begin
       v_lines := v_lines || format('• Voci della campagna previste entro 14 giorni: %s', jsonb_array_length(r #> '{local,due_14d}'));
     end if;
     if jsonb_array_length(coalesce(r #> '{local,live}', '[]'::jsonb)) > 0 then
-      v_lines := v_lines || (select format('• Azioni attive: %s, %s ordini, € %s di vendite su € %s di costo', count(*), coalesce(sum((lv->>'orders')::numeric), 0),
+      v_lines := v_lines || (select format('• Azioni attive: %s, %s, € %s di vendite su € %s di costo', count(*),
+                                           fabula.it_n(coalesce(sum((lv->>'orders')::numeric), 0), 'ordine', 'ordini'),
                                            fabula.it_num(coalesce(sum((lv->>'revenue_eur')::numeric), 0), 0), fabula.it_num(coalesce(sum((lv->>'cost_eur')::numeric), 0), 0))
                                from jsonb_array_elements(r #> '{local,live}') lv);
     end if;
@@ -364,8 +392,16 @@ begin
                 when v_k > 0 then format('%s da decidere', fabula.it_n(v_k, 'preventivo arrivato', 'preventivi arrivati'))
                 when v_cnt > 0 then format('Chiedi %s', fabula.it_n(v_cnt, 'preventivo', 'preventivi'))
                 when coalesce((r #>> '{local,opening_missing}')::boolean, false) then 'Imposta la data di apertura'
-                when v_m > 0 then (select format('Permessi da chiedere: %s (il primo entro %s)', v_m, fabula.it_day(min((pt->>'planned_on')::date)))
+                when v_m > 0 then (select format('Permessi da chiedere: %s%s', v_m,
+                                                 case when min((pt->>'planned_on')::date) is not null then format(' (il primo entro %s)', fabula.it_day(min((pt->>'planned_on')::date))) else '' end)
                                    from jsonb_array_elements(r #> '{local,permits_to_request}') pt)
+                when v_n2 > 0 then format('%s da decidere (Console → Da approvare)', fabula.it_n(v_n2, 'voce', 'voci'))
+                when jsonb_array_length(coalesce(r #> '{local,due_14d}', '[]'::jsonb)) > 0
+                     then format('Campagna locale: %s entro 14 giorni', fabula.it_n(jsonb_array_length(r #> '{local,due_14d}'), 'voce', 'voci'))
+                when coalesce((r #>> '{content,content_gaps}')::int, 0) > 0
+                     then format('Contenuti: %s nei prossimi 7', fabula.it_n((r #>> '{content,content_gaps}')::int, 'giorno senza post', 'giorni senza post'))
+                when coalesce((r #>> '{content,to_review}')::int, 0) > 0
+                     then format('Contenuti: %s da rivedere', fabula.it_n((r #>> '{content,to_review}')::int, 'post', 'post'))
                 else 'Niente da fare questa settimana' end;
     sev := case when n > 0 and coalesce((r #>> '{local,days_to_opening}')::int, 999) <= 60 then 'alert'
                 when n > 0 or v_k > 0 or v_cnt > 0 then 'warn' else 'info' end;
@@ -393,20 +429,21 @@ begin
     if jsonb_array_length(coalesce(x->'lab_results_pending', '[]'::jsonb)) > 0 then
       v_todo := v_todo || format('• Esiti di laboratorio in attesa: %s (Autocontrollo → Laboratorio)', jsonb_array_length(x->'lab_results_pending'));
     end if;
-    select count(*), string_agg(format('• %s%s%s · era il %s, %s fa%s',
+    select count(*), string_agg(format('• %s%s%s · scadenza %s, %s fa%s',
                                        case it->>'kind' when 'calibration' then 'Taratura ' when 'maintenance' then 'Manutenzione ' when 'training' then 'Attestato ' when 'campionamento' then 'Analisi ' else '' end,
                                        it->>'subject', coalesce(' (' || nullif(it->>'ref', '') || ')', ''), to_char((it->>'due_on')::date, 'DD/MM'),
                                        fabula.it_n(abs((it->>'days')::int), 'giorno', 'giorni'), coalesce(' · ' || nullif(it->>'contact', ''), '')),
                                 E'\n' order by rn) filter (where rn <= 8)
       into n, v_txt from jsonb_array_elements(coalesce(r->'overdue', '[]'::jsonb)) with ordinality od(it, rn);
-    if n > 0 then v_todo := v_todo || (E'Scadute:\n' || v_txt || case when n > 8 then format(E'\n• … e altre %s', n - 8) else '' end); end if;
-    select count(*), string_agg(format('• %s%s%s · entro il %s (tra %s)%s',
+    if n > 0 then v_todo := v_todo || (E'Scadute:\n' || v_txt || case when n = 9 then E'\n• … e un''altra' when n > 9 then format(E'\n• … e altre %s', n - 8) else '' end); end if;
+    select count(*), string_agg(format('• %s%s%s · scadenza %s, %s%s',
                                        case it->>'kind' when 'calibration' then 'Taratura ' when 'maintenance' then 'Manutenzione ' when 'training' then 'Attestato ' when 'campionamento' then 'Analisi ' else '' end,
                                        it->>'subject', coalesce(' (' || nullif(it->>'ref', '') || ')', ''), to_char((it->>'due_on')::date, 'DD/MM'),
-                                       fabula.it_n((it->>'days')::int, 'giorno', 'giorni'), coalesce(' · ' || nullif(it->>'contact', ''), '')),
+                                       case when (it->>'days')::int = 0 then 'oggi' else 'tra ' || fabula.it_n((it->>'days')::int, 'giorno', 'giorni') end,
+                                       coalesce(' · ' || nullif(it->>'contact', ''), '')),
                                 E'\n' order by rn) filter (where rn <= 8)
       into v_k, v_txt from jsonb_array_elements(coalesce(r->'due_30', '[]'::jsonb)) with ordinality du(it, rn);
-    if v_k > 0 then v_lines := v_lines || (E'Entro 30 giorni:\n' || v_txt || case when v_k > 8 then format(E'\n• … e altre %s', v_k - 8) else '' end); end if;
+    if v_k > 0 then v_lines := v_lines || (E'Entro 30 giorni:\n' || v_txt || case when v_k = 9 then E'\n• … e un''altra' when v_k > 9 then format(E'\n• … e altre %s', v_k - 8) else '' end); end if;
     if jsonb_array_length(coalesce(r->'due_60', '[]'::jsonb)) > 0 then
       v_lines := v_lines || format('• Entro 60 giorni: %s', jsonb_array_length(r->'due_60'));
     end if;
@@ -438,13 +475,15 @@ begin
     ttl := case when jsonb_array_length(coalesce(x->'lots_on_hold', '[]'::jsonb)) > 0 then format('⚠ Lotti bloccati: %s', jsonb_array_length(x->'lots_on_hold'))
                 when jsonb_array_length(coalesce(x->'instruments_out_of_service', '[]'::jsonb)) > 0 then format('⚠ Strumenti fuori servizio: %s', jsonb_array_length(x->'instruments_out_of_service'))
                 when coalesce((x->>'nc_critical_open')::int, 0) > 0 then format('⚠ Non conformità critiche aperte: %s', x->>'nc_critical_open')
+                when jsonb_array_length(coalesce(x->'lab_results_pending', '[]'::jsonb)) > 0
+                     then format('⚠ Esiti di laboratorio in attesa: %s', jsonb_array_length(x->'lab_results_pending'))
                 when n = 1 then 'Scadenza superata: ' || (r #>> '{overdue,0,subject}')
                 when n > 1 then format('%s scadenze superate', n)
                 when v_k > 0 then format('%s entro 30 giorni', fabula.it_n(v_k, 'scadenza', 'scadenze'))
                 else 'Nessuna scadenza entro 30 giorni' || case when coalesce((r #>> '{counts,unknown}')::int, 0) > 0
                                                                 then format(' · %s ancora da impostare', fabula.it_n((r #>> '{counts,unknown}')::int, 'data', 'date')) else '' end end;
     sev := case when jsonb_array_length(coalesce(x->'lots_on_hold', '[]'::jsonb)) > 0 or jsonb_array_length(coalesce(x->'instruments_out_of_service', '[]'::jsonb)) > 0
-                     or coalesce((x->>'nc_critical_open')::int, 0) > 0 then 'alert'
+                     or coalesce((x->>'nc_critical_open')::int, 0) > 0 or jsonb_array_length(coalesce(x->'lab_results_pending', '[]'::jsonb)) > 0 then 'alert'
                 when n > 0 or v_k > 0 then 'warn' else 'info' end;
     summ := format('%s scadute, %s entro 30 gg, %s senza data, %s analisi da prenotare', coalesce(r #>> '{counts,overdue}', '0'), coalesce(r #>> '{counts,due_30}', '0'),
                    coalesce(r #>> '{counts,unknown}', '0'), coalesce(jsonb_array_length(r #> '{lab_request_draft,tests}'), 0));
@@ -464,11 +503,26 @@ begin
     v_todo := '{}'; v_lines := '{}';
     if n > 0 then v_todo := v_todo || format('⚠ Chiudi le non conformità critiche aperte: %s (Autocontrollo)', n); end if;
     if jsonb_array_length(coalesce(x->'lots_on_hold', '[]'::jsonb)) > 0 then
-      v_todo := v_todo || (select '⚠ Lotti bloccati: ' || string_agg(lh #>> '{}', ', ') from jsonb_array_elements(x->'lots_on_hold') lh);
+      -- food_safety_summary lists the lots as objects (lot, reason, kg_on_hand)
+      v_todo := v_todo || (select '⚠ Lotti bloccati: ' || string_agg(coalesce(lh->>'lot', lh #>> '{}') || coalesce(' (' || nullif(lh->>'reason', '') || ')', ''), ', ')
+                             from jsonb_array_elements(x->'lots_on_hold') lh);
     end if;
     if jsonb_array_length(coalesce(x #> '{instruments,out_of_service}', '[]'::jsonb)) > 0 then
-      v_todo := v_todo || (select '⚠ Strumenti fuori servizio: ' || string_agg(io #>> '{}', ', ') from jsonb_array_elements(x #> '{instruments,out_of_service}') io);
+      v_todo := v_todo || (select '⚠ Strumenti fuori servizio: ' || string_agg(coalesce(eq.name || ' (' || eq.code || ')', io #>> '{}'), ', ')
+                             from jsonb_array_elements(x #> '{instruments,out_of_service}') io left join fabula.equipment eq on eq.code = io #>> '{}');
     end if;
+    -- the other food-safety gaps of the month (review 21/10: the bot's prompt makes them a «warn», never «info»)
+    v_gap := concat_ws(', ',
+      (select case when sum(coalesce((cc->>'nc')::int, 0)) > 0 then fabula.it_n(sum(coalesce((cc->>'nc')::int, 0)), 'valore CCP fuori limite', 'valori CCP fuori limite') end
+         from jsonb_array_elements(coalesce(x->'ccp', '[]'::jsonb)) cc),
+      case when jsonb_array_length(coalesce(x->'batches_without_ccp', '[]'::jsonb)) > 0
+           then fabula.it_n(jsonb_array_length(x->'batches_without_ccp'), 'lotto senza registrazione CCP', 'lotti senza registrazione CCP') end,
+      case when jsonb_array_length(coalesce(x #> '{lab,non_conformi}', '[]'::jsonb)) > 0
+           then fabula.it_n(jsonb_array_length(x #> '{lab,non_conformi}'), 'analisi non conforme', 'analisi non conformi') end,
+      case when jsonb_array_length(coalesce(x #> '{lab,overdue}', '[]'::jsonb)) > 0
+           then fabula.it_n(jsonb_array_length(x #> '{lab,overdue}'), 'analisi in ritardo', 'analisi in ritardo') end);
+    v_gap := nullif(v_gap, '');
+    if v_gap is not null then v_todo := v_todo || ('• Rivedi in Autocontrollo: ' || v_gap); end if;
     if v_k > 0 then v_todo := v_todo || format('• Decidi %s (Console → Da approvare)', fabula.it_n(v_k, 'proposta di ricetta', 'proposte di ricetta')); end if;
     v_todo := v_todo || '• Pacchetto per il commercialista: Console → Pacchetto mensile → Stampa/PDF'::text;
     if coalesce((r #>> '{milk_quality,deliveries}')::int, 0) = 0 and coalesce((r #>> '{unit_cost,mozzarella_kg}')::numeric, 0) = 0
@@ -483,11 +537,11 @@ begin
            else coalesce(r #>> '{recall_drill,result}', 'n/d') end);
     v_lines := v_lines || ('• Sicurezza alimentare: ' || coalesce(x->>'headline_it', 'n/d'));
     if v_k > 0 then
-      v_lines := v_lines || (select '• Ricette: ' || string_agg(format('%s da %s a %s%s', rp->>'component_sku',
+      v_lines := v_lines || (select '• Ricette: ' || string_agg(format('%s da %s a %s%s', coalesce(pr.name, rp->>'component_sku'),
                                    case when jsonb_typeof(rp->'from') = 'number' then fabula.it_qty((rp->>'from')::numeric) else rp->>'from' end,
                                    case when jsonb_typeof(rp->'to') = 'number' then fabula.it_qty((rp->>'to')::numeric) else rp->>'to' end,
                                    coalesce(' ' || nullif(rp->>'unit', ''), '')), '; ')
-                               from jsonb_array_elements(coalesce(r #> '{recipe_tuning,proposals}', '[]'::jsonb)) rp);
+                               from jsonb_array_elements(coalesce(r #> '{recipe_tuning,proposals}', '[]'::jsonb)) rp left join fabula.products pr on pr.sku = rp->>'component_sku');
     end if;
     if coalesce((r #>> '{milk_quality,deliveries}')::int, 0) > 0 then
       v_lines := v_lines || format('• Latte: %s, %s; grasso %s %% (mese prima %s), proteine %s %% (mese prima %s)',
@@ -509,11 +563,13 @@ begin
                 when jsonb_array_length(coalesce(x->'lots_on_hold', '[]'::jsonb)) > 0 then format('⚠ %s: lotti bloccati', v_month)
                 when jsonb_array_length(coalesce(x #> '{instruments,out_of_service}', '[]'::jsonb)) > 0 then format('⚠ %s: strumenti fuori servizio', v_month)
                 when r #>> '{recall_drill,result}' in ('kg_non_giustificati', 'manca_latte_a_monte') then format('%s: la prova di richiamo non torna', v_month)
+                when v_gap is not null then format('%s: rivedi la sicurezza alimentare (Autocontrollo)', v_month)
                 when v_k > 0 then format('%s: %s da approvare', v_month, fabula.it_n(v_k, 'proposta di ricetta', 'proposte di ricetta'))
                 else v_month || ' chiuso' end;
+    if coalesce((r->>'is_simulation')::boolean, false) then ttl := 'SIMULAZIONE · ' || ttl; end if;
     sev := case when n > 0 or jsonb_array_length(coalesce(x->'lots_on_hold', '[]'::jsonb)) > 0 or jsonb_array_length(coalesce(x #> '{instruments,out_of_service}', '[]'::jsonb)) > 0
                      or r #>> '{recall_drill,result}' in ('kg_non_giustificati', 'manca_latte_a_monte') then 'alert'
-                when v_k > 0 then 'warn' else 'info' end;
+                when v_k > 0 or v_gap is not null then 'warn' else 'info' end;
     summ := format('%s: richiamo %s, NC critiche %s, %s proposte ricetta, costo %s', v_month, coalesce(r #>> '{recall_drill,result}', 'n/d'), n, v_k,
                    case when r #>> '{unit_cost,cost_eur_per_kg}' is not null then '€ ' || fabula.it_num((r #>> '{unit_cost,cost_eur_per_kg}')::numeric, 2) || '/kg' else 'n/d' end);
     body := concat_ws(E'\n\n', E'Da fare:\n' || array_to_string(v_todo, E'\n'), E'In breve:\n' || array_to_string(v_lines, E'\n'));
@@ -529,6 +585,68 @@ begin
                                                     when 'sales' then 'sales_status' when 'marketing' then 'mkt_status' else p_agent end, r, 'database');
   end if;
   return jsonb_build_object('severity', sev, 'title', ttl, 'body', body, 'summary', summ, 'result', r);
+end $function$;
+
+CREATE OR REPLACE FUNCTION fabula.run_bot_fallback(p_agent text, p_confirm boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'fabula', 'public'
+AS $function$
+declare v_day date := (now() at time zone 'Europe/Rome')::date; v_who text; v_due timestamptz; v_last record; o jsonb; v_run uuid; v_msg bigint; v_err text; v_recent timestamptz;
+begin
+  perform fabula.require_perm('sistema', 2);
+  if p_agent = any (fabula.shopify_sync_agents()) then return fabula.shopify_sync_now(p_agent, p_confirm); end if;   -- v1.02a: a database job, run now
+  if not (p_agent = any (fabula.bot_fallback_agents())) then
+    raise exception using errcode = '22023', message = format('«%s» non ha una versione del database: si rilancia dalle attività programmate di Claude', fabula.bot_title(p_agent));
+  end if;
+  v_who := coalesce((select full_name from fabula.staff where id = fabula.my_staff_id()), 'sistema');
+  -- the latest slot of today that has already come (for the record and so the automatic stand-in does not run it again)
+  select (v_day + t.due) at time zone 'Europe/Rome' into v_due from fabula.bot_schedule bs cross join unnest(bs.due_times) t(due)
+   where bs.agent = p_agent and bs.active and extract(isodow from v_day) = any (bs.weekdays) and (bs.month_day is null or extract(day from v_day) = bs.month_day)
+     and v_day + t.due <= (now() at time zone 'Europe/Rome') order by t.due desc limit 1;
+  -- v1.12 (review): a monthly bot (the monthly review, the 1st) asks again any day of the month after its slot, not only on the 1st
+  if v_due is null then
+    select (make_date(extract(year from v_day)::int, extract(month from v_day)::int, bs.month_day) + t.due) at time zone 'Europe/Rome' into v_due
+      from fabula.bot_schedule bs cross join unnest(bs.due_times) t(due)
+     where bs.agent = p_agent and bs.active and bs.month_day is not null and bs.month_day <= extract(day from v_day)
+       and make_date(extract(year from v_day)::int, extract(month from v_day)::int, bs.month_day) + t.due <= (now() at time zone 'Europe/Rome')
+     order by t.due desc limit 1;
+  end if;
+  select ar.started_at, ar.status, coalesce(ar.details->>'via', '') via into v_last from fabula.agent_runs ar
+   where ar.agent = p_agent and ar.status = 'ok' and ar.started_at >= coalesce(v_due, (v_day::timestamp) at time zone 'Europe/Rome') - interval '30 minutes'
+     and (ar.agent <> 'backup_export' or ar.details->>'mode' = 'nightly')          -- the 2-hourly «latest» backups are not the nightly one
+   order by ar.started_at desc limit 1;
+  -- started in the last 15 minutes and not logged yet (the backup logs its own run when it finishes): a second click asks too
+  select max(ran_at) into v_recent from fabula.bot_fallback_runs where agent = p_agent and ran_at > now() - interval '15 minutes';
+  if (v_last.started_at is not null or v_recent is not null) and not coalesce(p_confirm, false) then
+    raise exception using errcode = '22023', hint = 'confirm',
+      message = case when v_recent is not null and (v_last.started_at is null or v_recent > v_last.started_at)
+                     then format('%s è stato avviato alle %s: rifarlo adesso?', fabula.bot_title(p_agent), to_char(v_recent at time zone 'Europe/Rome', 'HH24:MI'))
+                     else format('%s ha già girato %s alle %s%s: rifarlo adesso?', fabula.bot_title(p_agent),
+                                 case when (v_last.started_at at time zone 'Europe/Rome')::date = v_day then 'oggi' else fabula.it_day((v_last.started_at at time zone 'Europe/Rome')::date) end,
+                                 to_char(v_last.started_at at time zone 'Europe/Rome', 'HH24:MI'),
+                                 case when v_last.via = 'db_fallback' then ' (versione del database)' else '' end) end;
+  end if;
+  begin
+    o := fabula.bot_fallback_run(p_agent, v_day);
+  exception when others then
+    v_err := sqlerrm;               -- nothing is recorded: the person who pressed the button sees the error now
+    raise exception using errcode = '22023', message = format('%s non riuscito: %s', fabula.bot_title(p_agent), left(v_err, 300));
+  end;
+  if p_agent <> 'backup_export' then        -- the backup logs its own run when it finishes
+    insert into fabula.agent_runs (agent, started_at, finished_at, status, summary, details)
+    values (p_agent, now(), clock_timestamp(), 'ok', format('Eseguito ora da %s (versione del database): %s', v_who, coalesce(o->>'summary', '')),
+            jsonb_build_object('via', 'db_fallback', 'manual', true, 'by', v_who, 'due', v_due, 'result', o->'result'))
+    returning id into v_run;
+  end if;
+  v_msg := fabula.post_bot_message(p_agent, coalesce(o->>'severity', 'info'), left('Eseguito ora · ' || coalesce(o->>'title', fabula.bot_title(p_agent)), 120),
+             format(E'Eseguito ora da %s con la versione del database (i numeri del database, senza il commento del bot).\n\n%s', v_who, coalesce(o->>'body', '')), v_run);
+  -- the ledger: today's slot (so the automatic stand-in does not run it again) or, before the first slot, this minute
+  insert into fabula.bot_fallback_runs (agent, slot, status, summary, result) values (p_agent, coalesce(v_due, date_trunc('minute', now())), 'ok', o->>'summary', o->'result')
+  on conflict (agent, slot) do update set status = 'ok', summary = excluded.summary, result = excluded.result, ran_at = now();
+  perform fabula.bot_watchdog();            -- the incident (missed/failed) closes now
+  return jsonb_build_object('agent', p_agent, 'title', o->>'title', 'summary', o->>'summary', 'severity', o->>'severity', 'message_id', v_msg);
 end $function$;
 
 CREATE OR REPLACE FUNCTION fabula._basis_call_it(p_call text)

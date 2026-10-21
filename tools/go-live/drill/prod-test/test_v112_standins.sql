@@ -8,6 +8,8 @@
 \set ON_ERROR_STOP 0
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
+create or replace function pg_temp.err(p_sql text) returns text language plpgsql as
+$$ declare h text; begin execute p_sql; return ''; exception when others then get stacked diagnostics h = pg_exception_hint; return sqlerrm || case when coalesce(h, '') <> '' then ' || hint: ' || h else '' end; end $$;
 create or replace function pg_temp.as_user(p_sub text) returns void language sql as
 $$ select set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', p_sub), false) $$;
 insert into fabula.staff (id, full_name, role, app_role, active, auth_user_id) values
@@ -78,10 +80,12 @@ select pg_temp.ck('brief before the start: «Ieri tutto in ordine», info, says 
   :'b0'::jsonb->>'title' = 'Ieri tutto in ordine' and :'b0'::jsonb->>'severity' = 'info'
   and :'b0'::jsonb->>'body' like E'In breve:\n• Ieri nessuna produzione né vendita · Prima dell''avvio (%) i controlli HACCP del giorno non sono richiesti', :'b0'::jsonb->>'body');
 select fabula.bot_fallback_run('sales', :'today') s0 \gset
-select pg_temp.ck('sales: the overdue contacts (first 6, with phone and delay), the plan line, the pipeline; warn',
-  :'s0'::jsonb->>'title' like '15 locali da contattare (15 in ritardo)' and :'s0'::jsonb->>'severity' = 'warn'
-  and :'s0'::jsonb->>'body' like E'Da contattare (i primi 6 di 15):\n• GM Pizzeria di Gianfranco Marotta (pizzeria, Agropoli, +39 0974 826380) · Primo contatto%di ritardo\n%'
-  and :'s0'::jsonb->>'body' like '%• Obiettivi dal lun 01/02 · vendite del mese € 0%• Locali aperti: 45 (nuovo 45)%Senza il bot mancano i messaggi pronti da mandare e la ricerca di nuovi locali.',
+select count(*) due_n, count(*) filter (where next_action_date < :'today') late_n from fabula.sales_leads
+ where stage in ('nuovo', 'contattato', 'degustazione', 'offerta') and next_action_date <= :'today'::date + 1 \gset
+select pg_temp.ck('sales: every contact due counted (not the 15 the status lists), the first 6 with phone and delay, the plan, the open venues in Italian; warn',
+  :'s0'::jsonb->>'title' = format('%s locali da contattare (%s in ritardo)', :due_n, :late_n) and :due_n > 0 and :'s0'::jsonb->>'severity' = 'warn'
+  and :'s0'::jsonb->>'body' like format(E'Da contattare (i primi 6 di %s):\n• GM Pizzeria di Gianfranco Marotta (pizzeria, Agropoli, +39 0974 826380) · Primo contatto%%di ritardo\n%%', :due_n)
+  and :'s0'::jsonb->>'body' like '%• Obiettivi dal lun 01/02 · vendite del mese € 0%• Locali aperti: 45 (45 nuovi)%Senza il bot mancano i messaggi pronti da mandare e la ricerca di nuovi locali.',
   :'s0'::jsonb->>'title');
 select pg_temp.ck('sales writes nothing (the leads are not linked or changed)', (select count(*) from fabula.sales_leads where stage <> 'nuovo') = 0);
 update fabula.mkt_local_items set status = 'preventivo', quote_eur = 380, vendor = 'Grafiche Test' where code = 'SIG-02';
@@ -97,13 +101,16 @@ select pg_temp.ck('next time it waits in «In attesa di decisione» and nothing 
   :'k1'::jsonb->>'body' like '%• In attesa di decisione: 1, € 380 (Console → Da approvare)%' and (select count(*) from fabula.approvals) = :appr0 + 1
   and :'k1'::jsonb->>'body' like '%• Permessi da chiedere: 6, il primo serve entro ven 01/01%• Apertura lun 15/02, tra %• Budget della campagna € %Senza il bot mancano le richieste di preventivo%',
   :'k1'::jsonb->>'body');
+update fabula.mkt_local_items set permit_status = 'ottenuto' where permit <> 'nessuno';
+select pg_temp.ck('marketing with only a decision waiting is not «Niente da fare»: it says what waits',
+  (select o->>'title' = '1 voce da decidere (Console → Da approvare)' from (select fabula.bot_fallback_run('marketing', :'today') o) q));
 update fabula.equipment set last_calibrated_on = :'today'::date - 375, technician_contact = 'Tecnico Test 333 1234567' where code = 'PAST-01';
 update fabula.equipment set last_calibrated_on = :'today'::date - 1075 where code = 'BIL-01';
 select fabula.bot_fallback_run('compliance_calendar', :'today') c0 \gset
 select pg_temp.ck('calendar: the overdue calibration with its contact, the one within 30 days, the missing dates by kind, the technician message',
   :'c0'::jsonb->>'title' = 'Scadenza superata: Pastorizzatore' and :'c0'::jsonb->>'severity' = 'warn'
-  and :'c0'::jsonb->>'body' like E'Da fare:\nScadute:\n• Taratura Pastorizzatore (PAST-01) · era il %, 10 giorni fa · Tecnico Test 333 1234567%'
-  and :'c0'::jsonb->>'body' like E'%Entro 30 giorni:\n• Taratura Bilancia ricezione (BIL-01) · entro il % (tra 20 giorni)%'
+  and :'c0'::jsonb->>'body' like E'Da fare:\nScadute:\n• Taratura Pastorizzatore (PAST-01) · scadenza %, 10 giorni fa · Tecnico Test 333 1234567%'
+  and :'c0'::jsonb->>'body' like E'%Entro 30 giorni:\n• Taratura Bilancia ricezione (BIL-01) · scadenza %, tra 20 giorni%'
   and :'c0'::jsonb->>'body' like '%• Senza data: % tarature, % manutenzioni, % verifiche%. Il calendario non può avvisare finché mancano%'
   and :'c0'::jsonb->>'body' like E'%Messaggi pronti:\nPer Pastorizzatore (PAST-01), Tecnico Test 333 1234567:\n> Buongiorno, per % dovremmo programmare la taratura di Pastorizzatore%',
   :'c0'::jsonb->>'body');
@@ -119,8 +126,14 @@ select pg_temp.ck('monthly review on an empty month: «<Mese> chiuso», one line
   and :'m0'::jsonb->>'body' not like '%Pacchetto: ricavi%', :'m0'::jsonb->>'body');
 
 -- ============================== 3. full data (fixed JSON in place of the data functions) ==============================
+-- a lot on hold (review 21/10: it must never be offered at the counter, even when it expires tomorrow)
+insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, output_kg, input_kind, started_at, finished_at, source, food_safety_hold, hold_reason)
+values ('2026-10-19', 'LHOLD', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 300, 60, 'milk', '2026-10-19 08:00+02', '2026-10-19 11:00+02', 'test', true, 'prova v1.12');
+select pg_temp.ck('(setup) the held lot is in v_lots_on_hold', exists (select 1 from fabula.v_lots_on_hold where batch_lot = 'LHOLD'));
 create or replace function fabula.daily_brief(p_date date default null) returns jsonb language sql stable as $f$
-  select b || case when current_setting('t112.v', true) in ('nonc', 'checks', 'calm')
+  select b || case when current_setting('t112.v', true) = 'full' then '{}'::jsonb
+                   else jsonb_build_object('stock_finished', (b->'stock_finished') - 0 - 0, 'tasks', (b->'tasks') || '{"open_non_conformities": 0}'::jsonb) end
+           || case when current_setting('t112.v', true) in ('nonc', 'checks', 'calm')
                    then jsonb_build_object('haccp', (b->'haccp') || '{"non_conformities": []}'::jsonb) else '{}'::jsonb end
            || case when current_setting('t112.v', true) in ('checks', 'calm') then '{"pending_approvals": []}'::jsonb else '{}'::jsonb end
            || case when current_setting('t112.v', true) = 'calm'
@@ -134,10 +147,13 @@ create or replace function fabula.daily_brief(p_date date default null) returns 
     'pos_close', '{"variance_eur": -3.5}'::jsonb,
     'haccp', '{"missing_daily_checks": ["CCP-COLD-1", "PRP-CLEAN"], "evening_cold_checks_missing": ["CCP-COLD-1", "CCP-COLD-2"],
                "non_conformities": [{"point": "CCP-STRETCH", "value": 55, "action": "lotto bloccato"}]}'::jsonb,
-    'stock_finished', jsonb_build_array(jsonb_build_object('sku', 'MOZ-DOP-KG', 'lot', 'L1', 'kg', 12.5, 'expires', p_date + 2),
+    -- the first two (an expired lot, a held lot expiring tomorrow) only in the «full» variant: «- 0 - 0» drops them in the others
+    'stock_finished', jsonb_build_array(jsonb_build_object('sku', 'MOZ-DOP-KG', 'lot', 'L0', 'kg', 3, 'expires', p_date - 3),
+                                        jsonb_build_object('sku', 'MOZ-DOP-KG', 'lot', 'LHOLD', 'kg', 60, 'expires', p_date + 2),
+                                        jsonb_build_object('sku', 'MOZ-DOP-KG', 'lot', 'L1', 'kg', 12.5, 'expires', p_date + 2),
                                         jsonb_build_object('sku', 'MOZ-DOP-KG', 'lot', 'L2', 'kg', 40, 'expires', p_date + 10)),
     'procurement_signals', '[{"sku": "X"}]'::jsonb,
-    'tasks', '{"overdue": [{"code": "T1"}, {"code": "T2"}], "calibration_due": [{"code": "TERM-01"}], "training_expiring": []}'::jsonb,
+    'tasks', '{"overdue": [{"code": "T1"}, {"code": "T2"}], "calibration_due": [{"code": "TERM-01"}], "training_expiring": [], "open_non_conformities": 1}'::jsonb,
     'pending_approvals', '[{"summary": "Ordine PO-1 € 120", "requested_by": "agent:procurement", "age_days": 4},
                            {"summary": "Piano latte mer 21/10: 1.200 kg", "requested_by": "agent:milk_planning", "age_days": 0},
                            {"summary": "A", "requested_by": "x", "age_days": 1}, {"summary": "B", "requested_by": null, "age_days": 2}]'::jsonb) b) q
@@ -151,18 +167,19 @@ create or replace function fabula.weekly_brief(p_week_end date default null) ret
 $f$;
 select set_config('t112.v', 'full', false);
 select fabula.bot_fallback_run('daily_brief', '2026-10-20') f1 \gset
-select pg_temp.ck('brief, full day: the non-conformity first, as an alert, in plain words',
+select pg_temp.ck('brief, full day: the non-conformity first, as an alert, in plain words with its unit',
   :'f1'::jsonb->>'title' = '⚠ Non conformità HACCP di ieri: vedi Autocontrollo' and :'f1'::jsonb->>'severity' = 'alert'
-  and :'f1'::jsonb->>'body' like E'⚠ Non conformità Filatura: temperatura della pasta di ieri: 55 · lotto bloccato\n\nDa fare:\n%', :'f1'::jsonb->>'body');
-select pg_temp.ck('brief: requests waiting, the milk plan first, three then «e altre», where to click',
-  :'f1'::jsonb->>'body' like E'%Da fare:\n• Decidi: Piano latte mer 21/10: 1.200 kg\n• Decidi: Ordine PO-1 € 120 (in attesa da 4 giorni)\n• Decidi: B (in attesa da 2 giorni)\n• … e altre 1\n  Dove: Console → Da approvare\n%');
-select pg_temp.ck('brief: the missing records by name, the evening reading only where the day''s one exists, expiring stock, low stock',
-  :'f1'::jsonb->>'body' like E'%• Registra sul tablet i controlli di ieri che mancano: Cella frigo 1, Sanificazione fine turno\n• Manca la lettura serale di ieri: Cella frigo 2\n• Spingi al banco: Mozzarella di Bufala Campana DOP lotto L1, 12,5 kg (scade mer 21/10)\n• Scorte: 1 materiale sotto la soglia%');
+  and :'f1'::jsonb->>'body' like E'⚠ Non conformità Filatura: temperatura della pasta di ieri: 55 °C · lotto bloccato\n\nDa fare:\n%', :'f1'::jsonb->>'body');
+select pg_temp.ck('brief: requests waiting from today (age + 1 on Tuesday), the milk plan first, three then «e un''altra», where to click',
+  :'f1'::jsonb->>'body' like E'%Da fare:\n• Decidi: Piano latte mer 21/10: 1.200 kg (in attesa da 1 giorno)\n• Decidi: Ordine PO-1 € 120 (in attesa da 5 giorni)\n• Decidi: B (in attesa da 3 giorni)\n• … e un''altra\n  Dove: Console → Da approvare\n%');
+select pg_temp.ck('brief: missing records by name, the evening reading only where the day''s one exists; expired lot to withdraw, the held lot never offered, open NCs, low stock',
+  :'f1'::jsonb->>'body' like E'%• Registra sul tablet i controlli di ieri che mancano: Cella frigo 1, Sanificazione fine turno\n• Manca la lettura serale di ieri: Cella frigo 2\n⚠ Scaduti, da ritirare (non venderli): Mozzarella di Bufala Campana DOP lotto L0, 3 kg (scaduto ven 16/10)\n• Spingi al banco: Mozzarella di Bufala Campana DOP lotto L1, 12,5 kg (scade mer 21/10)\n⚠ 1 non conformità ancora aperta (Autocontrollo → Non conformità)\n• Scorte: 1 materiale sotto la soglia%'
+  and :'f1'::jsonb->>'body' not like '%LHOLD%', :'f1'::jsonb->>'body');
 select pg_temp.ck('brief: production with yield and milk, sales vs 4 weeks, till difference, waste, energy, tasks, calibrations',
   :'f1'::jsonb->>'body' like E'%In breve:\n• Produzione di ieri: Mozzarella di Bufala Campana DOP 152,5 kg (resa 24,6 %) · latte ricevuto 620 kg, 1 consegna rifiutata · resa sotto la media di 30 giorni di 2,1 punti\n• Vendite di ieri € 2.040 (+13 % sullo stesso giorno delle 4 settimane prima) · settimana € 2.040\n• Chiusura di cassa: differenza di € -3,50\n• Scarti degli ultimi 7 giorni: 30 kg, 12,5 % della produzione\n• Energia: 1,25 kWh per kg, 22 % sopra la media di 30 giorni\n• 2 attività scadute · elenco sul tablet\n• Tarature entro 14 giorni: 1 (Autocontrollo → Strumenti)'
   and :'f1'::jsonb->>'body' not like '%nessuna produzione%', :'f1'::jsonb->>'body');
 select set_config('t112.v', 'nonc', false);
-select pg_temp.ck('brief: without the NC the milk plan leads (alert)',
+select pg_temp.ck('brief: without the NC (and no expired lot, no open NC) the milk plan leads (alert)',
   (select o->>'title' = 'Approva il piano latte (Console → Da approvare)' and o->>'severity' = 'alert' from (select fabula.bot_fallback_run('daily_brief', '2026-10-20') o) q));
 select set_config('t112.v', 'checks', false);
 select pg_temp.ck('brief: then the missing records (alert on a production day)',
@@ -176,6 +193,8 @@ select pg_temp.ck('Monday: Saturday by date, and «La settimana» with result, s
   and :'f2'::jsonb->>'body' like E'%Produzione di sabato 17/10: %\n\nLa settimana (lun 12/10 – sab 17/10):\n• Risultato stimato € 216 su € 1.200 di ricavi; settimana di riferimento € 2.890, margine 18 % (stima: latte e ricavi reali, altri costi da benchmark)\n• Vendite € 1.200 (-8 % sulla settimana prima) · mozzarella venduta 80 kg\n• Produzione: latte 2.480 kg, mozzarella 600 kg, ricotta 40 kg, resa 24,2 %\n• Scarti 66 kg, 11,0 % della mozzarella',
   :'f2'::jsonb->>'body');
 
+-- the stubbed sales: no real lead is due in this window, so the counts are the stub's
+update fabula.sales_leads set next_action_date = :'today'::date + 30;
 create or replace function fabula.sales_status(p_date date default null) returns jsonb language sql stable as $f$
   select '{"plan_missing": false, "plan_start": "2026-02-01",
            "totals": {"mtd_kg_day": 101.5, "target_kg_day": 120, "mtd_revenue_eur": 31000, "month_target_eur": 45000},
@@ -187,7 +206,7 @@ $f$;
 select fabula.bot_fallback_run('sales', '2026-10-21') f3 \gset
 select pg_temp.ck('sales, plan running: the total against the target, stale venues, customers to win back (warn), tastings, won',
   :'f3'::jsonb->>'title' = '1 locale da contattare' and :'f3'::jsonb->>'severity' = 'warn'
-  and :'f3'::jsonb->>'body' like E'Da contattare:\n• Pizzeria Uno (pizzeria, Agropoli) · Degustazione\n\nIn breve:\n• Totale del mese: 101,5 kg al giorno, obiettivo 120,0 · € 31.000 su € 45.000\n• Locali aperti: 12 (contattato 7, degustazione 5)\n• Fermi da riprendere: Hotel Due (21 giorni)\n• Clienti da recuperare: Lido Tre (ultimo ordine mer 30/09, 0974 1)\n• Degustazioni nei prossimi 7 giorni: Pizzeria Uno, Agropoli (ven 23/10)\n• Vinti questo mese: Bar Quattro\n\n%',
+  and :'f3'::jsonb->>'body' like E'Da contattare:\n• Pizzeria Uno (pizzeria, Agropoli) · Degustazione\n\nIn breve:\n• Totale del mese: 101,5 kg al giorno, obiettivo 120,0 · € 31.000 su € 45.000\n• Locali aperti: 12 (7 contattati, 5 in degustazione)\n• Fermi da riprendere: Hotel Due (21 giorni)\n• Clienti da recuperare: Lido Tre (ultimo ordine mer 30/09, 0974 1)\n• Degustazioni nei prossimi 7 giorni: Pizzeria Uno, Agropoli (ven 23/10)\n• Vinti questo mese: Bar Quattro\n\n%',
   :'f3'::jsonb->>'body');
 
 create or replace function fabula.monthly_review(p_month date default null) returns jsonb language sql as $f$
@@ -208,6 +227,45 @@ select pg_temp.ck('monthly, full month: the critical NC first (alert), recipe pr
 select pg_temp.ck('monthly: the drill verdict with kg, recipes, milk vs the month before, unit cost, the package, in Italian numbers',
   :'f4'::jsonb->>'body' like E'%In breve:\n• Prova di richiamo sul lotto L0301-A: 4,5 kg non giustificati, controllare i movimenti di magazzino\n• Sicurezza alimentare: CCP fuori limite: 1 · NC critiche aperte: 1\n• Ricette: CAGLIO da 30 a 27 ml; SALE da 1,2 a 1,1\n• Latte: 26 consegne, 1 rifiutata; grasso 8,12 % (mese prima 8,30), proteine 4,61 % (mese prima 4,58)\n• Costo pieno € 9,84 al kg (latte 71 %, lavoro dalle ore timbrate)\n• Pacchetto: ricavi € 88.000, corrispettivi € 41.000, acquisti € 9.100, latte € 49.000, magazzino € 3.200, scarti 140 kg'
   and :'f4'::jsonb->>'summary' = 'Marzo 2027: richiamo kg_non_giustificati, NC critiche 1, 2 proposte ricetta, costo € 9,84/kg', :'f4'::jsonb->>'body');
+
+create or replace function fabula.monthly_review(p_month date default null) returns jsonb language sql as $f$
+  select '{"month": "2027-03", "recall_drill": {"result": "ok", "lot": "L0301-A"},
+           "food_safety": {"headline_it": "lotti bloccati: 1", "non_conformities": {"critical_open": 0},
+                           "lots_on_hold": [{"lot": "L0315-B", "reason": "CCP 3 fuori limite", "kg_on_hand": 12.0}],
+                           "instruments": {"out_of_service": ["BIL-02"]}, "ccp": [{"nc": 2}, {"nc": 1}], "batches_without_ccp": ["L0320-A"],
+                           "lab": {"non_conformi": [], "overdue": [{"code": "LAB-1"}]}},
+           "recipe_tuning": {"created": 0, "proposals": []}, "milk_quality": {"deliveries": 0}, "unit_cost": {"mozzarella_kg": 0}, "package_headline": {"revenue_eur": "0"}}'::jsonb
+$f$;
+select fabula.bot_fallback_run('monthly_review', '2027-04-01') f5 \gset
+select pg_temp.ck('monthly: a lot on hold reads as its code and reason (not JSON), an instrument by name, the other gaps listed; alert',
+  :'f5'::jsonb->>'title' = '⚠ Marzo 2027: lotti bloccati' and :'f5'::jsonb->>'severity' = 'alert'
+  and :'f5'::jsonb->>'body' like E'Da fare:\n⚠ Lotti bloccati: L0315-B (CCP 3 fuori limite)\n⚠ Strumenti fuori servizio: % (BIL-02)\n• Rivedi in Autocontrollo: 3 valori CCP fuori limite, 1 lotto senza registrazione CCP, 1 analisi in ritardo\n%'
+  and :'f5'::jsonb->>'body' not like '%{%', :'f5'::jsonb->>'body');
+create or replace function fabula.monthly_review(p_month date default null) returns jsonb language sql as $f$
+  select '{"month": "2027-03", "recall_drill": {"result": "ok", "lot": "L0301-A"},
+           "food_safety": {"headline_it": "CCP fuori limite: 1", "non_conformities": {"critical_open": 0}, "lots_on_hold": [],
+                           "instruments": {"out_of_service": []}, "ccp": [{"nc": 1}], "batches_without_ccp": [], "lab": {"non_conformi": [], "overdue": []}},
+           "recipe_tuning": {"created": 1, "proposals": [{"component_sku": "MOZ-DOP-KG", "from": 30, "to": 27, "unit": "g"}]},
+           "milk_quality": {"deliveries": 0}, "unit_cost": {"mozzarella_kg": 0}, "package_headline": {"revenue_eur": "0"}}'::jsonb
+$f$;
+select fabula.bot_fallback_run('monthly_review', '2027-04-01') f6 \gset
+select pg_temp.ck('monthly: a CCP out of limit alone is a «warn» that comes before the recipes (never «chiuso», never info); recipes by product name',
+  :'f6'::jsonb->>'title' = 'Marzo 2027: rivedi la sicurezza alimentare (Autocontrollo)' and :'f6'::jsonb->>'severity' = 'warn'
+  and :'f6'::jsonb->>'body' like '%• Ricette: Mozzarella di Bufala Campana DOP da 30 a 27 g%', :'f6'::jsonb->>'body');
+-- «Esegui ora» on the monthly review later in the month asks first (the run of the 1st counts)
+-- (the fixed-date runs of part 1 are in the future of the real clock: they move a year back, so only the run of this month's 1st can count)
+update fabula.agent_runs set started_at = started_at - interval '1 year', finished_at = finished_at - interval '1 year' where agent = 'monthly_review' and started_at > now();
+update fabula.bot_fallback_runs set ran_at = ran_at - interval '1 year' where agent = 'monthly_review' and ran_at > now();
+insert into fabula.agent_runs (agent, started_at, finished_at, status, summary)
+values ('monthly_review', (date_trunc('month', :'today'::date)::date + time '07:45') at time zone 'Europe/Rome',
+        (date_trunc('month', :'today'::date)::date + time '07:50') at time zone 'Europe/Rome', 'ok', 'run of the 1st');
+select pg_temp.as_user('00000000-0000-4000-a000-000000112a01');
+set role authenticated;
+select pg_temp.err($q$select fabula.run_bot_fallback('monthly_review')$q$) e_m1 \gset
+reset role;
+select set_config('request.jwt.claims', '', false);
+select pg_temp.ck('«Esegui ora» on the monthly review asks first when it already ran this month (on the 1st it says «oggi»)',
+  :'e_m1' like 'Revisione mensile ha già girato % alle 07:45: rifarlo adesso? || hint: confirm', :'e_m1');
 
 select pg_temp.ck('who may run the stand-ins is unchanged: not logins directly, «Esegui ora» through run_bot_fallback only',
   not has_function_privilege('authenticated', 'fabula.bot_fallback_run(text, date)', 'execute')
