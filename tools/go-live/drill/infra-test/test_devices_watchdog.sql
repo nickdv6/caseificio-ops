@@ -36,7 +36,7 @@ select pg_temp.ck('records waiting > 2 h and old app a day after release: one wa
   and exists (select 1 from fabula.bot_messages where agent = 'tablet' and title like 'tablet-1 usa ancora la versione perla-v49%'), :'w1');
 select pg_temp.ck('not repeated within a day', jsonb_array_length(fabula.device_watch()->'warnings') = 0);
 update fabula.devices set queue_len = 0, oldest_queued_at = null, app_version = 'perla-v50' where device_uid = 'dev-abc123';
-select pg_temp.ck('queue sent and app updated: nothing to warn', jsonb_array_length(fabula.device_watch(now() + interval '2 days')->'warnings') = 0);
+select pg_temp.ck('queue sent and app updated: nothing to warn', jsonb_array_length(fabula.device_watch(now() + interval '36 hours')->'warnings') = 0);   -- v1.14: 36 h, before a floor tablet counts as silent (2 days)
 
 -- 3. resolve
 select fabula.resolve_tablet_reject('q-1', 'rifatta a mano') rs \gset

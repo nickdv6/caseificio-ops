@@ -6,7 +6,8 @@
 --     for its own records (scan events, refused saves).
 --   * The go-live check «tablet_checkin» and the trial's «Giorno 1 · tablet di produzione collegato» count only floor tablets.
 --   * device_watch warns about an old app only on floor tablets (records waiting too long: every device, as before). Messages name a
---     device by its name, or by what it is and who used it («iPhone di Nick») while it has none.
+--     device by the name given in Configurazione, or by what it is and who used it («iPhone di Nick») while it has none (a label
+--     sent by the tablet itself is never trusted as a name). A floor tablet that stops checking in for 2 days is reported.
 --   * «On the latest app» = that version or a newer one: the hourly site check can lag a release by up to an hour, and a tablet already
 --     on the new app no longer counts as old (nor is told to update) meanwhile.
 
@@ -14,6 +15,7 @@ alter table fabula.devices add column if not exists floor boolean not null defau
 alter table fabula.devices add column if not exists named_at timestamptz;
 alter table fabula.devices add column if not exists named_by uuid references fabula.staff(id);
 comment on column fabula.devices.floor is 'v1.14 (R-04): a tablet used on the production floor. Only these count for the go-live check «Tablet di produzione aggiornato» and the trial''s day 1, and only these get the «app vecchia» warning. Set in Configurazione → Utenti e accessi → Dispositivi (fabula.set_device).';
+create unique index if not exists devices_named_label_uq on fabula.devices (lower(label)) where named_at is not null;
 comment on column fabula.devices.named_at is 'v1.14: when someone named the device in Configurazione (set_device). From then on the check-in keeps the name and the tablet adopts it.';
 
 -- ============================== helpers (database only) ==============================
@@ -34,14 +36,16 @@ create or replace function fabula._device_kind(p_ua text) returns text language 
               when p_ua ~* 'Linux' then 'computer Linux'
               else 'browser' end
 $$;
--- how messages call a device: its name once it has one (or one given with ?device=), else what it is and who used it last
+-- how messages call a device: the name given in Configurazione, else what it is and who used it last (the label a tablet sends
+-- with ?device= is not trusted: any login could send the floor tablet's name, or nothing)
 create or replace function fabula._device_name(p_uid text) returns text language sql stable set search_path = fabula, public as $$
-  select case when d.named_at is not null or coalesce(d.label, 'tablet-1') <> 'tablet-1' then d.label
+  select case when d.named_at is not null and coalesce(btrim(d.label), '') <> '' then d.label
               else fabula._device_kind(d.user_agent) || coalesce(' di ' || nullif(split_part(btrim(s.full_name), ' ', 1), ''), '') end
     from fabula.devices d left join fabula.staff s on s.id = d.staff_id
    where d.device_uid = p_uid
 $$;
-revoke all on function fabula._app_ver_num(text) from public, anon, authenticated;
+revoke all on function fabula._app_ver_num(text) from public, anon;
+grant execute on function fabula._app_ver_num(text) to authenticated, service_role;   -- pure; ops_dashboard() runs as its caller
 revoke all on function fabula._device_kind(text) from public, anon, authenticated;
 revoke all on function fabula._device_name(text) from public, anon, authenticated;
 
@@ -71,8 +75,9 @@ begin
     continue when coalesce(f->>'qid', '') = '' or length(f::text) > 100000;
     v_what := coalesce((select o->>'table' from jsonb_array_elements(coalesce(f->'ops', '[]')) o where o ? 'table' limit 1),
                        (select o->>'rpc' from jsonb_array_elements(coalesce(f->'ops', '[]')) o where o ? 'rpc' limit 1), '?');
+    -- v1.14: the same name as the alarm's title (resolve_tablet_reject closes the alarm by «(name)»)
     insert into fabula.tablet_rejects (qid, device_uid, device_label, staff_id, what, ops, error, code, failed_at)
-    values (f->>'qid', p_device_uid, left(d.label, 40), v_staff, v_what, coalesce(f->'ops', '[]'), left(f->>'error', 500), left(f->>'code', 20),
+    values (f->>'qid', p_device_uid, left(v_name, 40), v_staff, v_what, coalesce(f->'ops', '[]'), left(f->>'error', 500), left(f->>'code', 20),
             case when f->>'failed_at' ~ '^\d+$' then to_timestamp((f->>'failed_at')::bigint / 1000.0) else now() end)
     on conflict (qid) do nothing;
     get diagnostics n = row_count;
@@ -83,7 +88,7 @@ begin
                                                          where x->>'what' ~ '^(log_ccp|log_milk_check|haccp_log|close_open_task|milk_intake|record_receipt_check|log_batch_step|effluent_log)$')
                                                     then 'sicurezza' else 'tablet' end, 'alert',
       format('%s registrazion%s rifiutat%s dal database (%s)', jsonb_array_length(v_new), case when jsonb_array_length(v_new) = 1 then 'e' else 'i' end,
-             case when jsonb_array_length(v_new) = 1 then 'a' else 'e' end, coalesce(v_name, 'tablet')),
+             case when jsonb_array_length(v_new) = 1 then 'a' else 'e' end, left(coalesce(v_name, 'tablet'), 40)),
       format(E'Il dispositivo «%s» (%s) ha inviato registrazioni fatte senza rete che il database non ha accettato:\n%s\n\nLe trovi in Autocontrollo → Registri → «Registrazioni rifiutate»: vanno rifatte (dal tablet, 🛡 → Ricopia da foglio di carta, con l''ora vera) o corrette, poi «Segna come rifatta». Se è una registrazione HACCP (CCP, temperature, pulizie) va rifatta oggi.',
              coalesce(v_name, 'tablet'), (select full_name from fabula.staff where id = v_staff),
              (select string_agg('• ' || fabula.tablet_reject_what(x->>'what') || ': ' || coalesce(x->>'error', 'errore'), E'\n') from jsonb_array_elements(v_new) x)));
@@ -125,6 +130,17 @@ begin
       update fabula.devices set warned = warned || jsonb_build_object('queue', p_now) where device_uid = d.device_uid;
       out := out || jsonb_build_object('device', v_name, 'kind', 'queue');
     end if;
+    -- v1.14: a floor tablet that stopped checking in (switched off, off the Wi-Fi, or its storage was cleared: then it comes back
+    -- as a new, unmarked device). Two days, so a closed day is not reported; then every 3 days while it stays in the 14-day window.
+    if d.floor and d.last_seen_at < p_now - interval '2 days'
+       and coalesce((d.warned->>'silent')::timestamptz, '-infinity') < p_now - interval '3 days' then
+      perform fabula.post_bot_message('tablet', 'warn', format('%s non si collega da %s', v_name,
+                fabula.it_n(extract(day from p_now - d.last_seen_at)::int, 'giorno', 'giorni')),
+        format(E'Il tablet del caseificio «%s» non si collega dal %s. Controllare che sia acceso, con il Wi-Fi, e aprire l''app.\nSe in Configurazione → Utenti e accessi → Dispositivi compare come nuovo dispositivo (succede se la memoria del browser è stata cancellata), dagli il nome e segna lì «Tablet del caseificio»; a quello vecchio togli il segno. Se il caseificio è chiuso, ignora.',
+               v_name, to_char(d.last_seen_at at time zone 'Europe/Rome', 'DD/MM HH24:MI')));
+      update fabula.devices set warned = warned || jsonb_build_object('silent', p_now) where device_uid = d.device_uid;
+      out := out || jsonb_build_object('device', v_name, 'kind', 'silent');
+    end if;
     -- old app a day after the release: v1.14 only on the floor tablets (a socio's phone or computer updates when it is next opened)
     if d.floor and v_live is not null and fabula._app_ver_num(d.app_version) < fabula._app_ver_num(v_live) and v_rel < p_now - interval '1 day'
        and d.last_seen_at > p_now - interval '1 day'
@@ -149,7 +165,7 @@ begin
     select jsonb_agg(jsonb_build_object(
              'device_uid', d.device_uid, 'label', d.label, 'named', d.named_at is not null, 'name', fabula._device_name(d.device_uid),
              'floor', d.floor, 'kind', fabula._device_kind(d.user_agent), 'staff', s.full_name, 'app_version', d.app_version,
-             'latest', v_live is not null and fabula._app_ver_num(d.app_version) >= fabula._app_ver_num(v_live),
+             'latest', case when fabula._app_ver_num(v_live) is not null then coalesce(fabula._app_ver_num(d.app_version) >= fabula._app_ver_num(v_live), false) end,
              'queue_len', d.queue_len, 'failed_len', d.failed_len, 'first_seen_at', d.first_seen_at, 'last_seen_at', d.last_seen_at,
              'named_at', d.named_at, 'named_by', nb.full_name)
            order by d.floor desc, d.last_seen_at desc nulls last)
@@ -174,8 +190,12 @@ begin
     raise exception using errcode = '23505', message = format('«%s» è già il nome di un altro dispositivo: scegline un altro', v_label);
   end if;
   v_old_name := fabula._device_name(p_device_uid);
-  update fabula.devices set label = v_label, floor = coalesce(p_floor, floor), named_at = now(), named_by = v_sid
-   where device_uid = p_device_uid returning * into n;
+  begin
+    update fabula.devices set label = v_label, floor = coalesce(p_floor, floor), named_at = now(), named_by = v_sid
+     where device_uid = p_device_uid returning * into n;
+  exception when unique_violation then          -- two people naming two devices the same at the same moment
+    raise exception using errcode = '23505', message = format('«%s» è già il nome di un altro dispositivo: scegline un altro', v_label);
+  end;
   if o.label is distinct from n.label or o.floor is distinct from n.floor or o.named_at is null then
     insert into fabula.audit_log (table_name, row_key, action, changed, old_data, new_data, actor_staff_id, actor)
     values ('devices', p_device_uid, 'update',
@@ -206,7 +226,8 @@ $a$;
                          then 'No device is marked as the floor tablet: Configurazione → Utenti e accessi → Dispositivi, tick «Tablet del caseificio» on the one whose code is at the bottom of the tablet''s home screen'
                               || case when count(*) > 0 then ' · ' || count(*) || ' other device(s) checked in, not counted' else '' end
                        else string_agg(dv.label || ' on ' || coalesce(dv.app_version, '?')
-                                       || case when fabula._app_ver_num(dv.app_version) >= fabula._app_ver_num(fabula.live_app_version()) then ' (latest)' else ' (old app)' end
+                                       || case when fabula._app_ver_num(fabula.live_app_version()) is null then ' (app in line unknown: site check down)'
+                                               when fabula._app_ver_num(dv.app_version) >= fabula._app_ver_num(fabula.live_app_version()) then ' (latest)' else ' (old app)' end
                                        || ' · last seen ' || to_char(dv.last_seen_at at time zone 'Europe/Rome', 'DD/MM HH24:MI')
                                        || case when dv.last_seen_at <= now() - interval '2 days' then ' (over 2 days ago: open the app on it)' else '' end, '; ' order by dv.last_seen_at desc) filter (where dv.floor)
                             || case when count(*) filter (where not dv.floor) > 0 then ' · ' || count(*) filter (where not dv.floor) || ' other device(s) not counted' else '' end end)

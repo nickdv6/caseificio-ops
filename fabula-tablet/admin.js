@@ -986,9 +986,10 @@
   // v1.14 (R-04, audit A-35): the tablets, phones and computers that open the tablet app. Each one gets a name, and the floor tablet(s)
   // are marked: only those count for «Tablet di produzione aggiornato» and get the «app vecchia» warning. The row of the device this
   // page is open on says «questo dispositivo» (same id as the tablet app in this browser), so the tablet is found by opening this page on it.
-  async function loadDevices() {
+  async function loadDevices(force) {
     const box = $('devices'), card = $('devices-card'); if (!box) return;
     if (!PERM.can('sistema', 1)) { card.hidden = true; return; }
+    if (!force && card.querySelector('.dirty')) return;       // a name typed and not saved yet: a save elsewhere on this tab must not wipe it
     const { data, error } = await sb.rpc('device_list');
     if (error) { box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
     let here = null; try { here = localStorage.getItem('perla_device_uid'); } catch {}
@@ -1014,7 +1015,7 @@
       tr.innerHTML = `<td>${edit ? `<input type="text" maxlength="40" data-name value="${esc(d.named ? d.label : '')}" placeholder="${esc(suggest(d))}" aria-label="Nome del dispositivo" style="min-width:160px">` : `<b>${esc(d.name)}</b>`}${mine}</td>
         <td>${esc(kind(d))}</td>
         <td class="nw">${esc(ntTime(d.last_seen_at))}${d.staff ? '<br><small>' + esc(d.staff) + '</small>' : ''}</td>
-        <td class="nw">${esc(d.app_version || '—')} ${d.latest ? '<small class="ok">aggiornata</small>' : '<small class="ko">vecchia</small>'}${d.queue_len ? `<br><small class="ko">${d.queue_len} da inviare</small>` : ''}</td>
+        <td class="nw">${esc(d.app_version || '—')} ${d.latest == null ? '<small class="status">?</small>' : d.latest ? '<small class="ok">aggiornata</small>' : '<small class="ko">vecchia</small>'}${d.queue_len ? `<br><small class="ko">${d.queue_len} da inviare</small>` : ''}</td>
         <td>${edit ? `<label style="text-transform:none;letter-spacing:0;font-weight:400"><input type="checkbox" data-floor${d.floor ? ' checked' : ''}> sì</label>` : d.floor ? '<b>sì</b>' : '—'}</td>`;
       if (edit) {
         const td = document.createElement('td');
@@ -1023,7 +1024,7 @@
           const { error } = await sb.rpc('set_device', { p_device_uid: d.device_uid, p_label: name, p_floor: floor });
           if (error) throw error;
           if (d.device_uid === here) { try { localStorage.setItem('fabula_device', name); } catch {} }
-          UI.after(loadDevices);
+          UI.after(() => loadDevices(true));
         }));
         tr.append(td);
       }

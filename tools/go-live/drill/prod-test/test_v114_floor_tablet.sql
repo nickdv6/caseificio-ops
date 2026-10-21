@@ -48,6 +48,26 @@ select pg_temp.ck('kinds from the browser: iPad, Android phone, Mac or iPad, Win
   and fabula._device_kind('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)') = 'Mac o iPad' and fabula._device_kind('Mozilla/5.0 (Windows NT 10.0; Win64; x64)') = 'PC Windows'
   and fabula._device_kind(null) = 'dispositivo');
 
+-- a refused save from the unnamed tablet: the alarm and the list use the same name, so resolving it closes the alarm (review of v1.14)
+select fabula.device_checkin('tab-floor-0001', 'tablet-1', 'perla-v79', 0, null,
+  '[{"qid":"q-114-0","ops":[{"table":"haccp_log","row":{"x":1}}],"error":"new row violates check constraint","code":"23514","failed_at":1759700000000}]') is not null c0 \gset
+select pg_temp.ck('a refused save from an unnamed tablet: stored and announced under the same name',
+  (select device_label from fabula.tablet_rejects where qid = 'q-114-0') = 'tablet Android di Mario'
+  and exists (select 1 from fabula.bot_messages where title = '1 registrazione rifiutata dal database (tablet Android di Mario)' and resolved_at is null));
+select pg_temp.as_user('00000000-0000-4000-a000-000000114a01');
+select fabula.resolve_tablet_reject('q-114-0', 'rifatta dal tablet') rs0 \gset
+select pg_temp.ck('…and marking it «rifatta» closes the alarm (it stayed open and escalating in the first draft of v1.14)',
+  :'rs0'::boolean and exists (select 1 from fabula.bot_messages where title = '1 registrazione rifiutata dal database (tablet Android di Mario)' and resolved_at is not null));
+-- a label sent by a tablet is not a name: any login could send the floor tablet's name, or nothing
+select pg_temp.as_user('00000000-0000-4000-a000-000000114a02');
+select fabula.device_checkin('tab-evil-0001', '', 'perla-v80', 0, null, '[]', 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile Safari') is not null c4 \gset
+select fabula.device_checkin('tab-evil-0002', 'Tablet laboratorio', 'perla-v80', 0, null, '[]', null) is not null c5 \gset
+select pg_temp.ck('a label sent by the tablet (empty, or another device''s name) is not used as its name',
+  fabula._device_name('tab-evil-0001') = 'telefono Android di Mario' and fabula._device_name('tab-evil-0002') = 'dispositivo di Mario',
+  fabula._device_name('tab-evil-0001') || ' / ' || fabula._device_name('tab-evil-0002'));
+delete from fabula.devices where device_uid like 'tab-evil-%';
+select pg_temp.as_user('00000000-0000-4000-a000-000000114a02');
+
 -- ============================== Configurazione → Dispositivi ==============================
 select pg_temp.ck('a production login cannot see the list or mark a device (Sistema)',
   pg_temp.err($$select fabula.device_list()$$) like '42501%' and pg_temp.err($$select fabula.set_device('tab-floor-0001', 'Tablet laboratorio', true)$$) like '42501%',
@@ -115,12 +135,30 @@ update fabula.devices set app_version = 'perla-v81', warned = '{}' where device_
 select pg_temp.ck('a floor tablet on a newer app than the site check is not called old',
   not exists (select 1 from jsonb_array_elements((fabula.device_watch()) -> 'warnings') x where x ->> 'kind' = 'version'));
 
+update fabula.devices set last_seen_at = now() - interval '3 days', warned = '{}' where device_uid = 'tab-floor-0001';
+select fabula.device_watch() w3 \gset
+select pg_temp.ck('a floor tablet that stops checking in for 2 days is reported, by name and from when',
+  exists (select 1 from jsonb_array_elements(:'w3'::jsonb -> 'warnings') x where x ->> 'kind' = 'silent' and x ->> 'device' = 'Tablet laboratorio')
+  and exists (select 1 from fabula.bot_messages where agent = 'tablet' and title = 'Tablet laboratorio non si collega da 3 giorni' and body like '%compare come nuovo dispositivo%'), :'w3');
+select pg_temp.ck('…not again the same day', not exists (select 1 from jsonb_array_elements((fabula.device_watch()) -> 'warnings') x where x ->> 'kind' = 'silent'));
+update fabula.devices set last_seen_at = now() where device_uid = 'tab-floor-0001';
+update fabula.infra_status set ok = false where key in ('site', 'github_sw');
+select pg_temp.as_user('00000000-0000-4000-a000-000000114a01');
+select pg_temp.ck('site check down: the go-live detail says the app in line is unknown, the list shows neither «aggiornata» nor «vecchia»',
+  pg_temp.tc() ->> 'detail' like '%(app in line unknown: site check down)%'
+  and (select bool_and(x -> 'latest' = 'null'::jsonb) from jsonb_array_elements(fabula.device_list() -> 'devices') x), pg_temp.tc() ->> 'detail');
+update fabula.infra_status set ok = true where key in ('site', 'github_sw');
+select pg_temp.as_user(null);
+select pg_temp.ck('names are unique in the database too (a unique index, not only the check before saving)',
+  pg_temp.err($$update fabula.devices set label = 'TABLET LABORATORIO', named_at = now() where device_uid = 'iphone-nick-0001'$$) like '23505%');
+
 -- ============================== grants and the go-live list ==============================
-select pg_temp.ck('grants: the list and the naming for logins only; helpers and the watchdog for the database only',
+select pg_temp.ck('grants: the list and the naming for logins only; the version number for logins too (ops_dashboard runs as its caller); the rest for the database only',
   has_function_privilege('authenticated', 'fabula.device_list()', 'execute') and not has_function_privilege('anon', 'fabula.device_list()', 'execute')
   and has_function_privilege('authenticated', 'fabula.set_device(text, text, boolean)', 'execute') and not has_function_privilege('anon', 'fabula.set_device(text, text, boolean)', 'execute')
   and not has_function_privilege('authenticated', 'fabula._device_name(text)', 'execute') and not has_function_privilege('authenticated', 'fabula._device_kind(text)', 'execute')
-  and not has_function_privilege('authenticated', 'fabula._app_ver_num(text)', 'execute') and not has_function_privilege('authenticated', 'fabula.device_watch(timestamptz)', 'execute')
+  and has_function_privilege('authenticated', 'fabula._app_ver_num(text)', 'execute') and not has_function_privilege('anon', 'fabula._app_ver_num(text)', 'execute')
+  and not has_function_privilege('authenticated', 'fabula.device_watch(timestamptz)', 'execute')
   and has_function_privilege('authenticated', 'fabula.device_checkin(text, text, text, int, timestamptz, jsonb, text)', 'execute')
   and not has_function_privilege('anon', 'fabula.device_checkin(text, text, text, int, timestamptz, jsonb, text)', 'execute'));
 select pg_temp.ck('the two new definer functions are accepted by the security scan with their reason',
