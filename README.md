@@ -46,6 +46,8 @@ from a login (the yearly series must stay gap-free), and nothing undid the packi
   ANNULLATO (banner, red badge, watermark on every printed page). The tablet's «🖨 Stampa DDT» after packing opens that page.
 - One `audit_log` row per annulment («Registro modifiche» → Spedizioni (DDT)). The new enum value is used only as text inside the
   migration: the release is one transaction, and a new enum value can't be used before it commits.
+- **Known limit:** a direct shipment saved offline gets its stock move when the tablet sends it (save_ops does not backdate table rows),
+  so one saved offline late in the evening and sent the next morning can still be annulled that morning.
 - **Tests:** `prod-test/test_v115_cancel_ddt.sql` 40/40; browser `tablet-test/v115_e2e.py` 16/16. Two independent reviews (2 High,
   2 Medium and the Lows fixed before release).
 
