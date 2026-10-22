@@ -359,15 +359,17 @@ insert into fabula.milk_shipments (id, shipped_at, ship_date, kg, milk_lot, stat
   ('60000000-0000-4000-a000-0000000096c3', now() - interval '1 hour', current_date, 1000, 'MC96-3', 'shipped'),
   ('60000000-0000-4000-a000-0000000096c4', now() - interval '1 hour', current_date, 105, 'MC96-4', 'shipped');
 select pg_temp.as_user('00000000-0000-4000-a000-0000000096a2');   -- the casaro receives the milk
+-- v1.17 (audit D-1): times relative to now, in the past (they were fixed at 07:00–07:20 today, which is in the future when the suite
+-- runs before 07:00 Rome; a delivery can no longer be dated in the future)
 set role authenticated;
 select pg_temp.err($q$insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, shipment_id, dairy_kg)
-  values (current_date, '07:00', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c2', 1050)$q$) e_nowhy \gset
+  values (current_date, ((now() at time zone 'Europe/Rome') - interval '40 minutes')::time, '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c2', 1050)$q$) e_nowhy \gset
 select pg_temp.err($q$insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, shipment_id, dairy_kg, weight_note)
-  values (current_date, '07:00', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c2', 1050, 'latte rimasto nella cisterna')$q$) e_why \gset
+  values (current_date, ((now() at time zone 'Europe/Rome') - interval '40 minutes')::time, '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c2', 1050, 'latte rimasto nella cisterna')$q$) e_why \gset
 select pg_temp.err($q$insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, shipment_id, dairy_kg)
-  values (current_date, '07:10', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c3', 1012)$q$) e_small \gset
+  values (current_date, ((now() at time zone 'Europe/Rome') - interval '30 minutes')::time, '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c3', 1012)$q$) e_small \gset
 select pg_temp.err($q$insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, shipment_id, dairy_kg, weight_note)
-  values (current_date, '07:20', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c4', 1050, 'la Masseria ha scritto 105 invece di 1050')$q$) e_typo \gset
+  values (current_date, ((now() at time zone 'Europe/Rome') - interval '20 minutes')::time, '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c4', 1050, 'la Masseria ha scritto 105 invece di 1050')$q$) e_typo \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
 select pg_temp.ck('FARM-02 over 2 % without a reason is refused, with both weights', :'e_nowhy' = 'Pesato qui 1050,0 kg, la Masseria ha scritto 1100,0 kg (-4,5 %): scrivi il motivo della differenza', :'e_nowhy');
@@ -407,10 +409,11 @@ select pg_temp.ck('R1 a lot already held (CCP missing) is listed and gets the mi
   (select hold_reason from fabula.production_batches where batch_lot = 'LC96-B'));
 
 -- R4 · milk rejected AT ARRIVAL also raises the alert (Telegram), once; a cold-room NC is pushed by itself
+-- v1.17 (audit D-1): the delivery's time is relative to now, in the past (it was fixed at 07:30 today: in the future before 07:30 Rome)
 select pg_temp.as_user('00000000-0000-4000-a000-0000000096a2');
 set role authenticated;
 select fabula.save_ops(jsonb_build_array(
-  jsonb_build_object('table', 'milk_intake', 'row', jsonb_build_object('id', '70000000-0000-4000-a000-0000000096d6', 'intake_date', current_date, 'intake_time', '07:30', 'supplier_id', '50000000-0000-4000-a000-0000000096f1',
+  jsonb_build_object('table', 'milk_intake', 'row', jsonb_build_object('id', '70000000-0000-4000-a000-0000000096d6', 'intake_date', current_date, 'intake_time', to_char((now() at time zone 'Europe/Rome') - interval '10 minutes', 'HH24:MI'), 'supplier_id', '50000000-0000-4000-a000-0000000096f1',
                      'milk_lot', 'MC96-6', 'qty_kg', 900, 'temperature_c', 4, 'accepted', false, 'rejection_reason', 'test antibiotici positivo', 'source', 'tablet')),
   jsonb_build_object('rpc', 'log_milk_check', 'args', jsonb_build_object('p_milk_intake_id', '$0.id', 'p_cp_code', 'CCP-MILK-ABX', 'p_value', 1, 'p_staff_id', '10000000-0000-4000-a000-0000000096a2'))), gen_random_uuid()) so6 \gset
 select fabula.log_ccp(p_cp_code => 'CCP-COLD-2', p_value => 11, p_staff_id => '10000000-0000-4000-a000-0000000096a2') cold \gset

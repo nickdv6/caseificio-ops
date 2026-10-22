@@ -1,6 +1,6 @@
 {
-  "version": "v1.16",
-  "title_it": "Le richieste di approvazione le crea solo il sistema (bot e funzioni), non più un login a mano: un piano latte rifiutato non torna approvato e i codici sconto nascono solo dalle promo di smaltimento valide (audit D-2)",
+  "version": "v1.17",
+  "title_it": "Registri HACCP, latte e tracciabilità: quello che un utente scrive direttamente lo controlla il database (CCP solo dal controllo HACCP, esito dai limiti, niente date vecchie, niente lotti «test», chi riceve il latte dall'elenco del personale, magazzino solo dai passi del tablet) (audit D-1)",
   "order": [
     "database",
     "functions"

@@ -18,6 +18,46 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## The legal registers check what a login writes itself (v1.17)
+Audit D-1 (`claude/production-readiness-audit-2026-10-22.md`). A login with level 2 in an area could INSERT straight into `haccp_log`,
+`production_batches`, `stock_moves`, `lab_samples` and `milk_intake` — reproduced as produzione: a CCP-PAST of 60 °C saved «ok», signed by the titolare,
+30 days back, source «sensor», with no NC and no hold; a lot with source «test» closed without CCPs and not held; +1000 kg of finished
+goods by a stock adjustment. Migration `v117a`, database only: one guard, `fabula.trg_login_record_guard()` (SECURITY INVOKER), BEFORE
+each row a login writes itself (`current_user` authenticated/anon, as `trg_record_lock`). The database's own functions (`log_ccp`,
+`log_milk_check`, `record_lab_result`, `pack_order`, `post_stock_count`, `receive_purchase_order`, `correct_record`, …), cron, the bots,
+their stand-ins and the service role are not touched. What a login can write is what the tablet and the login-run functions write today:
+- **`haccp_log`:** only non-critical points (end-of-shift cleaning, pest round); a CCP reading goes through `log_ccp`, which computes the
+  result and places the hold. The result is recomputed from the limits when there is a value; the time is within the last 7 days (an
+  offline save keeps its time); no «sensor», «simulation» or «test»; `entered_by_id` is the login's own staff id.
+- **`production_batches`:** a lot is started, never inserted already closed (the close is what runs the CCP check and the hold); no
+  «sensor», «simulation» or «test» source, and the source of a lot does not change; `entered_by_id` is the login and stays.
+- **`stock_moves`:** consumption into a lot (raw milk, consumables, packaging, out of stock), sales (out of stock), the production output
+  of a closed lot (its product and lot, up to the kg recorded at the close), and the consumable/packaging correction of a lot. Anything
+  else, or the wrong sign, is refused: stock is corrected with the count or by the system.
+- **`lab_samples`:** a sample is created «in attesa»; the result comes only from `record_lab_result`.
+- **`milk_intake`** (same gap, added with Nick's approval): no «sensor», «simulation» or «test»; the delivery's date and time within the
+  last 7 days and not in the future for every source (before, only «paper» was bounded). A live «tablet» entry may be up to 15 minutes
+  ahead and any other source 5 (paper as before): the 15 minutes are a device-clock tolerance only, because a live delivery carries the
+  tablet's own clock — not a rule for dating deliveries. The longer-term fix is server time / clock-skew validation (audit R-11),
+  not trusting the tablet clock; it is not part of v1.17. The temperature is required, so the CCP 1a
+  acceptance rule always runs; who received it is a person on the tablet's list (`floor_operators`) under that person's own name, or
+  «firma non leggibile» on a paper copy; `entered_by_id` is the login. The shared floor tablet (received by the operator on duty,
+  saved by the tablet's login) works as before.
+- **Delayed entries and corrections** keep their controlled routes, untouched: the paper copy up to 7 days back (`log_ccp`,
+  `log_milk_check`, the milk and lot paper forms) and `correct_record` (a reason, the original kept; after 15 minutes only the HACCP or
+  production manager; no timestamp is ever rewritten). Nothing older than 7 days can be entered by anyone, as before.
+- **Tests:** `test_v117_legal_records.sql` (77 checks: the audit's forged writes, both lot-lifecycle bypasses with «test» and
+  «simulation», every movement type outside the allowlist, what the tablet and the login-run functions still write, an 11-login role
+  matrix, the owner and service role untouched, a refused step leaving the whole save unwritten, the milk intake, the delayed-entry and
+  correction routes, the device-clock tolerance and the 7-day window); the tablet browser suites on a fresh replay.
+  `test_audit_critical.sql` (approved by Nick): the five FARM-02/R4 deliveries are timed «now − 40/40/30/20/10 minutes» instead of
+  07:00–07:30 today (same order and spacing, no assertion changed), so they no longer fail when CI runs before 07:30 Rome.
+- **Rollback:** `tools/go-live/rollback/20261022220000_v117a_down.sql` drops the five triggers and the function (v1.17a adds objects
+  only). Copy it into `supabase/migrations/` under a later version and release it like any other version.
+- Left as they were: who performed a reading on `haccp_log`/`production_batches` (`operator`, `casaro`: D-3); a milk delivery saved
+  without its two CCP 1 checks in the same save is not refused, and batch start refuses only milk already marked rejected (a check
+  across rows: separate P1 follow-up after D-1).
+
 ## Approval requests come only from the system (v1.16)
 Audit D-2 (`claude/production-readiness-audit-2026-10-22.md`). Any login with level 2 in an area could INSERT straight into
 `fabula.approvals`, and the auto-approval trigger trusted the row: a request pointing at a **rejected** milk plan got a timer, approved
