@@ -199,16 +199,19 @@ select pg_temp.ck('E-33 a Shopify job that did not start: its incident tells to 
   (select string_agg(title || ' :: ' || coalesce(body, ''), ' || ') from fabula.notify_outbox where source = 'bot_alerts'));
 
 -- ============================== review fixes: runs cut short, calls that never arrived, the same alarm again ==============================
-insert into fabula.agent_runs (agent, started_at, status, details) values ('shopify_inventory', '2026-10-22 07:32:10+02', 'running', '{"via":"db"}');
-select fabula.shopify_sync_tick('2026-10-22 07:50:00+02') k1 \gset
+-- a working day after the E-33 day above (it was the fixed 22/10/2026: from that morning the runs made above at the real time counted as done for the slot and the check failed)
+select (select d from generate_series((now() at time zone 'Europe/Rome')::date + 6, (now() at time zone 'Europe/Rome')::date + 12, interval '1 day') d
+         where extract(isodow from d) between 1 and 6 order by d limit 1)::date k_day \gset
+insert into fabula.agent_runs (agent, started_at, status, details) values ('shopify_inventory', (:'k_day'::date + time '07:32:10') at time zone 'Europe/Rome', 'running', '{"via":"db"}');
+select fabula.shopify_sync_tick((:'k_day'::date + time '07:50') at time zone 'Europe/Rome') k1 \gset
 select pg_temp.ck('a run cut short (still «running» after 15 minutes) is marked failed, and the slot is called again',
-  (select status || '|' || error from fabula.agent_runs where agent = 'shopify_inventory' and started_at = '2026-10-22 07:32:10+02') like 'error|Interrotta%'
+  (select status || '|' || error from fabula.agent_runs where agent = 'shopify_inventory' and started_at = (:'k_day'::date + time '07:32:10') at time zone 'Europe/Rome') like 'error|Interrotta%'
   and (:'k1'::jsonb->>'stale')::int = 1 and exists (select 1 from jsonb_array_elements(:'k1'::jsonb->'calls') x where x->>'agent' = 'shopify_inventory'), :'k1');
 -- a call that never reached the function: the stub answer 404
 select request_id rq from fabula.db_job_calls where agent = 'shopify_inventory' order by id desc limit 1 \gset
 insert into net._http_response (id, status_code, content) values (:rq, 404, '{"error":"not found"}');
-update fabula.db_job_calls set requested_at = '2026-10-22 07:50:00+02' where request_id = :rq;
-select fabula.shopify_sync_tick('2026-10-22 07:56:00+02') k2 \gset
+update fabula.db_job_calls set requested_at = (:'k_day'::date + time '07:50') at time zone 'Europe/Rome' where request_id = :rq;
+select fabula.shopify_sync_tick((:'k_day'::date + time '07:56') at time zone 'Europe/Rome') k2 \gset
 select pg_temp.ck('a call that never reached the function (not published): a failed run and an alarm saying why, in plain words',
   (:'k2'::jsonb->>'not_started')::int = 1
   and (select status || '|' || error from fabula.agent_runs where agent = 'shopify_inventory' and summary = 'non partita' order by started_at desc limit 1)
