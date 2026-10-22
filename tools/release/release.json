@@ -1,6 +1,6 @@
 {
-  "version": "v1.15",
-  "title_it": "«Annulla DDT»: un ordine preparato male si annulla finché la merce non è partita (Console → Operazioni → Spedizioni e DDT)",
+  "version": "v1.16",
+  "title_it": "Le richieste di approvazione le crea solo il sistema (bot e funzioni), non più un login a mano: un piano latte rifiutato non torna approvato e i codici sconto nascono solo dalle promo di smaltimento valide (audit D-2)",
   "order": [
     "database",
     "functions"

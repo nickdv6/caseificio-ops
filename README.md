@@ -18,6 +18,26 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## Approval requests come only from the system (v1.16)
+Audit D-2 (`claude/production-readiness-audit-2026-10-22.md`). Any login with level 2 in an area could INSERT straight into
+`fabula.approvals`, and the auto-approval trigger trusted the row: a request pointing at a **rejected** milk plan got a timer, approved
+itself, and `sync_po_from_approval` moved the plan back to «approved» for the farm; a 100 % promo with no end was listed for the
+sell-down bot to turn into a Shopify code. Migration `v116a`, database only (no app or function change):
+- **Logins lose INSERT on `approvals`.** Every real request is created by the database's own functions and triggers, run by the bots,
+  cron, the stand-ins and «Esegui ora», «Ordina di nuovo», manual orders, lab results and the marketing steps; no page and no edge function
+  inserts one. SELECT, DELETE, the five policies, deciding, «Annulla», auto-approval and expiry are unchanged. The five proposal functions
+  (`plan_milk`, `propose_purchase_orders`, `recipe_tuning_proposals`, `sell_down_signals`, `consorzio_declaration`) keep their EXECUTE
+  grant: called by a login they stop at the insert and roll back. `mkt_local_before` stays SECURITY INVOKER on purpose.
+- **`sync_po_from_approval`** never moves a rejected milk plan to approved; «Annulla» on a rejection (back to pending / proposed) still works.
+- **`sell_down_codes_needed`** lists only the sell-down bot's own promos (`requested_by = 'agent:sell_down'`) with a discount above 0 and
+  at most `sell.promo_pct`, and a real end within 48 hours; a non-numeric discount is skipped instead of breaking the list.
+- **Tests:** `test_v116_approvals_insert.sql` (46 checks: grants, direct inserts per role, the five functions as a login, rejected plans,
+  sell-down codes, and what must keep working); the two D-33 checks in `test_v104_db_guards.sql` now expect the refusal.
+- **Rollback:** `tools/go-live/rollback/20261022180000_v116a_down.sql` puts back the grant and both definitions exactly as captured live
+  on 22/10. Copy it into `supabase/migrations/` under a later version and release it like any other version.
+- Left as they were (recorded in the audit): `auto_approve_rule` does not look at the plan's status or the requester (no longer reachable
+  by a login); logins keep Supabase's default TRUNCATE privilege on the table (not reachable through the Data API).
+
 ## «Annulla DDT» (v1.15)
 Backlog from v1.04 (Fulfilment on the go-live board): a wrongly packed order was a dead end. A numbered DDT can't be deleted or changed
 from a login (the yearly series must stay gap-free), and nothing undid the packing. Migration `v115a`, app `perla-v81`.

@@ -292,8 +292,10 @@ select pg_temp.err($q$update fabula.purchase_orders set status = 'approved' wher
 select pg_temp.err($q$update fabula.purchase_orders set status = 'cancelled' where po_number = 'PO-W104-4'$q$) a6 \gset
 reset role;
 select set_config('request.jwt.claims', '', false);
-select pg_temp.ck('D-33 a login cannot write an approval already approved', :'a1' like 'Una richiesta di approvazione nasce «in attesa»%', :'a1');
-select pg_temp.ck('D-33 …nor one set to approve itself (the window is set by the database)', :'a2' = '' and not exists (select 1 from fabula.approvals where summary = 'si approva da sola' and auto_rule = 'mio'), :'a2');
+select pg_temp.ck('D-33 a login cannot write an approval already approved (v1.16, D-2: a login cannot write approvals at all)',
+  :'a1' like 'permission denied for table approvals%' and not exists (select 1 from fabula.approvals where summary = 'già approvata'), :'a1');
+select pg_temp.ck('D-33 …nor one set to approve itself (v1.16, D-2: refused, and no such row exists)',
+  :'a2' like 'permission denied for table approvals%' and not exists (select 1 from fabula.approvals where summary = 'si approva da sola'), :'a2');
 select pg_temp.ck('D-33 a purchase order from a login starts as draft; «approvato» only through the approval (cancelling is still possible)',
   :'a3' like 'Un ordine d''acquisto nasce in bozza o in attesa di approvazione%' and :'a4' = '' and :'a5' like 'L''ordine PO-W104-4 diventa «approvato» solo dalla sua approvazione%' and :'a6' = '', :'a3' || ' / ' || :'a5' || ' / ' || :'a6');
 select pg_temp.ck('D-33 the database''s own jobs still write approved orders', pg_temp.err(format($q$insert into fabula.purchase_orders (po_number, supplier_id, status, order_date) values ('PO-W104-5', %L, 'approved', %L)$q$, :'sup', :'d')) = '');
