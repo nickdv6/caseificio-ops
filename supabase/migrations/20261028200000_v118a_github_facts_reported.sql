@@ -2,14 +2,16 @@
 -- Until now the hourly infra probe fetched three public GitHub URLs without a token: the migration tree (api.github.com), the app's
 -- sw.js (raw.githubusercontent.com) and the commit feed (github.com/…/commits/main.atom). On a private repo all three answer 404,
 -- and «Ultimo codice su GitHub», «Migrazioni del repo uguali al database» and «App del tablet pubblicata» go blind.
--- From here GitHub says what main holds: the release workflow at every push to main (plan job, and again after an apply) and the
--- outside watcher at every run read it from their own checkout (tools/release/release.py github) and send the head commit, the
--- migration versions and the app version through public.fabula_outside_report, kind «github», with the backup token the watcher and
--- the release already use. The facts land in the same infra_status rows (github_tree, github_head, github_sw) with the same data the
--- probe produced, so infra_checks(), the go-live board, the drift notice and live_app_version() read them unchanged.
---   1. fabula.github_report(detail): checks and stores one report. Not callable by logins or anon.
+-- From here GitHub says what main holds: the release workflow after CI passes on main (plan job, and again after an apply) and the
+-- outside watcher at every run read it from their own checkout of main (tools/release/release.py github) and send the head commit,
+-- the migration versions and the app version through public.fabula_outside_report, kind «github», with the backup token the watcher
+-- and the release already use. The facts land in the same infra_status rows (github_tree, github_head, github_sw) with the same data
+-- the probe produced, so infra_checks(), the go-live board, the drift notice and live_app_version() read them unchanged.
+--   1. fabula.github_report(detail): checks and stores one report; a report about an older commit than the one stored is ignored
+--      (a re-run of an old watcher run, the end of a long apply after a newer push). Not callable by logins or anon.
 --   2. public.fabula_outside_report: + kind «github», handled before the 8,000-character cut (210 versions are already 3,600).
 --   3. fabula.infra_probe(): the three GitHub requests are gone; the tablet site and the two server functions are still probed hourly.
+--   4. Wording: the three go-live hints and infra_checks' «waiting» text no longer say «hourly».
 -- fabula.infra_collect() is unchanged: its GitHub branches are no longer reached (a report leaves no pending request on the row).
 -- Rollback: tools/go-live/rollback/20261028200000_v118a_down.sql.
 
@@ -22,6 +24,7 @@ as $function$
 declare
   v_sha text := p_detail->>'sha';
   v_title text := left(coalesce(p_detail->>'title', ''), 200);
+  v_updated_txt text := p_detail->>'updated';
   v_updated timestamptz;
   v_versions jsonb := p_detail->'versions';
   v_sw text := p_detail->>'sw';
@@ -29,6 +32,9 @@ declare
   v_run text := left(coalesce(p_detail->>'run_url', ''), 200);
   v_n int;
   v_sw_ok boolean;
+  h fabula.infra_status;
+  v_prev timestamptz;
+  v_prev_ok_at timestamptz;
 begin
   if jsonb_typeof(p_detail) is distinct from 'object' then
     raise exception 'resoconto GitHub non valido: non è un oggetto' using errcode = '22023';
@@ -36,21 +42,40 @@ begin
   if v_sha is null or v_sha !~ '^[0-9a-f]{40}$' then
     raise exception 'resoconto GitHub non valido: commit «%»', left(coalesce(v_sha, ''), 50) using errcode = '22023';
   end if;
-  begin
-    v_updated := (p_detail->>'updated')::timestamptz;
-  exception when others then
-    v_updated := null;
-  end;
-  if v_updated is null or v_updated > p_now + interval '10 minutes' then
-    raise exception 'resoconto GitHub non valido: data del commit «%»', left(coalesce(p_detail->>'updated', ''), 40) using errcode = '22023';
+  -- the commit date as git prints it (%cI): ISO 8601 with its offset; «now», «epoch», «infinity» and the like are not dates
+  if v_updated_txt is null or v_updated_txt !~ '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}(:?\d{2})?)$' then
+    raise exception 'resoconto GitHub non valido: data del commit «%»', left(coalesce(v_updated_txt, ''), 40) using errcode = '22023';
   end if;
+  begin
+    v_updated := v_updated_txt::timestamptz;
+  exception when others then
+    raise exception 'resoconto GitHub non valido: data del commit «%»', left(v_updated_txt, 40) using errcode = '22023';
+  end;
+  v_updated := least(v_updated, p_now);       -- a committer's clock ahead of time: the commit counts as made now
   if jsonb_typeof(v_versions) is distinct from 'array' or jsonb_array_length(v_versions) > 5000
      or exists (select 1 from jsonb_array_elements(v_versions) e where jsonb_typeof(e) <> 'string' or (e #>> '{}') !~ '^[0-9]{14}$') then
     raise exception 'resoconto GitHub non valido: elenco delle migrazioni' using errcode = '22023';
   end if;
   v_versions := (select coalesce(jsonb_agg(distinct x order by x), '[]'::jsonb) from jsonb_array_elements_text(v_versions) x);
   v_n := jsonb_array_length(v_versions);
-  v_sw_ok := coalesce(v_sw ~ '^[A-Za-z0-9._-]{1,60}$', false);
+  -- the app version: what the site parser accepts (anything between the quotes), minus spaces, control characters, quotes and markup
+  v_sw_ok := coalesce(v_sw ~ '^[^[:space:][:cntrl:]''"<>&\\]{1,60}$', false);
+
+  -- one report at a time; a report about an OLDER commit than the stored one is old news (a re-run of an old watcher run, the end of
+  -- an apply that read main before a newer push) and changes nothing. Unless the stored facts are already stale (26 h: the board says
+  -- «GitHub non letto» anyway) or the report was sent by hand (release.py github --source manual, e.g. after main was moved back).
+  perform pg_advisory_xact_lock(hashtext('fabula.github_report'));
+  select * into h from fabula.infra_status where key = 'github_head';
+  select last_ok_at into v_prev_ok_at from fabula.infra_status where key = 'github_tree';
+  begin
+    v_prev := (h.data->>'updated')::timestamptz;
+  exception when others then
+    v_prev := null;
+  end;
+  if h.data->>'sha' is distinct from v_sha and v_prev > v_updated and v_src <> 'manual'
+     and coalesce(v_prev_ok_at > p_now - interval '26 hours', false) then
+    return jsonb_build_object('ok', true, 'ignored', 'older', 'sha', left(v_sha, 7), 'kept', left(h.data->>'sha', 7));
+  end if;
 
   -- the same detail texts as the probe's (fabula._it_infra_detail translates them); no pending request: infra_collect leaves the rows alone
   insert into fabula.infra_status (key, ok, detail, data, req_id, sent_at, checked_at, last_ok_at, fail_streak)
@@ -69,9 +94,10 @@ begin
     on conflict (key) do update set ok = true, detail = excluded.detail, data = excluded.data, req_id = null, sent_at = null,
       checked_at = excluded.checked_at, last_ok_at = excluded.last_ok_at, fail_streak = 0;
   else
-    -- like the probe: a sw.js without a version is a failed check, and the last good version is kept
+    -- like the probe: no usable version is a failed check, and the last good version is kept
     insert into fabula.infra_status (key, ok, detail, data, req_id, sent_at, checked_at, last_ok_at, fail_streak)
-    values ('github_sw', false, 'GitHub main, sw.js without version', '{}'::jsonb, null, null, p_now, null, 1)
+    values ('github_sw', false, case when v_sw is null then 'GitHub main, sw.js without version' else 'GitHub main, versione di sw.js non accettata' end,
+            '{}'::jsonb, null, null, p_now, null, 1)
     on conflict (key) do update set ok = false, detail = excluded.detail, req_id = null, sent_at = null,
       checked_at = excluded.checked_at, fail_streak = infra_status.fail_streak + 1;
   end if;
@@ -171,3 +197,19 @@ begin
   end loop;
   return v_out;
 end $function$;
+
+-- wording: the three checks no longer wait for an hourly GitHub read (in place, so the rest of infra_checks stays as live)
+do $$
+declare d text; n text;
+begin
+  d := pg_get_functiondef('fabula.infra_checks()'::regprocedure);
+  n := replace(d, $s$'In attesa del primo controllo di GitHub (ogni ora, ai :43)'$s$,
+                  $s$'In attesa del primo resoconto di GitHub (a ogni rilascio e a ogni giro del controllo esterno)'$s$);
+  if n = d then raise exception 'v118a: infra_checks waiting text not found'; end if;
+  execute n;
+end $$;
+
+update fabula.dash_checks set hint_it = 'Si chiude da solo: GitHub lo comunica a ogni rilascio e a ogni giro del controllo esterno.'
+ where key in ('code_pushed', 'repo_sync') and hint_it = 'Si chiude da solo (controllo orario).';
+update fabula.dash_checks set hint_it = 'Si chiude da solo: il sito si controlla ogni ora, GitHub lo comunica a ogni rilascio e a ogni giro del controllo esterno.'
+ where key = 'app_deployed' and hint_it = 'Si chiude da solo (controllo orario).';

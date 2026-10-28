@@ -794,7 +794,7 @@ def cmd_github(a):
     print('github: ' + json.dumps({**detail, 'versions': f"{len(facts['versions'])} (last {facts['versions'][-1] if facts['versions'] else '-'})"}))
     token = os.environ.get('BACKUP_EXPORT_TOKEN', '')
     if not token:
-        print('github: no BACKUP_EXPORT_TOKEN, nothing sent')
+        print('::warning::github: no BACKUP_EXPORT_TOKEN, nothing sent (the board\'s GitHub checks will age)')
         return 0
     try:
         r = public_rpc('fabula_outside_report', {'p_token': token, 'p_kind': 'github', 'p_detail': detail})

@@ -1,6 +1,6 @@
 -- Rollback of v1.18a (audit S-1 step 2): puts back exactly what was live before it (captured on 28/10/2026, identical on production
 -- and on a replay of main b84106b: public.fabula_outside_report md5(prosrc) 6923267785d40ff0c9198d37572d497d, fabula.infra_probe
--- fea5057314b18ee8b4dc91fbd98df27f) and drops fabula.github_report. The probe then reads GitHub again, which works only while the repo
+-- fea5057314b18ee8b4dc91fbd98df27f), drops fabula.github_report and puts the wording back (below). The probe then reads GitHub again, which works only while the repo
 -- is public. To use it, copy it into supabase/migrations under a new, later version and release it through the pipeline like any other
 -- release (the pipeline never re-releases an older commit). The github_* rows of fabula.infra_status are left as they are: the next
 -- hourly probe overwrites them.
@@ -91,3 +91,22 @@ begin
 end $function$;
 
 drop function if exists fabula.github_report(jsonb, timestamptz);
+
+-- the wording back as it was (infra_checks md5(prosrc) 10b1c9da71a6df1ce1e43285c4985162 and the three hints)
+do $$
+declare d text; n text;
+begin
+  d := pg_get_functiondef('fabula.infra_checks()'::regprocedure);
+  n := replace(d, $s$'In attesa del primo resoconto di GitHub (a ogni rilascio e a ogni giro del controllo esterno)'$s$,
+                  $s$'In attesa del primo controllo di GitHub (ogni ora, ai :43)'$s$);
+  if n = d then raise exception 'v118a down: infra_checks waiting text not found'; end if;
+  execute n;
+end $$;
+
+update fabula.dash_checks set hint_it = 'Si chiude da solo (controllo orario).'
+ where key in ('code_pushed', 'repo_sync') and hint_it = 'Si chiude da solo: GitHub lo comunica a ogni rilascio e a ogni giro del controllo esterno.';
+update fabula.dash_checks set hint_it = 'Si chiude da solo (controllo orario).'
+ where key = 'app_deployed' and hint_it = 'Si chiude da solo: il sito si controlla ogni ora, GitHub lo comunica a ogni rilascio e a ogni giro del controllo esterno.';
+
+-- The three workflow steps that send «github» reports (release.yml ×2, watch.yml) can stay: after this rollback each run only logs a
+-- «kind non valido: github» warning. Remove them in the same commit to keep the logs clean.

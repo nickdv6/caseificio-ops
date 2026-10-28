@@ -27,22 +27,30 @@ the two workflows and `release.py`:
   replays (`migrations_at`) and the app version from its own checkout and sends them through `public.fabula_outside_report`, kind
   «github», with the backup token the watcher and the «blocked» step already use. It never fails a job: a report that does not arrive
   only ages the checks (after 26 h they say «GitHub non letto»).
-- **Who reports:** the release workflow at every push to main (plan job, `origin/main`, also for «Nothing to deploy») and again at the
-  end of an apply; the outside watcher at every run (main only). After a release both lists agree at once, so the code checks no
-  longer stay red until the next hourly probe (the false «fuori dal rilascio automatico» of 21–22/10).
-- **`fabula.github_report(detail)`** (INVOKER, only through the report function) checks the report (40-hex commit, a real date not in
-  the future, at most 5,000 14-digit versions; the title cut at 200) and writes the same `infra_status` rows and data the probe wrote
+- **Who reports:** the release workflow after CI passes on main (plan job, `origin/main`, also for «Nothing to deploy»; when pushes
+  come close together CI may skip the ones in between, the next report covers them) and again at the end of an apply; the outside
+  watcher at every run, from a checkout of main made when the job starts (also on a re-run), after its checks. After a release both
+  lists agree at once, so the code checks no longer stay red until the next hourly probe (the false «fuori dal rilascio automatico»
+  of 21–22/10).
+- **`fabula.github_report(detail)`** (INVOKER, only through the report function) checks the report (40-hex commit, an ISO date with
+  its offset — a committer clock ahead of time counts as now —, at most 5,000 14-digit versions; the title cut at 200). A report about
+  an **older commit** than the stored one (a re-run of an old watcher run, the end of a long apply after a newer push) is ignored,
+  unless the stored facts are already stale (26 h) or it was sent by hand (`--source manual`). Otherwise it writes the same
+  `infra_status` rows and data the probe wrote
   (`github_tree`, `github_head`, `github_sw`), with no pending request, so `infra_checks()`, the board, the drift notice and
   `live_app_version()` are unchanged. A missing or odd app version marks `github_sw` red and keeps the last good one. A refused report
   changes nothing. «github» reports are handled before the 8,000-character cut that would drop the version list.
 - **`fabula.infra_probe()`** asks only the tablet site and the two server functions; `infra_collect()` is unchanged (its GitHub branches
   are no longer reached).
-- **Tests:** `test_v118_github_report.sql` (48 checks: grants, the probe, the token, a good report and the board, drift both ways, 26 h
-  without a report, every refused report, the app version, a late answer to an old request, the other report kinds);
+- **Wording:** the go-live hints of the three checks and `infra_checks`' waiting text no longer say «hourly» (in place).
+- **Tests:** `test_v118_github_report.sql` (59 checks: grants, the probe, the token, a good report and the board, drift both ways, 26 h
+  without a report, every refused report, the app version, a late answer to an old request, the other report kinds, old news
+  ignored, the wording);
   `test_infra.sql` now gets its GitHub facts from a report (a refused report keeps the list, instead of a rate limit);
   `test_release.py` + 10 checks for `release.py github`, including the real database function accepting what it sends.
-- **Rollback:** `tools/go-live/rollback/20261028200000_v118a_down.sql` puts back both definitions exactly as captured on 28/10 and drops
-  `github_report` (proven to restore main's schema line for line). The probe then reads GitHub again, which works only while the repo
+- **Rollback:** `tools/go-live/rollback/20261028200000_v118a_down.sql` puts back both definitions and the wording exactly as captured on
+  28/10 and drops `github_report` (proven to restore main's schema line for line). The three workflow steps can stay (they then only
+  log «kind non valido: github»). The probe then reads GitHub again, which works only while the repo
   is public. Copy it into `supabase/migrations/` under a later version and release it like any other version.
 - Next steps (S-1): the release applies only when Nick starts it by hand (private repos lose the «live» required reviewer), then the
   repo goes private on GitHub Pro.
