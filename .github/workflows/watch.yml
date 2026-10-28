@@ -4,6 +4,8 @@
 # v1.00 (audit E-22): a confirmed problem goes to the partners' Telegram group (secrets TELEGRAM_BOT_TOKEN and
 # TELEGRAM_ALERT_CHAT_ID), every run reports to the database (secret BACKUP_EXPORT_TOKEN), and the database alarms if this
 # watcher goes quiet for 24 h. A failed run still e-mails the repo owner. The alert state between runs is kept in the cache.
+# v1.19 (audit S-1): every run also tells the database what GitHub main holds (commit, migrations, app version), since the database's
+# hourly check no longer reads GitHub itself; the release workflow does the same after CI passes on main.
 # Secrets are given only to the step that uses them; actions are pinned to a commit (the repo is public).
 name: Outside watcher
 on:
@@ -20,8 +22,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      # v1.19: for runs of main, main as it is when the job starts (a re-run of an old run would otherwise check out that run's old
+      # commit) and its last 50 commits (the database ignores a report of one of them: old news). A run from a branch checks out the branch.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.ref == 'refs/heads/main' && 'main' || github.sha }}
+          fetch-depth: 50
           persist-credentials: false
       - name: Last alert state
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -43,3 +49,13 @@ jobs:
         with:
           path: .watch-state
           key: watch-state-${{ github.run_id }}-${{ github.run_attempt }}
+      # v1.19 (audit S-1 step 2): the database no longer reads GitHub (it can't once the repo is private): tell it what main holds,
+      # from this checkout. After the checks, so a slow database never delays an outage alert; also when the checks found a problem.
+      # Only for runs of main; a report that does not arrive never fails the watcher (and a report of an older main is ignored).
+      - name: Tell the database what GitHub main holds
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 tools/release/release.py github --ref HEAD --source watcher --run-url "$RUN_URL"

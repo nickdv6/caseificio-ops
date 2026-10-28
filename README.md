@@ -18,6 +18,47 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## The database no longer reads GitHub: GitHub reports what main holds (v1.19)
+Audit S-1, step 2 of 4 towards a private repo (`claude/s1-pre-change-review-2026-10-28.md`). The hourly infra probe read three public
+GitHub URLs without a token (the migration tree, `fabula-tablet/sw.js`, the commit feed) for «Ultimo codice su GitHub», «Migrazioni del
+repo uguali al database» and «App del tablet pubblicata»; on a private repo all three answer 404. Migration `v119a`, database only, plus
+the two workflows and `release.py`:
+- **`release.py github --source release|watcher|manual`** reads `origin/main` from its own checkout (anything else is refused: a feature
+  branch never reaches the board): the commit, its date and title, its last 50 first-parent commits, the migration versions the
+  pipeline replays (`migrations_at`) and the app version, and sends them through `public.fabula_outside_report`, kind
+  «github», with the backup token the watcher and the «blocked» step already use. It never fails a job: a report that does not arrive
+  only ages the checks (after 26 h they say «GitHub non letto»).
+- **Who reports:** the release workflow after CI passes on main (plan job, `origin/main`, also for «Nothing to deploy»; when pushes
+  come close together CI may skip the ones in between, the next report covers them) and again at the end of an apply; the outside
+  watcher at every run of main, from a checkout of main (50 commits deep) made when the job starts (also on a re-run), after its checks. After a release both
+  lists agree at once, so the code checks no longer stay red until the next hourly probe (the false «fuori dal rilascio automatico»
+  of 21–22/10).
+- **`fabula.github_report(detail)`** (INVOKER, only through the report function) checks the report (40-hex commit, an ISO date with
+  its offset — a committer clock ahead of time counts as now —, at most 5,000 14-digit versions; the title cut at 200). A report of a
+  commit the stored one **descends from** (the end of a long apply after a newer push, any late report of an older main) is ignored,
+  by commit history (the last 50 first-parent commits and their parents, sent with each report), not by date, so a committer's clock
+  never matters; for 2 hours after a commit is first reported (no late automatic report is later: after that, an older commit is main
+  moved back on purpose and is taken), and not when the stored facts are already stale (26 h) or the report was sent by hand
+  (`git fetch origin && release.py github --source manual`). Otherwise it writes the same
+  `infra_status` rows and data the probe wrote
+  (`github_tree`, `github_head`, `github_sw`), with no pending request, so `infra_checks()`, the board, the drift notice and
+  `live_app_version()` are unchanged. A missing or odd app version marks `github_sw` red and keeps the last good one. A refused report
+  changes nothing. «github» reports are handled before the 8,000-character cut that would drop the version list.
+- **`fabula.infra_probe()`** asks only the tablet site and the two server functions; `infra_collect()` is unchanged (its GitHub branches
+  are no longer reached).
+- **Wording:** the go-live hints of the three checks and `infra_checks`' waiting text no longer say «hourly» (in place).
+- **Tests:** `test_v119_github_report.sql` (65 checks: grants, the probe, the token, a good report and the board, drift both ways, 26 h
+  without a report, every refused report, the app version, a late answer to an old request, the other report kinds, old news
+  ignored by history and not by date, the wording);
+  `test_infra.sql` now gets its GitHub facts from a report (a refused report keeps the list, instead of a rate limit);
+  `test_release.py` + 15 checks for `release.py github` (only origin/main, its history with the merges' other parents, every failure a warning), including the real database function accepting what it sends.
+- **Rollback:** `tools/go-live/rollback/20261029090000_v119a_down.sql` puts back both definitions and the wording exactly as captured on
+  28/10 and drops `github_report` (proven to restore main's schema line for line). The three workflow steps can stay (they then only
+  log «kind non valido: github»). The probe then reads GitHub again, which works only while the repo
+  is public. Copy it into `supabase/migrations/` under a later version and release it like any other version.
+- Next steps (S-1): the release applies only when Nick starts it by hand (private repos lose the «live» required reviewer), then the
+  repo goes private on GitHub Pro.
+
 ## Yield per product (v1.18)
 Stracciatella and scamorza were added as products on 28/10/2026. Stracciatella counts its cream in the kg produced (about 0,6 kg of
 curd and 0,4 kg of cream per kg), so a normal lot is ~50 % of the milk and the one milk limit for every product (`prod.yield_max_pct`,

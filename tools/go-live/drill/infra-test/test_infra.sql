@@ -11,20 +11,13 @@ select fabula.infra_probe();
 create temp table want as select key, req_id from fabula.infra_status where req_id is not null;
 insert into net._http_response(id, status_code, content)
 select w.req_id, case when w.key like 'fn_%' then 403 else 200 end,
-  case w.key
-    when 'github_tree' then (select jsonb_build_object('sha', 'abc', 'truncated', false, 'tree',
-                               jsonb_agg(jsonb_build_object('path', 'supabase/migrations/' || version || '_x.sql', 'type', 'blob'))
-                               || '[{"path":"fabula-tablet/sw.js","type":"blob"}]'::jsonb)::text from supabase_migrations.schema_migrations)
-    when 'github_sw' then 'const CACHE = ''perla-v39'';'
-    when 'site' then 'const CACHE = ''perla-v39'';'
-    when 'github_head' then '<feed><title>Recent Commits</title><entry>
-    <id>tag:github.com,2008:Grit::Commit/fdc56b02e5ba4be6b310914c371067e16403ae15</id>
-    <title>
-        v0.67: &#39;Password dimenticata?&#39; on every login screen
-    </title>
-    <updated>2026-10-05T15:38:53Z</updated></entry><entry><title>older</title></entry></feed>'
-    else '{"error":"forbidden"}' end
+  case w.key when 'site' then 'const CACHE = ''perla-v39'';' else '{"error":"forbidden"}' end
 from want w;
+-- v1.19 (audit S-1): the probe no longer reads GitHub (want has only the site and the two functions); GitHub reports what main holds
+-- (tools/release/release.py github, from the release workflow and the outside watcher): the facts the probe's GitHub answers carried.
+select fabula.github_report(jsonb_build_object('sha', 'fdc56b02e5ba4be6b310914c371067e16403ae15',
+  'title', 'v0.67: ''Password dimenticata?'' on every login screen', 'updated', '2026-10-05T15:38:53Z', 'sw', 'perla-v39', 'source', 'release',
+  'versions', (select jsonb_agg(version order by version) from supabase_migrations.schema_migrations)));
 select fabula.infra_collect();
 do $$ declare c jsonb := fabula.infra_checks(); k text; begin
   raise notice 'checks: %', jsonb_pretty(c);
@@ -43,24 +36,24 @@ do $$ declare d jsonb := fabula.ops_dashboard(); n int; a int; begin
   raise notice 'PASS 3 dashboard: % checks (≥ 36), 6 infra auto', n;
 end $$;
 
--- 4. trouble: live migration not on GitHub, Netlify behind, farm-order 500 twice, GitHub rate limit (v1.05, audit E-14: details in Italian)
+-- 4. trouble: live migration not on GitHub, site behind, farm-order 500 twice, a refused GitHub report (v1.05, audit E-14: details in Italian;
+--    v1.19: the GitHub facts come from the report of section 2, no longer from the probe)
 insert into supabase_migrations.schema_migrations(version) values ('20991231000000');
 select fabula.infra_probe();
 truncate want; insert into want select key, req_id from fabula.infra_status where req_id is not null;
 insert into net._http_response(id, status_code, content)
-select req_id, case key when 'github_tree' then 403 when 'fn_farm_order' then 503 when 'fn_backup_export' then 403 else 200 end,
-       case key when 'site' then 'const CACHE = ''perla-v38'';' when 'github_sw' then 'const CACHE = ''perla-v39'';' when 'github_head' then '' else '{}' end
-  from want where key <> 'github_head';
--- github_head gets no answer at all
+select req_id, case key when 'fn_farm_order' then 503 when 'fn_backup_export' then 403 else 200 end,
+       case key when 'site' then 'const CACHE = ''perla-v38'';' else '{}' end
+  from want;
 select fabula.infra_collect();
 select fabula.infra_probe();
 truncate want; insert into want select key, req_id from fabula.infra_status where req_id is not null;
 insert into net._http_response(id, status_code, content)
-select req_id, case key when 'github_tree' then 403 when 'fn_farm_order' then 503 when 'fn_backup_export' then 403 else 200 end,
-       case key when 'site' then 'const CACHE = ''perla-v38'';' when 'github_sw' then 'const CACHE = ''perla-v39'';' else '{}' end
+select req_id, case key when 'fn_farm_order' then 503 when 'fn_backup_export' then 403 else 200 end,
+       case key when 'site' then 'const CACHE = ''perla-v38'';' else '{}' end
   from want;
 select fabula.infra_collect();
-do $$ declare c jsonb := fabula.infra_checks(); t fabula.infra_status; begin
+do $$ declare c jsonb := fabula.infra_checks(); t fabula.infra_status; t0 fabula.infra_status; begin
   raise notice 'checks: %', jsonb_pretty(c);
   if (c->'code_pushed'->>'done')::boolean then raise exception 'FAIL code_pushed should be red'; end if;
   -- v1.08: the release pipeline: a migration applied outside it goes on GitHub main (was «Fai git push dal Mac»)
@@ -68,11 +61,14 @@ do $$ declare c jsonb := fabula.infra_checks(); t fabula.infra_status; begin
   -- v1.08b: the app is on app.bubalina.it, published by the release (test_v108_release.sql also has the Netlify wording of v1.08)
   if (c->'app_deployed'->>'done')::boolean or (c->'app_deployed'->>'detail') <> 'Sito perla-v38, GitHub perla-v39: il rilascio non ha ancora pubblicato l''app (approvalo su GitHub: Actions → Release)' then raise exception 'FAIL app_deployed %', c->'app_deployed'; end if;
   if (c->'uptime'->>'done')::boolean then raise exception 'FAIL uptime should be red'; end if;
+  -- v1.19: GitHub reports itself; a report the database refuses keeps the previous list (until v1.17: a GitHub rate limit kept it)
+  select * into t0 from fabula.infra_status where key = 'github_tree';
+  begin perform fabula.github_report('{"sha":"not-a-commit"}'); exception when others then null; end;
   select * into t from fabula.infra_status where key = 'github_tree';
-  if t.ok is not null or jsonb_array_length(t.data->'versions') < 90 then raise exception 'FAIL rate limit should keep the list: %', t; end if;
+  if t is distinct from t0 or not t.ok or jsonb_array_length(t.data->'versions') < 90 then raise exception 'FAIL a refused report should keep the list: %', t; end if;
   if not exists (select 1 from fabula.notices where key = 'infra_uptime' and resolved_at is null and severity = 'alert') then raise exception 'FAIL no uptime alert'; end if;
   if exists (select 1 from fabula.notices where key = 'infra_drift' and resolved_at is null) then raise exception 'FAIL drift notice too early'; end if;
-  raise notice 'PASS 4 trouble detected, uptime alert raised, GitHub list kept on rate limit';
+  raise notice 'PASS 4 trouble detected, uptime alert raised, GitHub list kept when a report is refused';
 end $$;
 
 -- 5. drift notice after 6 h
@@ -80,7 +76,7 @@ insert into fabula.infra_status(key, data) values ('drift', '{"since":{"code_pus
   on conflict (key) do update set data = excluded.data;
 select fabula.infra_probe(); truncate want; insert into want select key, req_id from fabula.infra_status where req_id is not null;
 insert into net._http_response(id, status_code, content) select req_id, case when key like 'fn_%' then 403 else 200 end,
-  case key when 'github_tree' then '{"tree":[]}' when 'site' then 'const CACHE = ''perla-v39'';' when 'github_sw' then 'const CACHE = ''perla-v39'';' else '' end from want;
+  case key when 'site' then 'const CACHE = ''perla-v39'';' else '' end from want;
 select fabula.infra_collect();
 do $$ begin
   if not exists (select 1 from fabula.notices where key = 'infra_drift' and resolved_at is null) then raise exception 'FAIL no drift notice'; end if;

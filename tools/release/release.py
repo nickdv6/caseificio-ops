@@ -12,6 +12,9 @@ release it is tools/release/baseline.txt. After CI passes on main, the workflow 
     release.py rehearse  --sha S --live L       no secrets: a scratch database built like the live one gets the release script
     release.py blocked   --sha S                (plan failed, or nothing could be recorded) tells the Bot feed / Telegram, with the
                                                 backup token the outside watcher uses
+    release.py github    --source S             v1.19: tells the database what GitHub main (origin/main) holds (commit, its history,
+                                                migrations, app version), with the same token; also run by the outside watcher. Only
+                                                origin/main is ever sent. Never fails the job
     (Nick approves the «live» environment on GitHub: the only step a person does)
     release.py live --source api                the live commit again (another release may have finished meanwhile)
     release.py check     --sha S --live L       superseded → nothing to do; a rewritten history → STOP
@@ -767,6 +770,57 @@ def cmd_blocked(a):
     return 0
 
 
+def github_facts(ref):
+    """What a commit holds, for the database's drift checks (v1.19): the commit, its date and title, its last 50 first-parent commits
+    (the database ignores a later report of one of them: old news), the migration versions the release pipeline would see
+    (migrations_at: the same files the plan and the rehearsal use) and the app version in fabula-tablet/sw.js."""
+    sha = commit_of(ref)
+    if not sha:
+        raise Stop(f'{ref} non è un commit di questo repo')
+    updated, title = (git('show', '-s', '--format=%cI%x00%s', sha).rstrip('\n').split('\x00', 1) + [''])[:2]
+    # its last 50 first-parent commits and their parents (a branch merged with main and fast-forwarded has the old tip as second
+    # parent); a shallow clone gives what it has
+    ancestors = list(dict.fromkeys(git('rev-list', '--first-parent', '--max-count=50', '--parents', sha).split()))[:200]
+    sw = sw_version(file_at(sha, 'fabula-tablet/sw.js')) if exists_at(sha, 'fabula-tablet/sw.js') else None
+    return {'sha': sha, 'updated': updated, 'title': title[:200], 'ancestors': ancestors, 'versions': sorted(migrations_at(sha)), 'sw': sw}
+
+
+def cmd_github(a):
+    """v1.19 (audit S-1 step 2): tell the database what GitHub main holds, so the hourly check no longer has to read GitHub (it can't
+    once the repo is private). Run by the release workflow on every push to main and after an apply, and by the outside watcher on every
+    run, each from its own checkout; it uses the backup token the watcher and the «blocked» step already use. It never fails the job:
+    a report that does not arrive only means the board's GitHub checks age until the next one (after 26 h they say «GitHub non letto»)."""
+    try:
+        main = commit_of('origin/main')
+        sha = commit_of(a.ref)
+        if not main:
+            raise Stop('origin/main non c\'è in questo checkout')
+        if sha != main:     # only main is reported: a feature branch or a stale checkout would show the board the wrong code
+            raise Stop(f'{a.ref} ({(sha or "?")[:7]}) non è origin/main ({main[:7]})')
+        facts = github_facts(main)
+    except Stop as e:
+        print(f'::warning::github: nothing sent · {e}')
+        return 0
+    detail = {'ok': True, 'source': a.source, 'run_url': a.run_url, **facts}
+    print('github: ' + json.dumps({**detail, 'ancestors': len(facts['ancestors']),
+                                   'versions': f"{len(facts['versions'])} (last {facts['versions'][-1] if facts['versions'] else '-'})"}))
+    token = os.environ.get('BACKUP_EXPORT_TOKEN', '')
+    if not token:
+        print('::warning::github: no BACKUP_EXPORT_TOKEN, nothing sent (the board\'s GitHub checks will age)')
+        return 0
+    try:
+        r = public_rpc('fabula_outside_report', {'p_token': token, 'p_kind': 'github', 'p_detail': detail})
+        if isinstance(r, dict) and r.get('ignored'):
+            print(f"::warning::github: il database tiene {r.get('kept')}, più recente di {r.get('sha')} (resoconto ignorato). "
+                  "Se main è stato riportato indietro apposta: git fetch origin && release.py github --source manual "
+                  "(o attendi 2 ore: poi il commit più vecchio viene preso da solo)")
+        else:
+            print('github: reported to the database · ' + json.dumps(r))
+    except Exception as e:      # noqa: BLE001 — the board's GitHub checks just wait for the next report
+        print(f'::warning::github: il database non ha registrato cosa c\'è su GitHub main · {e}')
+    return 0
+
+
 def cmd_check(a):
     base, src = base_commit(a.live)
     sha = commit_of(a.sha)
@@ -948,6 +1002,8 @@ def main(argv=None):
     s.add_argument('--live-migrations')
     s = sub.add_parser('blocked'); s.add_argument('--sha', default='HEAD'); s.add_argument('--run-url', default='')
     s.add_argument('--stage', choices=['plan', 'apply', 'record'], default='plan')
+    s = sub.add_parser('github'); s.add_argument('--ref', default='origin/main'); s.add_argument('--source', choices=['release', 'watcher', 'manual'], required=True)
+    s.add_argument('--run-url', default='')
     s = sub.add_parser('check'); s.add_argument('--sha', default='HEAD'); s.add_argument('--live', default='')
     s.add_argument('--out', default='release-result.json')
     s = sub.add_parser('deploy'); s.add_argument('--sha', default='HEAD'); s.add_argument('--live', default=''); s.add_argument('--out', default='release-result.json')
@@ -960,7 +1016,7 @@ def main(argv=None):
     s.add_argument('--out', default='release-sql-editor.sql')
     a = ap.parse_args(argv)
     try:
-        return {'live': cmd_live, 'plan': cmd_plan, 'rehearse': cmd_rehearse, 'blocked': cmd_blocked, 'check': cmd_check,
+        return {'live': cmd_live, 'plan': cmd_plan, 'rehearse': cmd_rehearse, 'blocked': cmd_blocked, 'github': cmd_github, 'check': cmd_check,
                 'deploy': cmd_deploy, 'site-check': cmd_site_check, 'record': cmd_record, 'editor-script': cmd_editor_script}[a.cmd](a)
     except Stop as e:
         print('STOP: ' + str(e), file=sys.stderr)

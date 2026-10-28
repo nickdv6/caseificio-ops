@@ -1,13 +1,11 @@
 {
-  "version": "v1.18",
-  "title_it": "Resa per prodotto: limiti e resa attesa propri per stracciatella e scamorza (la panna conta nel prodotto, la scamorza rende meno della mozzarella); il tablet usa gli stessi limiti alla chiusura del lotto",
+  "version": "v1.19",
+  "title_it": "Il database non legge più GitHub: è GitHub a dirgli cosa c'è su main (commit, migrazioni, versione dell'app) a ogni rilascio e a ogni giro del controllo esterno, così i controlli della board funzionano anche con il repository privato (audit S-1, passo 2)",
   "order": [
     "database",
     "functions"
   ],
   "force": [],
-  "after_it": [
-    "Conferma con il casaro le rese provvisorie: stracciatella attesa 50 % (min 35, max 70), scamorza attesa 25 %"
-  ],
+  "after_it": [],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }
