@@ -7,8 +7,9 @@
 -- the migration versions and the app version through public.fabula_outside_report, kind «github», with the backup token the watcher
 -- and the release already use. The facts land in the same infra_status rows (github_tree, github_head, github_sw) with the same data
 -- the probe produced, so infra_checks(), the go-live board, the drift notice and live_app_version() read them unchanged.
---   1. fabula.github_report(detail): checks and stores one report; a report about an older commit than the one stored is ignored
---      (a re-run of an old watcher run, the end of a long apply after a newer push). Not callable by logins or anon.
+--   1. fabula.github_report(detail): checks and stores one report; a report about a commit that is an ancestor of the stored one is
+--      ignored (the end of a long apply after a newer push, any late report of an older main). By ancestry, not by commit dates,
+--      which depend on the committers' clocks. Not callable by logins or anon.
 --   2. public.fabula_outside_report: + kind «github», handled before the 8,000-character cut (210 versions are already 3,600).
 --   3. fabula.infra_probe(): the three GitHub requests are gone; the tablet site and the two server functions are still probed hourly.
 --   4. Wording: the three go-live hints and infra_checks' «waiting» text no longer say «hourly».
@@ -27,13 +28,13 @@ declare
   v_updated_txt text := p_detail->>'updated';
   v_updated timestamptz;
   v_versions jsonb := p_detail->'versions';
+  v_anc jsonb := p_detail->'ancestors';
   v_sw text := p_detail->>'sw';
   v_src text := coalesce(nullif(left(p_detail->>'source', 20), ''), '?');
   v_run text := left(coalesce(p_detail->>'run_url', ''), 200);
   v_n int;
   v_sw_ok boolean;
   h fabula.infra_status;
-  v_prev timestamptz;
   v_prev_ok_at timestamptz;
 begin
   if jsonb_typeof(p_detail) is distinct from 'object' then
@@ -51,29 +52,35 @@ begin
   exception when others then
     raise exception 'resoconto GitHub non valido: data del commit «%»', left(v_updated_txt, 40) using errcode = '22023';
   end;
-  v_updated := least(v_updated, p_now);       -- a committer's clock ahead of time: the commit counts as made now
+  v_updated := least(v_updated, p_now);       -- shown on the board only; a committer's clock ahead of time: the commit counts as made now
   if jsonb_typeof(v_versions) is distinct from 'array' or jsonb_array_length(v_versions) > 5000
      or exists (select 1 from jsonb_array_elements(v_versions) e where jsonb_typeof(e) <> 'string' or (e #>> '{}') !~ '^[0-9]{14}$') then
     raise exception 'resoconto GitHub non valido: elenco delle migrazioni' using errcode = '22023';
+  end if;
+  -- the reported commit's own first-parent history (release.py: the last 50 commits of main, the reported one first)
+  if v_anc is null then
+    v_anc := '[]'::jsonb;
+  elsif jsonb_typeof(v_anc) <> 'array' or jsonb_array_length(v_anc) > 200
+     or exists (select 1 from jsonb_array_elements(v_anc) e where jsonb_typeof(e) <> 'string' or (e #>> '{}') !~ '^[0-9a-f]{40}$') then
+    raise exception 'resoconto GitHub non valido: storia dei commit' using errcode = '22023';
+  end if;
+  if not v_anc @> jsonb_build_array(v_sha) then
+    v_anc := jsonb_build_array(v_sha) || v_anc;
   end if;
   v_versions := (select coalesce(jsonb_agg(distinct x order by x), '[]'::jsonb) from jsonb_array_elements_text(v_versions) x);
   v_n := jsonb_array_length(v_versions);
   -- the app version: what the site parser accepts (anything between the quotes), minus spaces, control characters, quotes and markup
   v_sw_ok := coalesce(v_sw ~ '^[^[:space:][:cntrl:]''"<>&\\]{1,60}$', false);
 
-  -- one report at a time; a report about an OLDER commit than the stored one is old news (a re-run of an old watcher run, the end of
-  -- an apply that read main before a newer push) and changes nothing. Unless the stored facts are already stale (26 h: the board says
+  -- one report at a time; a report about a commit the stored one descends from is old news (the end of an apply that read main before
+  -- a newer push, a late report of an older main) and changes nothing. Unless the stored facts are already stale (26 h: the board says
   -- «GitHub non letto» anyway) or the report was sent by hand (release.py github --source manual, e.g. after main was moved back).
+  -- Any other commit is taken: a newer main, a rewritten one, whatever its date.
   perform pg_advisory_xact_lock(hashtext('fabula.github_report'));
   select * into h from fabula.infra_status where key = 'github_head';
   select last_ok_at into v_prev_ok_at from fabula.infra_status where key = 'github_tree';
-  begin
-    v_prev := (h.data->>'updated')::timestamptz;
-  exception when others then
-    v_prev := null;
-  end;
-  if h.data->>'sha' is distinct from v_sha and v_prev > v_updated and v_src <> 'manual'
-     and coalesce(v_prev_ok_at > p_now - interval '26 hours', false) then
+  if h.data->>'sha' is distinct from v_sha and coalesce(h.data->'ancestors' @> jsonb_build_array(v_sha), false)
+     and v_src <> 'manual' and coalesce(v_prev_ok_at > p_now - interval '26 hours', false) then
     return jsonb_build_object('ok', true, 'ignored', 'older', 'sha', left(v_sha, 7), 'kept', left(h.data->>'sha', 7));
   end if;
 
@@ -83,7 +90,7 @@ begin
           jsonb_build_object('versions', v_versions, 'sha', v_sha, 'source', v_src, 'run_url', v_run, 'reported_at', p_now),
           null, null, p_now, p_now, 0),
          ('github_head', true, left(v_sha, 7),
-          jsonb_build_object('sha', v_sha, 'title', v_title, 'updated', v_updated, 'source', v_src),
+          jsonb_build_object('sha', v_sha, 'title', v_title, 'updated', v_updated, 'source', v_src, 'ancestors', v_anc),
           null, null, p_now, p_now, 0)
   on conflict (key) do update set ok = true, detail = excluded.detail, data = excluded.data, req_id = null, sent_at = null,
     checked_at = excluded.checked_at, last_ok_at = excluded.last_ok_at, fail_streak = 0;

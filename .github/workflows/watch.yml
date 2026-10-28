@@ -22,10 +22,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      # v1.18: main as it is when the job starts (a re-run of an old run would otherwise check out that run's old commit)
+      # v1.18: for runs of main, main as it is when the job starts (a re-run of an old run would otherwise check out that run's old
+      # commit) and its last 50 commits (the database ignores a report of one of them: old news). A run from a branch checks out the branch.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: main
+          ref: ${{ github.ref == 'refs/heads/main' && 'main' || github.sha }}
+          fetch-depth: 50
           persist-credentials: false
       - name: Last alert state
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -49,9 +51,9 @@ jobs:
           key: watch-state-${{ github.run_id }}-${{ github.run_attempt }}
       # v1.18 (audit S-1 step 2): the database no longer reads GitHub (it can't once the repo is private): tell it what main holds,
       # from this checkout. After the checks, so a slow database never delays an outage alert; also when the checks found a problem.
-      # Only for runs of main; a report that does not arrive never fails the watcher (and an older commit than the stored one is ignored).
+      # Only for runs of main; a report that does not arrive never fails the watcher (and a report of an older main is ignored).
       - name: Tell the database what GitHub main holds
-        if: always() && github.ref == 'refs/heads/main'
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         continue-on-error: true
         env:
           BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}

@@ -175,7 +175,7 @@ jobs:
       # v1.18: once more after the release, so the board compares the new database with what main holds (the plan job's report
       # may have gone to a database that did not know this kind of report yet, as for v1.18 itself)
       - name: Tell the database what GitHub main holds, after the release
-        if: always()
+        if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}

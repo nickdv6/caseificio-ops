@@ -398,6 +398,7 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
     down_until = 0
     reports = []
     report_fail = False
+    report_reply = None
 
     def _rest(self, fn, body):
         if self.headers.get('apikey') != 'test-publishable-key':
@@ -412,7 +413,7 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
             FakeApi.reports.append(body)
             if FakeApi.report_fail:                    # v1.18 tests: the database refuses the report (e.g. a kind it does not know yet)
                 return self._send(400, {'code': '22023', 'message': 'kind non valido: github'})
-            return self._send(200, {'ok': True})
+            return self._send(200, FakeApi.report_reply or {'ok': True})
         self._send(404, {'message': 'not found'})
 
     def log_message(self, *a):
@@ -785,12 +786,16 @@ def test_github():
     g.write('supabase/migrations/README.md', 'not a migration\n')
     g.write('supabase/migrations/old/20250101000000_x.sql', '-- in a subfolder: never replayed, never listed\n')
     g.write('fabula-tablet/sw.js', "const CACHE = 'perla-v7';\n")
+    c0 = g.commit('the parent')
     title = 'v9.18: «fatti» & <markup> nel titolo'
     c1 = g.commit(title)
+    main_at = lambda: run('git', '-C', g.dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD')   # what a checkout of main has
+    main_at()
     g.use()
     f = R.github_facts('HEAD')
-    check('github: the facts of a commit: sha, the versions the pipeline replays (no README, no subfolder), app version, title',
-          f['sha'] == c1 and f['versions'] == ['20260101000000', '20260102000000'] and f['sw'] == 'perla-v7' and f['title'] == title, f)
+    check('github: the facts of a commit: sha, its first-parent history, the versions the pipeline replays (no README, no subfolder), app version, title',
+          f['sha'] == c1 and f['ancestors'] == [c1, c0] and f['versions'] == ['20260101000000', '20260102000000'] and f['sw'] == 'perla-v7'
+          and f['title'] == title, f)
     check('github: the commit date is ISO 8601 with its offset', re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d([+-]\d\d:\d\d|Z)$', f['updated'] or ''), f['updated'])
 
     os.environ.pop('BACKUP_EXPORT_TOKEN', None)
@@ -805,7 +810,8 @@ def test_github():
     check('github: sent as kind «github» with the backup token, the facts, the source and the run',
           rc == 0 and rep.get('p_kind') == 'github' and rep.get('p_token') == 'test-backup-token' and d.get('ok') is True
           and d.get('sha') == c1 and d.get('versions') == f['versions'] and d.get('sw') == 'perla-v7' and d.get('title') == title
-          and d.get('updated') == f['updated'] and d.get('source') == 'watcher' and d.get('run_url', '').endswith('/runs/11'), rep)
+          and d.get('updated') == f['updated'] and d.get('ancestors') == [c1, c0] and d.get('source') == 'watcher'
+          and d.get('run_url', '').endswith('/runs/11'), rep)
 
     # the database function accepts exactly what was sent (the real one, on a copy of the replay)
     sqlf = tempfile.NamedTemporaryFile('w', suffix='.sql', delete=False, dir='/tmp')
@@ -820,6 +826,26 @@ def test_github():
                          "(select data->>'sw' from fabula.infra_status where key = 'github_sw')")
     check('github: the database stores what release.py sends (versions, commit, title, app version)',
           r.returncode == 0 and stored == f'["20260101000000", "20260102000000"]|{c1}|{title}|perla-v7', (r.stderr or stored)[:300])
+    anc = psql_at(db, "select data->>'ancestors' from fabula.infra_status where key = 'github_head'")
+    check('github: …and the commit history the database uses to ignore old news', anc == json.dumps([c1, c0]), anc)
+
+    # only origin/main is ever reported: a feature branch checked out by hand, or a checkout that is not main
+    g.write('notes.txt', 'a branch commit\n')
+    g.commit('on a branch, not on main')
+    n = len(FakeApi.reports)
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'manual'])
+    check('github: a commit that is not origin/main → nothing sent, a warning naming both, exit 0',
+          rc == 0 and len(FakeApi.reports) == n and '::warning::' in out and 'non è origin/main' in out, out)
+    rc, out = quiet(['github', '--source', 'manual'])
+    rep2 = FakeApi.reports[-1] if len(FakeApi.reports) > n else {}
+    check('github: the default reports origin/main itself (here the commit before the branch one)',
+          rc == 0 and rep2.get('p_detail', {}).get('sha') == c1, rep2.get('p_detail', {}).get('sha'))
+    main_at()
+    FakeApi.report_reply = {'ok': True, 'ignored': 'older', 'sha': 'aaaaaaa', 'kept': 'bbbbbbb'}
+    rc, out = quiet(['github', '--source', 'release'])
+    check('github: a report the database ignores as old news is a warning that says how to correct it, exit 0',
+          rc == 0 and '::warning::' in out and 'bbbbbbb' in out and '--source manual' in out, out)
+    FakeApi.report_reply = None
 
     n = len(FakeApi.reports)
     rc, out = quiet(['github', '--ref', 'no-such-branch', '--source', 'release'])
@@ -838,6 +864,7 @@ def test_github():
 
     g.write('supabase/migrations/20260102000000_c.sql', '-- same version twice\n')
     g.commit('two files with one version')
+    main_at()
     n = len(FakeApi.reports)
     rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'release'])
     check('github: two migrations with the same version → nothing sent (the release would stop on it too), exit 0',
@@ -845,6 +872,7 @@ def test_github():
     g.rm('supabase/migrations/20260102000000_c.sql')
     g.rm('fabula-tablet/sw.js')
     c3 = g.commit('no app')
+    main_at()
     rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'release'])
     d3 = FakeApi.reports[-1]['p_detail'] if len(FakeApi.reports) > n else {}
     check('github: a commit without fabula-tablet/sw.js → sent with no app version (the database marks it, see test_v118)',

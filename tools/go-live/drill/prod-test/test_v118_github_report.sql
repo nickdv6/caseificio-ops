@@ -3,7 +3,7 @@
 --   su postgres -c "psql -d a_test -f tools/go-live/drill/prod-test/test_v118_github_report.sql" | grep -E "PASS|FAIL"
 -- Sections: 1 structure and grants · 2 the hourly probe sends no GitHub request · 3 the token · 4 a good report and the board ·
 -- 5 drift both ways · 6 refused reports change nothing · 7 sw.js without a version · 8 infra_collect leaves reported rows alone ·
--- 9 the other report kinds work as before · 10 old news (a report about an older commit) is ignored.
+-- 9 the other report kinds work as before · 10 old news (a report of a commit the stored one descends from) is ignored · 11 wording.
 \set ON_ERROR_STOP 0
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
@@ -13,9 +13,10 @@ $$ begin execute p_sql; return ''; exception when others then return sqlstate ||
 create or replace function pg_temp.live() returns jsonb language sql as
 $$ select coalesce(jsonb_agg(version order by version), '[]'::jsonb) from supabase_migrations.schema_migrations $$;
 create or replace function pg_temp.rep(p_versions jsonb, p_sw text default 'perla-v81', p_sha text default 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                                       p_updated text default '2026-10-28T15:00:00-04:00', p_source text default 'release') returns jsonb language sql as
+                                       p_updated text default '2026-10-28T15:00:00-04:00', p_source text default 'release',
+                                       p_anc jsonb default null) returns jsonb language sql as
 $$ select jsonb_strip_nulls(jsonb_build_object('ok', true, 'source', p_source, 'run_url', 'https://github.com/nickdv6/caseificio-ops/actions/runs/1',
-          'sha', p_sha, 'title', 'v1.18 (audit S-1): GitHub reports itself', 'updated', p_updated, 'versions', p_versions, 'sw', p_sw)) $$;
+          'sha', p_sha, 'title', 'v1.18 (audit S-1): GitHub reports itself', 'updated', p_updated, 'versions', p_versions, 'sw', p_sw, 'ancestors', p_anc)) $$;
 create or replace function pg_temp.st(p_key text) returns fabula.infra_status language sql as
 $$ select * from fabula.infra_status where key = p_key $$;
 create or replace function pg_temp.chk() returns jsonb language sql as $$ select fabula.infra_checks() $$;
@@ -176,9 +177,9 @@ select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sw => '<script>')) is 
 select pg_temp.ck('7c a version with markup is not stored as the app version, and the board says why',
   (select not ok and data = '{"sw":"perla-v81"}' and fail_streak = 2 and detail = 'GitHub main, versione di sw.js non accettata' from fabula.infra_status where key = 'github_sw'));
 select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sw => 'perla-v82+fix_2')) is not null as r7x \gset
-select pg_temp.ck('7e a version with other harmless characters (as the site parser reads it) is accepted', (select ok and data = '{"sw":"perla-v82+fix_2"}' from fabula.infra_status where key = 'github_sw'));
+select pg_temp.ck('7d a version with other harmless characters (as the site parser reads it) is accepted', (select ok and data = '{"sw":"perla-v82+fix_2"}' from fabula.infra_status where key = 'github_sw'));
 select fabula.github_report(pg_temp.rep(pg_temp.live())) is not null as r7c \gset
-select pg_temp.ck('7d the next good report: green again, streak back to 0', (select ok and fail_streak = 0 and data = '{"sw":"perla-v81"}' from fabula.infra_status where key = 'github_sw'));
+select pg_temp.ck('7e the next good report: green again, streak back to 0', (select ok and fail_streak = 0 and data = '{"sw":"perla-v81"}' from fabula.infra_status where key = 'github_sw'));
 
 -- ============================== 8. infra_collect leaves reported rows alone ==============================
 -- an answer for one of the old pending requests (as if the probe of v1.17 had sent it just before the release) arrives late
@@ -209,36 +210,47 @@ select pg_temp.ck('9f a watcher report without «ok» still does not turn its ch
   :'e9f' = '' and (select not ok and detail = 'senza ok' from fabula.infra_status where key = 'outside_watcher'), :'e9f');
 
 -- ============================== 10. old news is ignored ==============================
--- a clean start: a report sent by hand is always taken (2 days old commit «a»)
-select to_char(now() - interval '2 days', 'YYYY-MM-DD"T"HH24:MI:SSOF') d2, to_char(now() - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SSOF') d1,
-       to_char(now() - interval '3 days', 'YYYY-MM-DD"T"HH24:MI:SSOF') d3, to_char(now() - interval '10 days', 'YYYY-MM-DD"T"HH24:MI:SSOF') d10 \gset
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('a', 40), p_updated => :'d2', p_source => 'manual')) is not null as r10 \gset
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('d', 40), p_updated => :'d1')) r10a \gset
-select pg_temp.ck('10a a newer commit replaces the stored one', (pg_temp.st('github_head')).data->>'sha' = repeat('d', 40) and not (:'r10a'::jsonb ? 'ignored'), :'r10a');
+-- by ancestry, not by date: «d» descends from «c», which descends from «a» (release.py sends the last 50 first-parent commits)
+select to_char(now() - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SSOF') d1, to_char(now() - interval '3 days', 'YYYY-MM-DD"T"HH24:MI:SSOF') d3 \gset
+select jsonb_build_array(repeat('d', 40), repeat('c', 40), repeat('a', 40)) anc_d, jsonb_build_array(repeat('c', 40), repeat('a', 40)) anc_c,
+       jsonb_build_array(repeat('e', 40), repeat('9', 40)) anc_e \gset
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('a', 40), p_source => 'manual')) is not null as r10 \gset
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('d', 40), p_updated => :'d3', p_anc => :'anc_d')) r10a \gset
+select pg_temp.ck('10a a newer commit is taken, even when its date is older (the committer''s clock does not matter)',
+  (pg_temp.st('github_head')).data->>'sha' = repeat('d', 40) and not (:'r10a'::jsonb ? 'ignored')
+  and (pg_temp.st('github_head')).data->'ancestors' = :'anc_d'::jsonb, :'r10a');
 create temp table before10 as select key, ok, detail, data, checked_at, last_ok_at from fabula.infra_status where key like 'github\_%';
-select fabula.github_report(pg_temp.rep(pg_temp.live() - 0, p_sha => repeat('c', 40), p_updated => :'d3', p_sw => 'perla-v70')) r10b \gset
-select pg_temp.ck('10b an older commit (a re-run of an old watcher run, a long apply after a newer push) is ignored and says so',
+select fabula.github_report(pg_temp.rep(pg_temp.live() - 0, p_sha => repeat('c', 40), p_updated => :'d1', p_sw => 'perla-v70', p_anc => :'anc_c')) r10b \gset
+select pg_temp.ck('10b a commit main has moved past (a long apply that read main before a newer push) is ignored and says so, even with a later date',
   (:'r10b'::jsonb)->>'ignored' = 'older' and (:'r10b'::jsonb)->>'kept' = 'ddddddd', :'r10b');
 select pg_temp.ck('10c …and changes nothing: not the facts, not their freshness',
   not exists (select key, ok, detail, data, checked_at, last_ok_at from fabula.infra_status where key like 'github\_%'
               except select * from before10));
-select pg_temp.rep(pg_temp.live(), p_sha => repeat('c', 40), p_updated => :'d3', p_source => 'watcher')::text old10 \gset
+select pg_temp.rep(pg_temp.live(), p_sha => repeat('a', 40), p_source => 'watcher')::text old10 \gset
 set role anon;
 select public.fabula_outside_report('test-backup-token-118', 'github', :'old10') r10d \gset
 reset role;
-select pg_temp.ck('10d the same through the report function, as the watcher sends it',
+select pg_temp.ck('10d the same through the report function, as the watcher sends it (no history in the report: still ignored)',
   (:'r10d'::jsonb)->>'ignored' = 'older' and (pg_temp.st('github_head')).data->>'sha' = repeat('d', 40), :'r10d');
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('d', 40), p_updated => :'d1')) r10e \gset
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('d', 40), p_anc => :'anc_d')) r10e \gset
 select pg_temp.ck('10e the same commit again: taken, and its freshness renewed', not (:'r10e'::jsonb ? 'ignored')
   and (pg_temp.st('github_tree')).last_ok_at > (select last_ok_at from before10 where key = 'github_tree'), :'r10e');
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('e', 40), p_updated => :'d1')) r10f \gset
-select pg_temp.ck('10f a different commit with the same date: taken', (pg_temp.st('github_head')).data->>'sha' = repeat('e', 40), :'r10f');
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('c', 40), p_updated => :'d3', p_source => 'manual')) r10g \gset
-select pg_temp.ck('10g an older commit sent by hand (main moved back on purpose): taken', (pg_temp.st('github_head')).data->>'sha' = repeat('c', 40), :'r10g');
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('e', 40), p_updated => :'d3', p_anc => :'anc_e')) r10f \gset
+select pg_temp.ck('10f a commit outside the stored history (main rewritten, or pushed over): taken', (pg_temp.st('github_head')).data->>'sha' = repeat('e', 40), :'r10f');
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('9', 40), p_source => 'manual')) r10g \gset
+select pg_temp.ck('10g an older commit of main sent by hand (main moved back on purpose): taken', (pg_temp.st('github_head')).data->>'sha' = repeat('9', 40), :'r10g');
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('e', 40), p_anc => :'anc_e')) is not null as r10h0 \gset
 update fabula.infra_status set last_ok_at = now() - interval '27 hours' where key = 'github_tree';
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('f', 40), p_updated => :'d10')) r10h \gset
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('9', 40))) r10h \gset
 select pg_temp.ck('10h when the stored facts are already stale (26 h, «GitHub non letto»), an older commit is taken rather than nothing',
-  (pg_temp.st('github_head')).data->>'sha' = repeat('f', 40) and (pg_temp.chk()->'code_pushed'->>'done')::boolean, :'r10h');
+  (pg_temp.st('github_head')).data->>'sha' = repeat('9', 40) and (pg_temp.chk()->'code_pushed'->>'done')::boolean, :'r10h');
+select pg_temp.ck('10i a history that is not a list of commits → 22023, nothing stored',
+  pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40), p_anc => '["main"]')::text)) like '22023%storia dei commit%'
+  and pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40), p_anc => '{"x":1}')::text)) like '22023%storia dei commit%'
+  and (pg_temp.st('github_head')).data->>'sha' = repeat('9', 40));
+select pg_temp.ck('10j a report without its history (a release.py older than v1.18): taken, its history is the commit alone',
+  pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40))::text)) = ''
+  and (pg_temp.st('github_head')).data->'ancestors' = jsonb_build_array(repeat('b', 40)));
 
 -- ============================== 11. wording ==============================
 select pg_temp.ck('11a the three go-live hints no longer say «controllo orario»',
