@@ -18,6 +18,26 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## Yield per product (v1.18)
+Stracciatella and scamorza were added as products on 28/10/2026. Stracciatella counts its cream in the kg produced (about 0,6 kg of
+curd and 0,4 kg of cream per kg), so a normal lot is ~50 % of the milk and the one milk limit for every product (`prod.yield_max_pct`,
+45 %) refused it as «impossibile»; scamorza runs ~25 %, so the 30 % default flagged every early lot «bassa». Migration `v118a` and the
+tablet:
+- **`fabula.products`** gets `yield_expected_pct`, `yield_min_pct`, `yield_max_pct` (empty = the settings, exactly as before; checks:
+  above 0 and at most 100, minimum below maximum, the expected yield between them).
+- **`trg_batch_bounds`** uses the product's own minimum and maximum when set, for milk and whey lots, else the settings; the vat
+  limit and the messages are unchanged.
+- **`expected_yield`**: the preset's lots, then the product's last 30 days (3 lots each, as before), then the product's own expected
+  yield (source `default_product`, shown as «stimata» on the tablet like the other defaults), then the defaults.
+- **Tablet** (sw `perla-v82`): the close of a lot reads the product's two limits (online, and in the kept product list offline) and
+  checks with them, as the database does.
+- **Data:** STR-BUF-KG expected 50 %, min 35 %, max 70 %; SCA-BUF-KG and SCA-BUF-AFF-KG expected 25 % (provisional, to confirm
+  with the casaro). The three products exist only on live; on a replay the update touches nothing.
+- **Tests:** `test_v118_yield_per_product.sql` (38 checks: structure and grants, the column checks, the limits per product for milk
+  and whey, a product with no values exactly as before, the order of `expected_yield`).
+- **Rollback:** `tools/go-live/rollback/20261028200000_v118a_down.sql` puts back the v0.98 limits and the v0.70 expected yield and
+  drops the columns; revert the two tablet selects in the same release.
+
 ## The legal registers check what a login writes itself (v1.17)
 Audit D-1 (`claude/production-readiness-audit-2026-10-22.md`). A login with level 2 in an area could INSERT straight into `haccp_log`,
 `production_batches`, `stock_moves`, `lab_samples` and `milk_intake` — reproduced as produzione: a CCP-PAST of 60 °C saved «ok», signed by the titolare,

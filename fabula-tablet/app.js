@@ -787,7 +787,7 @@
         live(sb.from('milk_intake').select('id, milk_lot, qty_kg, intake_date, accepted, rejection_reason, created_at').gte('intake_date', since).order('intake_date', { ascending: false }).order('created_at', { ascending: false }).limit(500)),
         live(sb.from('production_batches').select('*').is('output_kg', null).limit(200)),
         live(sb.from('production_batches').select('*').gte('batch_date', since).limit(500)),
-        live(sb.from('products').select('id, name, sku, kind, active, shelf_life_days, byproduct_product_id, is_dop'))]);
+        live(sb.from('products').select('id, name, sku, kind, active, shelf_life_days, byproduct_product_id, is_dop, yield_min_pct, yield_max_pct'))]);
       if ([milk, open, recent, prods].some(r => r.error || !r.data)) return;      // keep the previous copy
       const byId = new Map(); [...recent.data, ...open.data].forEach(b => byId.set(b.id, b));
       const openIds = open.data.map(b => b.id), lotOf = id => (byId.get(id) || {}).batch_lot;
@@ -1652,7 +1652,7 @@
     // v0.78: a batch started offline (no id yet) closes offline too: the update finds it by lot number, later steps take its id from that step
     const bKey = b.id ? { id: b.id } : { batch_lot: b.batch_lot };
     let bId = b.id || '$1.id';                      // v0.98: '$2.id' when a milk correction goes before the close
-    let { data: prod, error: pre } = await live(sb.from('products').select('name, shelf_life_days, byproduct_product_id').eq('id', b.product_id).single());
+    let { data: prod, error: pre } = await live(sb.from('products').select('name, shelf_life_days, byproduct_product_id, yield_min_pct, yield_max_pct').eq('id', b.product_id).single());
     if (pre || !prod) prod = cachedProduct(b.product_id);
     const byp = b.input_kind !== 'whey' ? prod?.byproduct_product_id : null;
     let ey = null;                                   // v0.70: expected yield (online; offline the plan kept on the tablet)
@@ -1687,7 +1687,9 @@
       // v0.98 (audit D-06): a yield that cannot be means a wrong number of kg. Above the maximum: the kg of milk written at the start
       // are corrected here with a reason (or the kg made); below the minimum: what was lost is written down. The database checks the same.
       const isWhey = b.input_kind === 'whey', what = isWhey ? 'siero' : 'latte';
-      const yLo = isWhey ? setting('prod.ricotta_yield_min_pct', 2) : setting('prod.yield_min_pct', 10), yHi = isWhey ? setting('prod.ricotta_yield_max_pct', 25) : setting('prod.yield_max_pct', 45);
+      // v1.18: the product's own limits when it has them (stracciatella counts its cream), else the settings, as the database
+      const pLo = prod && prod.yield_min_pct != null ? Number(prod.yield_min_pct) : null, pHi = prod && prod.yield_max_pct != null ? Number(prod.yield_max_pct) : null;
+      const yLo = pLo ?? (isWhey ? setting('prod.ricotta_yield_min_pct', 2) : setting('prod.yield_min_pct', 10)), yHi = pHi ?? (isWhey ? setting('prod.ricotta_yield_max_pct', 25) : setting('prod.yield_max_pct', 45));
       let milkKg = Number(b.milk_in_kg), fix = null, yNote = null, y = Math.round(out / milkKg * 1000) / 10;
       if (y > yHi) {
         if (!(await ask({ danger: true, title: `Resa ${itN(y)} %: impossibile`, yes: `Correggo i kg di ${what}`, no: 'Correggo i kg prodotti',

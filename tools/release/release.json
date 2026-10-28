@@ -1,11 +1,13 @@
 {
-  "version": "v1.17",
-  "title_it": "Registri HACCP, latte e tracciabilità: quello che un utente scrive direttamente lo controlla il database (CCP solo dal controllo HACCP, esito dai limiti, niente date vecchie, niente lotti «test», chi riceve il latte dall'elenco del personale, magazzino solo dai passi del tablet) (audit D-1)",
+  "version": "v1.18",
+  "title_it": "Resa per prodotto: limiti e resa attesa propri per stracciatella e scamorza (la panna conta nel prodotto, la scamorza rende meno della mozzarella); il tablet usa gli stessi limiti alla chiusura del lotto",
   "order": [
     "database",
     "functions"
   ],
   "force": [],
-  "after_it": [],
+  "after_it": [
+    "Conferma con il casaro le rese provvisorie: stracciatella attesa 50 % (min 35, max 70), scamorza attesa 25 %"
+  ],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }
