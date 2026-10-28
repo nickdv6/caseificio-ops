@@ -844,7 +844,7 @@ def test_github():
     FakeApi.report_reply = {'ok': True, 'ignored': 'older', 'sha': 'aaaaaaa', 'kept': 'bbbbbbb'}
     rc, out = quiet(['github', '--source', 'release'])
     check('github: a report the database ignores as old news is a warning that says how to correct it, exit 0',
-          rc == 0 and '::warning::' in out and 'bbbbbbb' in out and '--source manual' in out, out)
+          rc == 0 and '::warning::' in out and 'bbbbbbb' in out and 'git fetch origin && release.py github --source manual' in out, out)
     FakeApi.report_reply = None
 
     n = len(FakeApi.reports)
@@ -877,6 +877,20 @@ def test_github():
     d3 = FakeApi.reports[-1]['p_detail'] if len(FakeApi.reports) > n else {}
     check('github: a commit without fabula-tablet/sw.js → sent with no app version (the database marks it, see test_v118)',
           rc == 0 and d3.get('sha') == c3 and d3.get('sw') is None and d3.get('versions') == ['20260101000000', '20260102000000'], d3)
+
+    # a feature branch that merged main and was then fast-forwarded: the old tip of main is the merge's second parent
+    tip = run('git', '-C', g.dir, 'rev-parse', 'HEAD').stdout.strip()
+    run('git', '-C', g.dir, 'checkout', '-q', '-b', 'feature', tip + '~1')
+    g.write('feature.txt', 'f\n')
+    f1 = g.commit('feature work')
+    run('git', '-C', g.dir, 'merge', '-q', '--no-edit', 'main')
+    x = run('git', '-C', g.dir, 'rev-parse', 'HEAD').stdout.strip()
+    run('git', '-C', g.dir, 'checkout', '-q', 'main')
+    run('git', '-C', g.dir, 'merge', '-q', '--ff-only', 'feature')
+    main_at()
+    fx = R.github_facts('origin/main')
+    check('github: the history sent has the merges\' other parents too (the old tip of main, merged into a branch then fast-forwarded)',
+          fx['sha'] == x and fx['ancestors'][0] == x and tip in fx['ancestors'] and f1 in fx['ancestors'] and len(fx['ancestors']) <= 200, fx['ancestors'])
 
     srv.shutdown()
     R.PUBLIC_URL = saved[0]

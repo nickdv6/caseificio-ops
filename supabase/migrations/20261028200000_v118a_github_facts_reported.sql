@@ -7,9 +7,9 @@
 -- the migration versions and the app version through public.fabula_outside_report, kind «github», with the backup token the watcher
 -- and the release already use. The facts land in the same infra_status rows (github_tree, github_head, github_sw) with the same data
 -- the probe produced, so infra_checks(), the go-live board, the drift notice and live_app_version() read them unchanged.
---   1. fabula.github_report(detail): checks and stores one report; a report about a commit that is an ancestor of the stored one is
---      ignored (the end of a long apply after a newer push, any late report of an older main). By ancestry, not by commit dates,
---      which depend on the committers' clocks. Not callable by logins or anon.
+--   1. fabula.github_report(detail): checks and stores one report; for 2 hours after a commit is first reported, a report of one of
+--      its ancestors is ignored (the end of a long apply after a newer push, any late report of an older main). By ancestry, not by
+--      commit dates, which depend on the committers' clocks. Not callable by logins or anon.
 --   2. public.fabula_outside_report: + kind «github», handled before the 8,000-character cut (210 versions are already 3,600).
 --   3. fabula.infra_probe(): the three GitHub requests are gone; the tablet site and the two server functions are still probed hourly.
 --   4. Wording: the three go-live hints and infra_checks' «waiting» text no longer say «hourly».
@@ -36,6 +36,7 @@ declare
   v_sw_ok boolean;
   h fabula.infra_status;
   v_prev_ok_at timestamptz;
+  v_first timestamptz;
 begin
   if jsonb_typeof(p_detail) is distinct from 'object' then
     raise exception 'resoconto GitHub non valido: non è un oggetto' using errcode = '22023';
@@ -57,8 +58,8 @@ begin
      or exists (select 1 from jsonb_array_elements(v_versions) e where jsonb_typeof(e) <> 'string' or (e #>> '{}') !~ '^[0-9]{14}$') then
     raise exception 'resoconto GitHub non valido: elenco delle migrazioni' using errcode = '22023';
   end if;
-  -- the reported commit's own first-parent history (release.py: the last 50 commits of main, the reported one first)
-  if v_anc is null then
+  -- the reported commit's own history (release.py: the last 50 first-parent commits of main with their parents, the reported one first)
+  if v_anc is null or jsonb_typeof(v_anc) = 'null' then
     v_anc := '[]'::jsonb;
   elsif jsonb_typeof(v_anc) <> 'array' or jsonb_array_length(v_anc) > 200
      or exists (select 1 from jsonb_array_elements(v_anc) e where jsonb_typeof(e) <> 'string' or (e #>> '{}') !~ '^[0-9a-f]{40}$') then
@@ -73,15 +74,25 @@ begin
   v_sw_ok := coalesce(v_sw ~ '^[^[:space:][:cntrl:]''"<>&\\]{1,60}$', false);
 
   -- one report at a time; a report about a commit the stored one descends from is old news (the end of an apply that read main before
-  -- a newer push, a late report of an older main) and changes nothing. Unless the stored facts are already stale (26 h: the board says
-  -- «GitHub non letto» anyway) or the report was sent by hand (release.py github --source manual, e.g. after main was moved back).
-  -- Any other commit is taken: a newer main, a rewritten one, whatever its date.
+  -- a newer push, a late report of an older main) and changes nothing. Automatic reports are late by at most the job's run time (the
+  -- apply: 45 minutes), so this holds for 2 hours after the stored commit was first reported; after that an older commit is main moved
+  -- back on purpose and is taken. Also taken: a report sent by hand (release.py github --source manual) and anything once the stored
+  -- facts are stale (26 h: the board says «GitHub non letto» anyway). Any other commit is taken: a newer main, a rewritten one,
+  -- whatever its date.
   perform pg_advisory_xact_lock(hashtext('fabula.github_report'));
   select * into h from fabula.infra_status where key = 'github_head';
   select last_ok_at into v_prev_ok_at from fabula.infra_status where key = 'github_tree';
   if h.data->>'sha' is distinct from v_sha and coalesce(h.data->'ancestors' @> jsonb_build_array(v_sha), false)
-     and v_src <> 'manual' and coalesce(v_prev_ok_at > p_now - interval '26 hours', false) then
+     and v_src <> 'manual' and coalesce(v_prev_ok_at > p_now - interval '26 hours', false)
+     and coalesce((h.data->>'first_at')::timestamptz > p_now - interval '2 hours', false) then
     return jsonb_build_object('ok', true, 'ignored', 'older', 'sha', left(v_sha, 7), 'kept', left(h.data->>'sha', 7));
+  end if;
+  -- the same commit again: keep what was known of its history (a shallow or hand-made report knows less) and when it was first seen
+  if h.data->>'sha' = v_sha then
+    v_anc := v_anc || coalesce((select jsonb_agg(x) from jsonb_array_elements(h.data->'ancestors') x where not v_anc @> jsonb_build_array(x)), '[]'::jsonb);
+    v_first := coalesce((h.data->>'first_at')::timestamptz, p_now);
+  else
+    v_first := p_now;
   end if;
 
   -- the same detail texts as the probe's (fabula._it_infra_detail translates them); no pending request: infra_collect leaves the rows alone
@@ -90,7 +101,7 @@ begin
           jsonb_build_object('versions', v_versions, 'sha', v_sha, 'source', v_src, 'run_url', v_run, 'reported_at', p_now),
           null, null, p_now, p_now, 0),
          ('github_head', true, left(v_sha, 7),
-          jsonb_build_object('sha', v_sha, 'title', v_title, 'updated', v_updated, 'source', v_src, 'ancestors', v_anc),
+          jsonb_build_object('sha', v_sha, 'title', v_title, 'updated', v_updated, 'source', v_src, 'ancestors', v_anc, 'first_at', v_first),
           null, null, p_now, p_now, 0)
   on conflict (key) do update set ok = true, detail = excluded.detail, data = excluded.data, req_id = null, sent_at = null,
     checked_at = excluded.checked_at, last_ok_at = excluded.last_ok_at, fail_streak = 0;

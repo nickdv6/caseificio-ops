@@ -778,7 +778,9 @@ def github_facts(ref):
     if not sha:
         raise Stop(f'{ref} non è un commit di questo repo')
     updated, title = (git('show', '-s', '--format=%cI%x00%s', sha).rstrip('\n').split('\x00', 1) + [''])[:2]
-    ancestors = git('rev-list', '--first-parent', '--max-count=50', sha).split()   # a shallow clone gives what it has
+    # its last 50 first-parent commits and their parents (a branch merged with main and fast-forwarded has the old tip as second
+    # parent); a shallow clone gives what it has
+    ancestors = list(dict.fromkeys(git('rev-list', '--first-parent', '--max-count=50', '--parents', sha).split()))[:200]
     sw = sw_version(file_at(sha, 'fabula-tablet/sw.js')) if exists_at(sha, 'fabula-tablet/sw.js') else None
     return {'sha': sha, 'updated': updated, 'title': title[:200], 'ancestors': ancestors, 'versions': sorted(migrations_at(sha)), 'sw': sw}
 
@@ -810,7 +812,8 @@ def cmd_github(a):
         r = public_rpc('fabula_outside_report', {'p_token': token, 'p_kind': 'github', 'p_detail': detail})
         if isinstance(r, dict) and r.get('ignored'):
             print(f"::warning::github: il database tiene {r.get('kept')}, più recente di {r.get('sha')} (resoconto ignorato). "
-                  "Se main è stato riportato indietro apposta: release.py github --source manual")
+                  "Se main è stato riportato indietro apposta: git fetch origin && release.py github --source manual "
+                  "(o attendi 2 ore: poi il commit più vecchio viene preso da solo)")
         else:
             print('github: reported to the database · ' + json.dumps(r))
     except Exception as e:      # noqa: BLE001 — the board's GitHub checks just wait for the next report

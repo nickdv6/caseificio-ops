@@ -215,7 +215,7 @@ select to_char(now() - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SSOF') d1, to_cha
 select jsonb_build_array(repeat('d', 40), repeat('c', 40), repeat('a', 40)) anc_d, jsonb_build_array(repeat('c', 40), repeat('a', 40)) anc_c,
        jsonb_build_array(repeat('e', 40), repeat('9', 40)) anc_e \gset
 select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('a', 40), p_source => 'manual')) is not null as r10 \gset
-select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('d', 40), p_updated => :'d3', p_anc => :'anc_d')) r10a \gset
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('d', 40), p_updated => '2020-01-01T00:00:00Z', p_anc => :'anc_d')) r10a \gset
 select pg_temp.ck('10a a newer commit is taken, even when its date is older (the committer''s clock does not matter)',
   (pg_temp.st('github_head')).data->>'sha' = repeat('d', 40) and not (:'r10a'::jsonb ? 'ignored')
   and (pg_temp.st('github_head')).data->'ancestors' = :'anc_d'::jsonb, :'r10a');
@@ -248,9 +248,28 @@ select pg_temp.ck('10i a history that is not a list of commits → 22023, nothin
   pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40), p_anc => '["main"]')::text)) like '22023%storia dei commit%'
   and pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40), p_anc => '{"x":1}')::text)) like '22023%storia dei commit%'
   and (pg_temp.st('github_head')).data->>'sha' = repeat('9', 40));
-select pg_temp.ck('10j a report without its history (a release.py older than v1.18): taken, its history is the commit alone',
+select pg_temp.ck('10j a report without its history (like the row the old probe left, or a hand-made report): taken, its history is the commit alone',
   pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40))::text)) = ''
   and (pg_temp.st('github_head')).data->'ancestors' = jsonb_build_array(repeat('b', 40)));
+
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('b', 40), p_anc => jsonb_build_array(repeat('b', 40), repeat('8', 40), repeat('7', 40)))) is not null as r10k0 \gset
+update fabula.infra_status set data = jsonb_set(data, '{first_at}', to_jsonb(now() - interval '3 hours')) where key = 'github_head';
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('8', 40))) r10k \gset
+select pg_temp.ck('10k 2 hours after a commit was first reported, a report of its ancestor is main moved back on purpose: taken (no late automatic report is that late)',
+  (pg_temp.st('github_head')).data->>'sha' = repeat('8', 40) and not (:'r10k'::jsonb ? 'ignored'), :'r10k');
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('8', 40), p_anc => jsonb_build_array(repeat('8', 40), repeat('6', 40)))) is not null as r10l0 \gset
+select (pg_temp.st('github_head')).data->>'first_at' first8 \gset
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('8', 40))) is not null as r10l \gset
+select pg_temp.ck('10l the same commit reported again with less history (a shallow or hand-made report): its known history and first sighting are kept',
+  (pg_temp.st('github_head')).data->'ancestors' @> jsonb_build_array(repeat('6', 40), repeat('8', 40))
+  and (pg_temp.st('github_head')).data->>'first_at' = :'first8');
+select fabula.github_report(pg_temp.rep(pg_temp.live(), p_sha => repeat('6', 40))) r10l2 \gset
+select pg_temp.ck('10m …so a late report of that ancestor is still ignored', (:'r10l2'::jsonb)->>'ignored' = 'older', :'r10l2');
+select pg_temp.ck('10n a history of more than 200 commits → 22023; a JSON null history counts as none',
+  pg_temp.err(format('select fabula.github_report(%L)', pg_temp.rep(pg_temp.live(), p_sha => repeat('5', 40),
+    p_anc => (select jsonb_agg(lpad(to_hex(g), 40, '0')) from generate_series(1, 201) g))::text)) like '22023%storia dei commit%'
+  and pg_temp.err(format('select fabula.github_report(%L)', (pg_temp.rep(pg_temp.live(), p_sha => repeat('5', 40)) || '{"ancestors": null}')::text)) = ''
+  and (pg_temp.st('github_head')).data->'ancestors' = jsonb_build_array(repeat('5', 40)));
 
 -- ============================== 11. wording ==============================
 select pg_temp.ck('11a the three go-live hints no longer say «controllo orario»',
