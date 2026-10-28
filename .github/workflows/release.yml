@@ -10,7 +10,8 @@
 #                GitHub Pages (app.bubalina.it), checks the app answers with the new version, and writes the result in the
 #                database: an «ok» row is what makes this commit the live one (Bot feed «Rilasci», Telegram if it stopped).
 # Secrets: SUPABASE_ACCESS_TOKEN only in the «live» environment and only on the steps that call Supabase; BACKUP_EXPORT_TOKEN only
-# on the steps that report a blocked release. Runs only for pushes to main of this repository (never for pull requests or forks).
+# on the steps that report a blocked release and (v1.18) on the two that tell the database what GitHub main holds (release.py github).
+# Runs only for pushes to main of this repository (never for pull requests or forks).
 # Actions pinned to a commit (the repo is public). No step writes to the repository.
 name: Release
 run-name: "Release · ${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title || format('manual {0}', inputs.sha || 'main') }}"
@@ -53,6 +54,13 @@ jobs:
           sha=$(git rev-parse --verify 'HEAD^{commit}')
           git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      # v1.18 (audit S-1 step 2): the database's hourly check no longer reads GitHub; tell it what main holds now (origin/main, not
+      # the commit being planned). Never fails the plan: a report that does not arrive only ages the board's GitHub checks.
+      - name: Tell the database what GitHub main holds
+        continue-on-error: true
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+        run: python3 tools/release/release.py github --ref origin/main --source release --run-url "$RUN_URL"
       - name: The live commit and migration history (from the database)
         id: live
         run: python3 tools/release/release.py live --source public --migrations-out "$RUNNER_TEMP/live-migrations.json"
@@ -164,3 +172,11 @@ jobs:
           BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
           STAGE: ${{ steps.record.outcome == 'failure' && 'record' || 'apply' }}
         run: python3 tools/release/release.py blocked --stage "$STAGE" --sha "$SHA" --run-url "$RUN_URL"
+      # v1.18: once more after the release, so the board compares the new database with what main holds (the plan job's report
+      # may have gone to a database that did not know this kind of report yet, as for v1.18 itself)
+      - name: Tell the database what GitHub main holds, after the release
+        if: always()
+        continue-on-error: true
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+        run: python3 tools/release/release.py github --ref origin/main --source release --run-url "$RUN_URL"

@@ -397,6 +397,7 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
     rest_404 = False
     down_until = 0
     reports = []
+    report_fail = False
 
     def _rest(self, fn, body):
         if self.headers.get('apikey') != 'test-publishable-key':
@@ -409,6 +410,8 @@ class FakeApi(http.server.BaseHTTPRequestHandler):
             return self._send(200, json.loads(psql_at(FakeApi.db, 'select coalesce(public.fabula_live_release(), \'null\'::jsonb)')))
         if fn == 'fabula_outside_report':
             FakeApi.reports.append(body)
+            if FakeApi.report_fail:                    # v1.18 tests: the database refuses the report (e.g. a kind it does not know yet)
+                return self._send(400, {'code': '22023', 'message': 'kind non valido: github'})
             return self._send(200, {'ok': True})
         self._send(404, {'message': 'not found'})
 
@@ -758,10 +761,110 @@ def test_deploy_record():
     shutil.rmtree(g.dir, ignore_errors=True)
 
 
+# ============================================================== 5. v1.18: GitHub tells the database what main holds
+def test_github():
+    import contextlib, re
+    db = 'release_test_github'
+    as_pg(f'dropdb --if-exists {db}; createdb -T {TEMPLATE} {db}')
+    FakeApi.db, FakeApi.report_fail = db, False
+    srv = QuietServer(('127.0.0.1', 0), FakeApi)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    saved = (R.PUBLIC_URL, os.environ.get('SUPABASE_PUBLISHABLE_KEY'), os.environ.get('BACKUP_EXPORT_TOKEN'))
+    R.PUBLIC_URL = f'http://127.0.0.1:{srv.server_port}'
+    os.environ['SUPABASE_PUBLISHABLE_KEY'] = 'test-publishable-key'
+
+    def quiet(argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = R.main(argv)
+        return rc, out.getvalue()
+
+    g = Repo()
+    g.write('supabase/migrations/20260101000000_a.sql', '-- a\n')
+    g.write('supabase/migrations/20260102000000_b.sql', '-- b\n')
+    g.write('supabase/migrations/README.md', 'not a migration\n')
+    g.write('supabase/migrations/old/20250101000000_x.sql', '-- in a subfolder: never replayed, never listed\n')
+    g.write('fabula-tablet/sw.js', "const CACHE = 'perla-v7';\n")
+    title = 'v9.18: «fatti» & <markup> nel titolo'
+    c1 = g.commit(title)
+    g.use()
+    f = R.github_facts('HEAD')
+    check('github: the facts of a commit: sha, the versions the pipeline replays (no README, no subfolder), app version, title',
+          f['sha'] == c1 and f['versions'] == ['20260101000000', '20260102000000'] and f['sw'] == 'perla-v7' and f['title'] == title, f)
+    check('github: the commit date is ISO 8601 with its offset', re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d([+-]\d\d:\d\d|Z)$', f['updated'] or ''), f['updated'])
+
+    os.environ.pop('BACKUP_EXPORT_TOKEN', None)
+    n = len(FakeApi.reports)
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'watcher'])
+    check('github: without the token nothing is sent, exit 0', rc == 0 and len(FakeApi.reports) == n and 'nothing sent' in out, out)
+
+    os.environ['BACKUP_EXPORT_TOKEN'] = 'test-backup-token'
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'watcher', '--run-url', 'https://github.com/nickdv6/caseificio-ops/actions/runs/11'])
+    rep = FakeApi.reports[-1] if len(FakeApi.reports) > n else {}
+    d = rep.get('p_detail', {})
+    check('github: sent as kind «github» with the backup token, the facts, the source and the run',
+          rc == 0 and rep.get('p_kind') == 'github' and rep.get('p_token') == 'test-backup-token' and d.get('ok') is True
+          and d.get('sha') == c1 and d.get('versions') == f['versions'] and d.get('sw') == 'perla-v7' and d.get('title') == title
+          and d.get('updated') == f['updated'] and d.get('source') == 'watcher' and d.get('run_url', '').endswith('/runs/11'), rep)
+
+    # the database function accepts exactly what was sent (the real one, on a copy of the replay)
+    sqlf = tempfile.NamedTemporaryFile('w', suffix='.sql', delete=False, dir='/tmp')
+    sqlf.write("select vault.create_secret('test-backup-token', 'backup_export_token');\n"
+               f"select public.fabula_outside_report('test-backup-token', 'github', $j${json.dumps(d, ensure_ascii=False)}$j$::jsonb);\n")
+    sqlf.close()
+    os.chmod(sqlf.name, 0o644)
+    r = as_pg(None, db=db, file=sqlf.name)
+    os.unlink(sqlf.name)
+    stored = psql_at(db, "select (select data->>'versions' from fabula.infra_status where key = 'github_tree') || '|' || "
+                         "(select data->>'sha' || '|' || (data->>'title') from fabula.infra_status where key = 'github_head') || '|' || "
+                         "(select data->>'sw' from fabula.infra_status where key = 'github_sw')")
+    check('github: the database stores what release.py sends (versions, commit, title, app version)',
+          r.returncode == 0 and stored == f'["20260101000000", "20260102000000"]|{c1}|{title}|perla-v7', (r.stderr or stored)[:300])
+
+    n = len(FakeApi.reports)
+    rc, out = quiet(['github', '--ref', 'no-such-branch', '--source', 'release'])
+    check('github: a ref that is not there → a warning, nothing sent, exit 0',
+          rc == 0 and len(FakeApi.reports) == n and '::warning::' in out, out)
+
+    FakeApi.report_fail = True
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'release'])
+    check('github: the database refuses the report (e.g. it does not know the kind yet) → a warning, exit 0 (the job goes on)',
+          rc == 0 and len(FakeApi.reports) == n + 1 and '::warning::' in out and 'kind non valido' in out, out)
+    FakeApi.report_fail = False
+    R.PUBLIC_URL = 'http://127.0.0.1:9'
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'release'])
+    check('github: Supabase not reachable → a warning, exit 0', rc == 0 and '::warning::' in out, out)
+    R.PUBLIC_URL = f'http://127.0.0.1:{srv.server_port}'
+
+    g.write('supabase/migrations/20260102000000_c.sql', '-- same version twice\n')
+    g.commit('two files with one version')
+    n = len(FakeApi.reports)
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'release'])
+    check('github: two migrations with the same version → nothing sent (the release would stop on it too), exit 0',
+          rc == 0 and len(FakeApi.reports) == n and 'stessa versione' in out, out)
+    g.rm('supabase/migrations/20260102000000_c.sql')
+    g.rm('fabula-tablet/sw.js')
+    c3 = g.commit('no app')
+    rc, out = quiet(['github', '--ref', 'HEAD', '--source', 'release'])
+    d3 = FakeApi.reports[-1]['p_detail'] if len(FakeApi.reports) > n else {}
+    check('github: a commit without fabula-tablet/sw.js → sent with no app version (the database marks it, see test_v118)',
+          rc == 0 and d3.get('sha') == c3 and d3.get('sw') is None and d3.get('versions') == ['20260101000000', '20260102000000'], d3)
+
+    srv.shutdown()
+    R.PUBLIC_URL = saved[0]
+    for k, v in (('SUPABASE_PUBLISHABLE_KEY', saved[1]), ('BACKUP_EXPORT_TOKEN', saved[2])):
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    as_pg(f'dropdb --if-exists {db}')
+    shutil.rmtree(g.dir, ignore_errors=True)
+
+
 if __name__ == '__main__':
     if os.geteuid() != 0:
         sys.exit('run as root (sudo): the tests use su postgres')
-    for t in (test_plan, test_settle, test_script, test_rehearsal, test_deploy_record):
+    for t in (test_plan, test_settle, test_script, test_rehearsal, test_deploy_record, test_github):
         try:
             t()
         except Exception as e:      # noqa: BLE001

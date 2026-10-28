@@ -1,6 +1,6 @@
 {
-  "version": "v1.17",
-  "title_it": "Registri HACCP, latte e tracciabilità: quello che un utente scrive direttamente lo controlla il database (CCP solo dal controllo HACCP, esito dai limiti, niente date vecchie, niente lotti «test», chi riceve il latte dall'elenco del personale, magazzino solo dai passi del tablet) (audit D-1)",
+  "version": "v1.18",
+  "title_it": "Il database non legge più GitHub: è GitHub a dirgli cosa c'è su main (commit, migrazioni, versione dell'app) a ogni rilascio e a ogni giro del controllo esterno, così i controlli della board funzionano anche con il repository privato (audit S-1, passo 2)",
   "order": [
     "database",
     "functions"

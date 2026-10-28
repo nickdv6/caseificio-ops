@@ -25,6 +25,11 @@ select w.req_id, case when w.key like 'fn_%' then 403 else 200 end,
     <updated>2026-10-05T15:38:53Z</updated></entry><entry><title>older</title></entry></feed>'
     else '{"error":"forbidden"}' end
 from want w;
+-- v1.18 (audit S-1): the probe no longer reads GitHub (want has only the site and the two functions); GitHub reports what main holds
+-- (tools/release/release.py github, from the release workflow and the outside watcher). The same facts the old answers above carried.
+select fabula.github_report(jsonb_build_object('sha', 'fdc56b02e5ba4be6b310914c371067e16403ae15',
+  'title', 'v0.67: ''Password dimenticata?'' on every login screen', 'updated', '2026-10-05T15:38:53Z', 'sw', 'perla-v39', 'source', 'release',
+  'versions', (select jsonb_agg(version order by version) from supabase_migrations.schema_migrations)));
 select fabula.infra_collect();
 do $$ declare c jsonb := fabula.infra_checks(); k text; begin
   raise notice 'checks: %', jsonb_pretty(c);
@@ -68,11 +73,13 @@ do $$ declare c jsonb := fabula.infra_checks(); t fabula.infra_status; begin
   -- v1.08b: the app is on app.bubalina.it, published by the release (test_v108_release.sql also has the Netlify wording of v1.08)
   if (c->'app_deployed'->>'done')::boolean or (c->'app_deployed'->>'detail') <> 'Sito perla-v38, GitHub perla-v39: il rilascio non ha ancora pubblicato l''app (approvalo su GitHub: Actions → Release)' then raise exception 'FAIL app_deployed %', c->'app_deployed'; end if;
   if (c->'uptime'->>'done')::boolean then raise exception 'FAIL uptime should be red'; end if;
+  -- v1.18: GitHub reports itself; a report the database refuses keeps the previous list (until v1.17: a GitHub rate limit kept it)
+  begin perform fabula.github_report('{"sha":"not-a-commit"}'); exception when others then null; end;
   select * into t from fabula.infra_status where key = 'github_tree';
-  if t.ok is not null or jsonb_array_length(t.data->'versions') < 90 then raise exception 'FAIL rate limit should keep the list: %', t; end if;
+  if not t.ok or jsonb_array_length(t.data->'versions') < 90 then raise exception 'FAIL a refused report should keep the list: %', t; end if;
   if not exists (select 1 from fabula.notices where key = 'infra_uptime' and resolved_at is null and severity = 'alert') then raise exception 'FAIL no uptime alert'; end if;
   if exists (select 1 from fabula.notices where key = 'infra_drift' and resolved_at is null) then raise exception 'FAIL drift notice too early'; end if;
-  raise notice 'PASS 4 trouble detected, uptime alert raised, GitHub list kept on rate limit';
+  raise notice 'PASS 4 trouble detected, uptime alert raised, GitHub list kept when a report is refused';
 end $$;
 
 -- 5. drift notice after 6 h

@@ -4,6 +4,8 @@
 # v1.00 (audit E-22): a confirmed problem goes to the partners' Telegram group (secrets TELEGRAM_BOT_TOKEN and
 # TELEGRAM_ALERT_CHAT_ID), every run reports to the database (secret BACKUP_EXPORT_TOKEN), and the database alarms if this
 # watcher goes quiet for 24 h. A failed run still e-mails the repo owner. The alert state between runs is kept in the cache.
+# v1.18 (audit S-1): every run also tells the database what GitHub main holds (commit, migrations, app version), since the database's
+# hourly check no longer reads GitHub itself; the release workflow does the same at every push to main.
 # Secrets are given only to the step that uses them; actions are pinned to a commit (the repo is public).
 name: Outside watcher
 on:
@@ -23,6 +25,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      # v1.18 (audit S-1 step 2): the database no longer reads GitHub (it can't once the repo is private): tell it what main holds,
+      # from this checkout, right after it is made. Only for main; a report that does not arrive never fails the watcher.
+      - name: Tell the database what GitHub main holds
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          BACKUP_EXPORT_TOKEN: ${{ secrets.BACKUP_EXPORT_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 tools/release/release.py github --ref HEAD --source watcher --run-url "$RUN_URL"
       - name: Last alert state
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
