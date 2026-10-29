@@ -8,9 +8,12 @@ $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_nam
 
 select (now() at time zone 'Europe/Rome')::date d \gset
 insert into fabula.parties (type, legal_name, is_milk_supplier) values ('supplier', 'Masseria Test', true) returning id sup \gset
--- milk on hand: 250 kg yesterday (small), 1,150 kg today, one rejected delivery, one delivery already used up
+-- milk on hand: 250 kg yesterday, 250 kg today (small), 1,150 kg today, one rejected delivery, one delivery already used up
+-- v1.20 (MILK-1, approved by Nick 29/10): only today's milk is proposed, so the small 250 kg delivery that the proposals check needs is
+-- today's (MT-SMALL); yesterday's 250 kg (MT-OLD) stays to show that it is listed apart and never proposed
 insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, source) values
  (:'d'::date - 1, '07:00', :'sup', 'MT-OLD', 250, true, 'test'),
+ (:'d'::date,     '06:20', :'sup', 'MT-SMALL', 250, true, 'test'),
  (:'d'::date,     '06:30', :'sup', 'MT-NEW', 1150, true, 'test'),
  (:'d'::date,     '06:40', :'sup', 'MT-BAD', 300, false, 'test'),
  (:'d'::date - 1, '06:00', :'sup', 'MT-USED', 400, true, 'test');
@@ -21,9 +24,12 @@ insert into fabula.milk_plans (plan_date, milk_kg, planned_output_kg, status) va
 
 -- 1. the plan
 select fabula.production_plan() p1 \gset
-select pg_temp.ck('milk on hand: only accepted lots with kg left, oldest first',
-  (select array_agg(x->>'milk_lot' order by ord) from jsonb_array_elements(:'p1'::jsonb->'milk') with ordinality t(x, ord)) = array['MT-OLD', 'MT-NEW'],
+select pg_temp.ck('milk on hand: only today''s accepted lots with kg left, oldest first (v1.20: was yesterday''s too)',
+  (select array_agg(x->>'milk_lot' order by ord) from jsonb_array_elements(:'p1'::jsonb->'milk') with ordinality t(x, ord)) = array['MT-SMALL', 'MT-NEW'],
   (select string_agg(x->>'milk_lot' || ' ' || (x->>'left_kg'), ', ') from jsonb_array_elements(:'p1'::jsonb->'milk') x));
+select pg_temp.ck('v1.20: yesterday''s milk with kg left is listed apart («stale», 250 kg) and never proposed',
+  (select (x->>'left_kg')::numeric = 250 from jsonb_array_elements(:'p1'::jsonb->'stale') x where x->>'milk_lot' = 'MT-OLD')
+  and not exists (select 1 from jsonb_array_elements(:'p1'::jsonb->'proposals') x where x->>'milk_lot' = 'MT-OLD'), (:'p1'::jsonb->'stale')::text);
 select pg_temp.ck('proposals: 250 kg (small) then 1,150 kg split in two equal vat loads',
   (select array_agg((x->>'milk_kg')::numeric order by (x->>'seq')::int) from jsonb_array_elements(:'p1'::jsonb->'proposals') x) = array[250, 575, 575]::numeric[]
   and (select (x->>'small')::boolean from jsonb_array_elements(:'p1'::jsonb->'proposals') x where (x->>'seq')::int = 1)

@@ -337,12 +337,23 @@ values ('80000000-0000-4000-a000-0000000097b8', current_date, 'LF97-D', :'moz', 
        ('80000000-0000-4000-a000-0000000097b9', current_date, 'LF97-E', :'ric', 300, 'milk', now(), 'tablet');
 select pg_temp.err($q$insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000097b8', '70000000-0000-4000-a000-0000000097d9', 300)$q$) e_dop \gset
 select pg_temp.ck('A-14 milk 62 hours old cannot go into a DOP batch, with the reason', :'e_dop' like 'Il latte MF97-OLD ha già 62 ore: oltre le 60 ore non si può fare Mozzarella di Bufala Campana DOP.%', :'e_dop');
-select pg_temp.ck('A-14 …a product that is not DOP can still use it', pg_temp.err($q$insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000097b9', '70000000-0000-4000-a000-0000000097d9', 300)$q$) = '');
+-- v1.20 (MILK-1, approved by Nick 29/10): milk from an earlier day goes into no vat at all (house rule), so the product that is not DOP
+-- is refused too now, with the house rule's message (was: «…a product that is not DOP can still use it»)
+select pg_temp.ck('A-14 …a product that is not DOP: refused as well since v1.20 (the milk arrived on an earlier day: house rule)', pg_temp.err($q$insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000097b9', '70000000-0000-4000-a000-0000000097d9', 300)$q$) like 'Il latte MF97-OLD è arrivato il %regola del caseificio%');
 select pg_temp.ck('A-14 …and fresh milk goes into DOP as before', exists (select 1 from fabula.batch_milk_inputs where batch_id = '80000000-0000-4000-a000-0000000097b1'));
-select pg_temp.ck('A-14 the start time of an offline batch is what counts (a vat started at 58 h, sent later, is fine)', pg_temp.err($q$
+-- v1.20 (MILK-1, approved by Nick 29/10): the same intent on a delivery day — a vat started yesterday from yesterday's milk and sent
+-- today counts by its own start time; the same milk in a vat started today is refused (was: a vat started at 58 h of a 62 h milk)
+select pg_temp.ck('A-14 the start time of an offline batch is what counts (a vat started yesterday from yesterday''s milk, sent today, is fine; started today it is refused)', pg_temp.err($q$
+  insert into fabula.milk_intake (id, intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
+  values ('70000000-0000-4000-a000-0000000097da', (now() at time zone 'Europe/Rome')::date - 1, '07:00', '50000000-0000-4000-a000-0000000097f1', 'MF97-YDAY', 500, true, 4, 'tablet');
   insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source)
-  values ('80000000-0000-4000-a000-0000000097ba', current_date, 'LF97-F', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 300, 'milk', now() - interval '4 hours', 'tablet');
-  insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000097ba', '70000000-0000-4000-a000-0000000097d9', 200)$q$) = '');
+  values ('80000000-0000-4000-a000-0000000097ba', (now() at time zone 'Europe/Rome')::date - 1, 'LF97-F', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 300, 'milk',
+          (((now() at time zone 'Europe/Rome')::date - 1) + time '10:00') at time zone 'Europe/Rome', 'tablet');
+  insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000097ba', '70000000-0000-4000-a000-0000000097da', 200)$q$) = ''
+  and pg_temp.err($q$
+  insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source)
+  values ('80000000-0000-4000-a000-0000000097bb', (now() at time zone 'Europe/Rome')::date, 'LF97-G', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 300, 'milk', now(), 'tablet');
+  insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000097bb', '70000000-0000-4000-a000-0000000097da', 100)$q$) like 'Il latte MF97-YDAY è arrivato il %');
 select pg_temp.ck('A-14 the tablet may ask the age', has_function_privilege('authenticated', 'fabula.milk_age_hours(uuid, timestamptz)', 'execute'));
 
 -- ============================== A-20 milk arrival from the paper sheet ==============================

@@ -27,8 +27,9 @@ insert into fabula.parties (type, legal_name, is_milk_supplier) values ('supplie
 insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
 values (:'d'::date - 3, '07:00', :'sup', 'MV105-OLD', 500, true, 4, 'tablet');
 select fabula.prod_watch(((:'d'::date + time '19:10') at time zone 'Europe/Rome'))::text pw \gset
-select severity sev60, title t60 from fabula.bot_messages where agent = 'sicurezza' and title like '%latte vicino alle 60 ore' order by id desc limit 1 \gset
-select pg_temp.ck('E-06 milk not worked for 48 hours is now an alarm (the function still posts «warn»; the rule decides)', :'sev60' = 'alert', :'pw' || ' / ' || :'sev60');
+-- v1.20 (MILK-1): the evening watch's milk message is now «… latte non lavorat… in giornata» (rule «latte_non_lavorato», was «latte_60_ore»)
+select severity sev60, title t60 from fabula.bot_messages where agent = 'sicurezza' and title like '%latte non lavorat% in giornata' order by id desc limit 1 \gset
+select pg_temp.ck('E-06 milk not worked on its day is an alarm (the function still posts «warn»; the rule decides)', :'sev60' = 'alert', :'pw' || ' / ' || :'sev60');
 select pg_temp.ck('E-06 …and goes to the food-safety topic', fabula.notify_topic_for('sicurezza', :'t60') = 'food_safety');
 select fabula.post_bot_message('tablet', 'info', '3 registrazioni rifiutate dal database (tablet T1)', 'x') tid \gset
 select fabula.post_bot_message('sales', 'warn', 'Tre nuovi contatti', 'x') sid \gset

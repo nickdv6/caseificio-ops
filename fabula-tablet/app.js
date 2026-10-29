@@ -549,6 +549,7 @@
   const PLK = 'perla_plan_v1';
   let planCache = null;
   const hhmm = iso => new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+  const dayIt = ymd => { const [y, m, d] = String(ymd || '').slice(0, 10).split('-'); return d ? `${d}/${m}/${y}` : String(ymd || ''); };   // v1.20: 2026-10-28 → 28/10/2026
   const planPut = (p, at) => { planCache = p; try { localStorage.setItem(PLK, JSON.stringify({ at: at || Date.now(), p })); } catch {} };
   let planRun = 0;
   async function loadPlan() {
@@ -560,7 +561,7 @@
     if (!r.error && r.data) { p = r.data; planPut(p); }
     else { try { const c = JSON.parse(localStorage.getItem(PLK) || 'null'); if (c && c.p && c.p.date === today()) { p = c.p; at = c.at; planCache = p; } } catch {} }
     const done = (p && p.done) || {};
-    if (!p || (!p.proposals.length && !p.open.length && !done.batches)) { wrap.style.display = 'none'; return; }
+    if (!p || (!p.proposals.length && !p.open.length && !done.batches && !(p.stale || []).length)) { wrap.style.display = 'none'; return; }
     wrap.style.display = ''; box.innerHTML = '';
     const milkKg = p.proposals.reduce((a, x) => a + Number(x.milk_kg), 0), expKg = p.proposals.reduce((a, x) => a + Number(x.expected_kg), 0);
     sum.textContent = [p.target ? `Obiettivo ${fmtKg(p.target.planned_output_kg)} kg${p.target.status === 'proposed' ? ' (piano latte da approvare)' : ''}` : '',
@@ -572,9 +573,15 @@
       d.innerHTML = `<div><div>⏳ ${esc(b.batch_lot)} · ${esc(b.product)} in lavorazione</div><div class="code">${fmtKg(b.milk_in_kg)} kg di ${b.input_kind === 'whey' ? 'siero' : 'latte'}${b.started_at ? ' · avviato alle ' + hhmm(b.started_at) : ''} · attesi ≈ ${fmtKg(b.expected_kg)} kg · tocca per continuare</div></div><time>›</time>`;
       d.onclick = () => handleCode('LOT:' + b.batch_lot); box.append(d);
     });
+    (p.stale || []).forEach(x => {   // v1.20 (MILK-1): milk of an earlier day with kg left is not proposed: it goes into no vat
+      const d = document.createElement('div'); d.className = 'task overdue';
+      d.innerHTML = `<div><div>⚠ Latte ${esc(x.milk_lot)} del ${esc(dayIt(x.intake_date))}: ${fmtKg(x.left_kg)} kg non lavorati il giorno di arrivo</div><div class="code">regola del caseificio: non va in caldaia nei giorni seguenti · chiama il responsabile (non conformità)</div></div>`;
+      box.append(d);
+    });
     p.proposals.forEach(x => {
+      // v1.20 (MILK-1, house rule): the plan proposes only today's milk, and all of it goes into a vat today
       const h = (Date.parse(x.use_by) - Date.now()) / 36e5, late = h < 8;
-      const due = h <= 0 ? '⚠ oltre le 60 h DOP: non è più DOP' : late ? `⚠ entro le ${hhmm(x.use_by)} (60 h DOP)` : `entro ${new Date(x.use_by).toLocaleDateString('it-IT', { weekday: 'short', timeZone: 'Europe/Rome' })} ${hhmm(x.use_by)}`;
+      const due = h <= 0 ? '⚠ oltre le 60 h DOP: non è più DOP' : late ? `⚠ entro le ${hhmm(x.use_by)} (60 h DOP)` : 'da lavorare oggi';
       const d = document.createElement('div'); d.className = 'task go' + (late ? ' overdue' : '');
       d.innerHTML = `<div><div>Avvia lotto: ${fmtKg(x.milk_kg)} kg di latte ${esc(x.milk_lot)}</div><div class="code">${esc(x.product)} · ≈ ${fmtKg(x.expected_kg)} kg (resa ${String(x.yield_pct).replace('.', ',')}%${String(x.yield_source).startsWith('default') ? ' stimata' : ''})${x.small ? ' · lotto piccolo' : ''} · ${due}</div></div><time>▶</time>`;
       d.onclick = () => startFromPlan(x); box.append(d);
@@ -1514,6 +1521,15 @@
       const dop = prods.filter(p => p.is_dop); prods = prods.filter(p => !p.is_dop);
       if (!prods.length) throw new Error(`Il latte ${lot} ha già ${Math.floor(ageH)} ore: oltre le 60 ore non si può fare ${dop.map(p => p.name).join(', ') || 'un prodotto DOP'}. Chiama il responsabile: va usato per un prodotto non DOP o scartato.`);
     }
+    // v1.20 (MILK-1, house rule): milk goes into a vat only on the day it arrived. Milk of an earlier day: the form still opens, so
+    // a start written on that day's paper sheet can be copied; a start today is refused here (the database refuses it too)
+    const milkDay = milk.intake_date ? String(milk.intake_date).slice(0, 10) : null;
+    const dayRule = milkDay ? `Il latte ${lot} è arrivato il ${dayIt(milkDay)}: si lavora solo il giorno in cui arriva (regola del caseificio: tutto il latte consegnato va in caldaia lo stesso giorno). Chiama il responsabile.` : null;
+    if (milkDay && milkDay !== today()) {
+      const n = document.createElement('div'); n.className = 'limit';
+      n.textContent = `${dayRule} Qui puoi solo ricopiare dal foglio di carta un inizio lotto del ${dayIt(milkDay)}.`;
+      $('form').append(n);
+    }
     // v0.95 (audit D-09/A-14): what is still left of this milk (the delivery minus the vats already started), not the delivery total
     let usedKg = 0;
     if (!pre) {
@@ -1573,6 +1589,7 @@
       const kg = val('mu') === 'l' ? Math.round(val('kg') * MILK_DENSITY * 10) / 10 : val('kg');
       const product = val('product'), preset = val('preset') || null, paper = pb.on();
       pb.check();
+      if (milkDay && (paper ? pb.day() : today()) !== milkDay) throw new Error(dayRule);   // v1.20 (MILK-1)
       if (pastIn.required) plausCheck('CCP-PAST', val('past'));             // v0.95 (audit D-12)
       // v0.95 (audit D-09): the database refuses more than the milk left (+2 % for the scale): say it here, before the dosing starts
       if (kg > leftKg * 1.02) throw new Error(`Sul latte ${lot} restano ${fmtKg(leftKg)} kg: hai scritto ${fmtKg(kg)} kg. Controlla il lotto sull'etichetta e i kg`);

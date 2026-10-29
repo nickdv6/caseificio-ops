@@ -125,14 +125,14 @@ select fabula.message_why(:m7)::text w7 \gset
 select pg_temp.ck('a lot closed without CCP 3: «Perché?» lists both points, the value recorded for CCP 2 and «mancante» for CCP 3, and the lot held',
   :'w7'::jsonb #>> '{parts,0,title}' = 'Perché il lotto LP-1 è bloccato' and pg_temp.texts(:'w7'::jsonb) like '%72,5%' and pg_temp.texts(:'w7'::jsonb) like '%⚠ mancante%'
   and pg_temp.texts(:'w7'::jsonb) like '%bloccato%', left(pg_temp.texts(:'w7'::jsonb), 400));
--- milk not worked for 48 hours (the evening watch)
+-- milk not worked on its day (the evening watch; v1.20 MILK-1: was «milk not worked for 48 hours», same delivery 3 days old)
 insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
 values (:'d'::date - 3, '07:00', :'sup', 'MP106-OLD', 500, true, 4, 'tablet');
 select fabula.prod_watch(((:'d'::date + time '19:10') at time zone 'Europe/Rome')) is not null pw \gset
-select id m8 from fabula.bot_messages where agent = 'sicurezza' and title like '%latte vicino alle 60 ore' order by id desc limit 1 \gset
+select id m8 from fabula.bot_messages where agent = 'sicurezza' and title like '%latte non lavorat% in giornata' order by id desc limit 1 \gset
 select fabula.message_why(:m8)::text w8 \gset
-select pg_temp.ck('milk close to 60 hours: the lot, the kg left, how many hours ago, and the DOP rule',
-  pg_temp.texts(:'w8'::jsonb) like '%MP106-OLD%' and pg_temp.texts(:'w8'::jsonb) like '%500 kg da lavorare%' and pg_temp.texts(:'w8'::jsonb) like '%60 ore dalla mungitura%',
+select pg_temp.ck('milk not worked on its day: the lot, the kg left, how many hours ago, and the rule next to the DOP limit (v1.20: was «milk close to 60 hours»)',
+  pg_temp.texts(:'w8'::jsonb) like '%MP106-OLD%' and pg_temp.texts(:'w8'::jsonb) like '%500 kg non lavorati%' and pg_temp.texts(:'w8'::jsonb) like '%Regola del caseificio%' and pg_temp.texts(:'w8'::jsonb) like '%60 ore dalla mungitura%',
   left(pg_temp.texts(:'w8'::jsonb), 400));
 -- milk rejected
 select id mi from fabula.milk_intake where milk_lot = 'MP106-OLD' \gset
