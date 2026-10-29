@@ -249,3 +249,10 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
     the goods go back on the lot, the order is to ship again, the row reads «annullato» with who and why; the DDT page of an annulled DDT
     shows ANNULLATO (banner, red badge, watermark); on a live DDT page «Annulla questo DDT» shows for the titolare and not for a production
     login, and annuls; a DDT packed yesterday has no «Annulla» in the register or on its page. Expect `FAILURES: none` (16 checks).
+
+35. `python3 v120_e2e.py` (v1.20 «latte del giorno», MILK-1; pages on :8796; restore_drill with v120a and PostgREST on :3000, one milk
+    supplier) — a delivery of today and one of yesterday that nothing was made from: Home proposes today's milk «da lavorare oggi» and
+    not yesterday's, which is shown apart in red with the house rule; scanning yesterday's milk opens the batch start with the rule
+    written on it; a start today, and a paper copy dated today, are refused with the rule's message and nothing reaches the database; a
+    paper copy dated yesterday (the milk's day) is taken with yesterday's time, and Home no longer shows that milk; today's tile opens
+    the start without the note and the batch starts. Expect `FAILURES: none` (11 checks); on main it fails (no rule there).
