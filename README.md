@@ -44,13 +44,13 @@ is no setting to switch the rule off. Migration `v120a` and the tablet:
 - **Tablet** (sw `perla-v83`): Home tiles say «da lavorare oggi»; an earlier day's milk not in a vat is shown, not proposed; a batch start
   from an earlier day's milk says the rule and is refused unless it is the paper copy of a start of that same day (the plan's tiles pass
   the plan's day).
-- **Tests:** `test_v120_same_day_milk.sql` (46 checks; RED on main as expected). Revised with Nick's approval (29/10): `test_audit_floor`
-  A-14 ×2 and `test_production_plan` (fixture: a small delivery today). Found while building, awaiting his approval: the old alarm title
-  in `test_v105_bots_ops` (E-06) and `test_v106_perche`; the deliveries that go into a vat in `test_audit_critical` (MC96-1/5/7, and the
-  MOD-01 read of MC96-1) and `test_audit_s_items` (M95-1) dated with the Rome day instead of the server's UTC day, and the vats LC96-A
+- **Tests:** `test_v120_same_day_milk.sql` (46 checks; RED on main as expected). Test changes approved by Nick (29/10): `test_audit_floor`
+  A-14 ×2 and `test_production_plan` (a small delivery today); then (18:03 ET) the old alarm title in `test_v105_bots_ops` (E-06) and
+  `test_v106_perche`, and the day-safe fixtures: the deliveries that go into a vat in `test_audit_critical` (MC96-1/5/7, and the MOD-01
+  read of MC96-1) and `test_audit_s_items` (M95-1) dated with the Rome day instead of the server's UTC day, the vats LC96-A
   (`test_audit_critical`, an hour ago but not before Rome midnight) and LTEST-USED (`test_production_plan`, yesterday 10:00 instead of
-  now − 20 h): with the rule they failed near midnight UTC / Rome or after 20:00 Rome. Full SQL CI run with the server's clock at 00:30,
-  05:30 and 20:30 Rome (libfaketime).
+  now − 20 h). With the rule they failed near midnight UTC / Rome or after 20:00 Rome. Full SQL CI also run with the server's clock at
+  00:30, 05:30 and 20:30 Rome (libfaketime).
 - **Rollback:** `tools/go-live/rollback/20261029200000_v120a_down.sql` (drops the trigger and the two helpers, puts back the five
   functions and the three data rows; non-conformities already opened stay); revert the tablet in the same release.
 - **Order:** v1.20's migration version is later than v1.19's (`20261029090000`): release v1.19 first, or the pipeline refuses it as older
