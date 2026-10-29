@@ -22,7 +22,7 @@ insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_i
   (current_date, 'L95-C', :'moz', 500, 'milk', now(), 150, now(), 'tablet'), (current_date, 'L95-D', :'moz', 500, 'milk', now(), null, null, 'tablet'),
   (current_date, 'L95-E', :'moz', 500, 'milk', now(), null, null, 'tablet');
 insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
-values (current_date, '07:00', '50000000-0000-4000-a000-0000000095f1', 'M95-1', 1000, true, 4, 'tablet');
+values ((now() at time zone 'Europe/Rome')::date, '07:00', '50000000-0000-4000-a000-0000000095f1', 'M95-1', 1000, true, 4, 'tablet');   -- v1.20 (MILK-1): the Rome day, as the tablet does (it goes into L95-D/E, started now())
 
 -- v1.05 (audit E-32): the daily tasks start from prod.tasks_from (the replay's opening date is in 2027) and Sunday is closed: the test
 -- generates tasks for today and the days before, whatever the weekday

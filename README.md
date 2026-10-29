@@ -24,25 +24,33 @@ cheesemaking, each delivery holds only last evening's (15:30) and that morning's
 caseificio goes into a vat that same day**, for every product made from milk. Milk not needed stays at the farm and is sold there. There
 is no setting to switch the rule off. Migration `v120a` and the tablet:
 - **`batch_milk_same_day`** (BEFORE INSERT OR UPDATE of the milk or the lot on `batch_milk_inputs`): refused when the vat's day (Rome date
-  of `started_at`, else `batch_date`) is not the day the milk arrived, or when the load left the Masseria on an earlier day. An offline or
-  paper start keeps its own time, so a vat started on the delivery day and sent later passes. The DOP 60 h guard (v0.97) stays and
-  speaks first for a DOP lot.
-- **`production_plan`**: only the day's deliveries are proposed, all their kg (a small remainder too); older milk with kg left is listed
-  apart (`stale`), never proposed.
+  of `started_at`, else `batch_date`) is not the day the milk arrived. An offline or paper start keeps its own time, so a vat started on
+  the delivery day and sent later passes. The DOP 60 h guard (v0.97) stays and speaks first for a DOP lot. The farm's departure day is
+  not checked (a load recorded the evening before would block the whole morning delivery with no way to correct it).
+- **«Not in a vat»** = more left than the weighing tolerance (`milk.weight_tolerance_pct`, 2 %, at least 1 kg; `fabula.milk_left_over`),
+  the margin the over-draw guard allows.
+- **`prod_watch`** (19:xx): a delivery of the day (or of the last 5 days, if an evening was missed) with milk not in a vat is an alarm
+  (rule `latte_non_lavorato`, was `latte_60_ore`) **once**, and opens one non-conformity per delivery (minor, «Regola del caseificio: …»);
+  closing it needs the corrective action. «Perché?» explains the rule next to the DOP limit (older messages keep their 48/60 h text).
+- **`production_plan`**: only the day's deliveries are proposed, all their kg (a small remainder too); older milk not in a vat is listed
+  apart (`stale`, with its non-conformity's status) until the non-conformity is closed.
 - **«Prima di chiudere»** (`_haccp_evening_items`): from 15:00 Rome, a delivery of the day not yet all in a vat («va lavorato oggi»; the
-  label opens the milk).
-- **`prod_watch`** (19:xx): a delivery of the day or of the last 5 days with more than 1 kg not in a vat is an alarm (rule
-  `latte_non_lavorato`, was `latte_60_ore`) and opens one non-conformity per delivery (minor, «non di sicurezza alimentare»); closing it
-  needs the corrective action. «Perché?» explains the rule next to the DOP limit.
-- **`consorzio_declaration`**: checks `latte_altro_giorno` and `latte_non_lavorato` (both expected empty) and `arrival_to_vat_max_h`.
+  label opens the milk); for an earlier day, until its non-conformity is closed.
+- **`consorzio_declaration`**: checks `latte_altro_giorno` and `latte_non_lavorato` (from 29/10/2026; both expected empty) and
+  `arrival_to_vat_max_h`.
 - **`milk.raw_shelf_days`** = 0 (minimum lowered to 0): a raw-milk lot expires the day it arrives.
-- **Tablet** (sw `perla-v83`): Home tiles say «da lavorare oggi»; an earlier day's milk with kg left is shown, not proposed; a batch start
-  from an earlier day's milk says the rule and is refused unless it is the paper copy of a start of that same day.
-- **Tests:** `test_v120_same_day_milk.sql` (39 checks; on main 24 fail as expected). Revised with Nick's approval (29/10): `test_audit_floor`
-  A-14 ×2 and `test_production_plan` (fixture: a small delivery today). Same kind, found while building, awaiting his approval: the old
-  alarm title in `test_v105_bots_ops` (E-06) and `test_v106_perche` («Perché?» of the evening watch).
-- **Rollback:** `tools/go-live/rollback/20261029200000_v120a_down.sql` (drops the trigger, puts back the five functions and the three data
-  rows; non-conformities already opened stay); revert the tablet in the same release.
+- **Tablet** (sw `perla-v83`): Home tiles say «da lavorare oggi»; an earlier day's milk not in a vat is shown, not proposed; a batch start
+  from an earlier day's milk says the rule and is refused unless it is the paper copy of a start of that same day (the plan's tiles pass
+  the plan's day).
+- **Tests:** `test_v120_same_day_milk.sql` (44 checks; on main 25 fail as expected). Revised with Nick's approval (29/10): `test_audit_floor`
+  A-14 ×2 and `test_production_plan` (fixture: a small delivery today). Found while building, awaiting his approval: the old alarm title
+  in `test_v105_bots_ops` (E-06) and `test_v106_perche`; the deliveries that go into a vat in `test_audit_critical` (MC96-1/5/7, and the
+  MOD-01 read of MC96-1) and `test_audit_s_items` (M95-1) dated with the Rome day instead of the server's UTC day (with the rule they
+  failed between 22:00/23:00 and 24:00 UTC).
+- **Rollback:** `tools/go-live/rollback/20261029200000_v120a_down.sql` (drops the trigger and the two helpers, puts back the five
+  functions and the three data rows; non-conformities already opened stay); revert the tablet in the same release.
+- **Order:** v1.20's migration version is later than v1.19's (`20261029090000`): release v1.19 first, or the pipeline refuses it as older
+  than the last applied.
 
 ## The database no longer reads GitHub: GitHub reports what main holds (v1.19)
 Audit S-1, step 2 of 4 towards a private repo (`claude/s1-pre-change-review-2026-10-28.md`). The hourly infra probe read three public

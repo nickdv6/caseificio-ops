@@ -19,7 +19,9 @@ insert into fabula.parties (id, type, legal_name, is_milk_supplier, active) valu
 update fabula.settings set value = '0123456789abcdef0123456789abcdef' where key = 'milk.farm_token';
 insert into fabula.milk_shipments (id, shipped_at, ship_date, kg, milk_lot, status) values ('60000000-0000-4000-a000-0000000096c1', now() - interval '2 hours', current_date, 1000, 'MC96-1', 'shipped');
 insert into fabula.milk_intake (id, intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, shipment_id)
-values ('70000000-0000-4000-a000-0000000096d1', current_date, '06:30', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c1');
+-- v1.20 (MILK-1): deliveries that go into a vat are dated with the Rome day, as the tablet does (current_date is the server's UTC day:
+-- between 22:00/23:00 and 24:00 UTC it is the day before Rome's, and the vat started now() would be on another day than its milk)
+values ('70000000-0000-4000-a000-0000000096d1', (now() at time zone 'Europe/Rome')::date, '06:30', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c1');
 insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, output_kg, finished_at, source) values
   ('80000000-0000-4000-a000-0000000096b1', current_date, 'LC96-A', :'moz', 400, 'milk', now() - interval '1 hour', 120, now(), 'tablet');
 insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000096b1', '70000000-0000-4000-a000-0000000096d1', 400);
@@ -46,7 +48,8 @@ select pg_temp.ck('A-04 …the check is linked to the delivery and the office ge
 select pg_temp.err($q$insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values ('80000000-0000-4000-a000-0000000096b9', current_date, 'LC96-Z', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 100, 'milk', now(), 'tablet');
   insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000096b9', '70000000-0000-4000-a000-0000000096d1', 100)$q$) e_vat \gset
 select pg_temp.ck('A-04 …and the rejected milk cannot start a new vat', :'e_vat' <> '', :'e_vat');
-select (fabula.haccp_register('MOD-01', current_date, current_date) -> 'rows') mr \gset
+-- v1.20: the Rome day of MC96-1 (a comment after \gset would be read as its prefix)
+select (fabula.haccp_register('MOD-01', (now() at time zone 'Europe/Rome')::date, (now() at time zone 'Europe/Rome')::date) -> 'rows') mr \gset
 select pg_temp.ck('A-04 the milk register shows the positive linked test', exists (select 1 from jsonb_array_elements(:'mr'::jsonb) r where r ->> 'lotto' = 'MC96-1' and r ->> 'abx' = 'POSITIVO' and r ->> 'accettato' like 'NO%'), :'mr');
 select pg_temp.err($q$select fabula.log_milk_check('70000000-0000-4000-a000-0000000096d1', 'CCP-STRETCH', 60)$q$) e_wrong \gset
 select pg_temp.ck('A-04 only milk checks go through it', :'e_wrong' like 'Questo controllo non è del latte%', :'e_wrong');
@@ -395,7 +398,8 @@ select pg_temp.ck('FARM-02 the milk register prints both weights when they diffe
 -- ===== review fixes (13/10/2026) =====
 -- R1 · a lot already held for another reason gets the milk reason too (it cannot be released for the first reason alone)
 insert into fabula.milk_intake (id, intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source)
-values ('70000000-0000-4000-a000-0000000096d5', current_date, '06:40', '50000000-0000-4000-a000-0000000096f1', 'MC96-5', 500, true, 4, 'tablet');
+values ('70000000-0000-4000-a000-0000000096d5', (now() at time zone 'Europe/Rome')::date, '06:40',   -- v1.20: the Rome day (see MC96-1)
+        '50000000-0000-4000-a000-0000000096f1', 'MC96-5', 500, true, 4, 'tablet');
 insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) select id, '70000000-0000-4000-a000-0000000096d5', 200 from fabula.production_batches where batch_lot = 'LC96-B';
 select pg_temp.as_user('00000000-0000-4000-a000-0000000096a2');
 set role authenticated;
@@ -428,7 +432,8 @@ select pg_temp.ck('R4 an out-of-limit cold room (NC) is pushed as food safety', 
 
 -- R2 · corrections: a milk temperature corrected out of limit rejects the delivery and holds its lots; a reading moved to another lot
 insert into fabula.milk_intake (id, intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source, received_by_id)
-values ('70000000-0000-4000-a000-0000000096d7', current_date, '06:50', '50000000-0000-4000-a000-0000000096f1', 'MC96-7', 600, true, 4, 'tablet', '10000000-0000-4000-a000-0000000096a2');
+values ('70000000-0000-4000-a000-0000000096d7', (now() at time zone 'Europe/Rome')::date, '06:50',   -- v1.20: the Rome day (see MC96-1)
+        '50000000-0000-4000-a000-0000000096f1', 'MC96-7', 600, true, 4, 'tablet', '10000000-0000-4000-a000-0000000096a2');
 insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values ('80000000-0000-4000-a000-0000000096b7', current_date, 'LC96-G', :'moz', 300, 'milk', now(), 'tablet');
 insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000096b7', '70000000-0000-4000-a000-0000000096d7', 300);
 select pg_temp.as_user('00000000-0000-4000-a000-0000000096a2');

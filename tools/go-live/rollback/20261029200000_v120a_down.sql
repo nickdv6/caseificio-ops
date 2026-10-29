@@ -1,5 +1,5 @@
 -- Rollback of v1.20a (MILK-1, the house rule «latte del giorno»): puts back exactly what was live before it.
--- v1.20a added one trigger function and one trigger, replaced five functions (prod_watch, _why_prod_watch, production_plan,
+-- v1.20a added one trigger function, one trigger and two helpers (milk_left_over, milk_rule_nc_status), replaced five functions (prod_watch, _why_prod_watch, production_plan,
 -- _haccp_evening_items, consorzio_declaration) and changed three data rows (the milk.raw_shelf_days setting, the message rule, the
 -- scheduled-job description). The functions below are the text that was live (captured from a replay of main 7e8f879, identical to
 -- production by md5 of the body on 29/10/2026). Non-conformities already opened by the evening watch are records and stay.
@@ -301,3 +301,7 @@ begin
   end if;
   return j;
 end $function$;
+
+-- the two helpers, now unused
+drop function if exists fabula.milk_left_over(numeric, numeric);
+drop function if exists fabula.milk_rule_nc_status(text);

@@ -604,7 +604,7 @@
   async function startFromPlan(x) {
     $('form').innerHTML = ''; current = { code: 'LOT:' + x.milk_lot, plan: x };
     if (!allowed('LOT')) return;
-    try { await stepBatchStart({ id: x.milk_intake_id, milk_lot: x.milk_lot, qty_kg: x.left_kg }, x.milk_lot, x); }
+    try { await stepBatchStart({ id: x.milk_intake_id, milk_lot: x.milk_lot, qty_kg: x.left_kg, intake_date: (planCache && planCache.date) || today() }, x.milk_lot, x); }   // v1.20: the plan's day is the milk's day
     catch (e) { console.error(e); toast(e.message, 'err'); show('home'); }
   }
   const planStarted = (x, kg) => {           // offline view: take the started load out of the kept plan

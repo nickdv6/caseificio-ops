@@ -9,17 +9,24 @@
 -- + 1 days old, and the evening watch spoke only of milk 48 h old.
 -- Now:
 --   1. batch_milk_same_day: a milk input is refused when its vat's day (Rome date of started_at, else batch_date) differs from the day the
---      milk arrived, or when the load left the Masseria on an earlier day. An offline or paper start keeps its own start time, so a vat
---      started on the delivery day and sent later passes. The 60 h DOP guard stays as the legal backstop (it fires first: name order).
---   2. prod_watch (19:xx Rome): a delivery of the day, or of the last 5 days, with more than 1 kg not in a vat is an alarm («Regola del
---      caseificio»), with one non-conformity per delivery (severity minor, marked as not food safety): closing it needs HACCP level 3 and
---      the corrective action, so an exception is always documented. It replaces «latte vicino alle 60 ore» (48 h).
---   3. production_plan: only the day's deliveries are proposed, all of their kg; older milk with kg left is listed apart («stale»).
---   4. «Prima di chiudere» (_haccp_evening_items): from 15:00 the deliveries of the day not yet all in a vat.
---   5. consorzio_declaration: checks latte_altro_giorno and latte_non_lavorato (expected 0) and the month's longest arrival-to-vat time.
+--      milk arrived. An offline or paper start keeps its own start time, so a vat started on the delivery day and sent later passes. The
+--      60 h DOP guard stays as the legal backstop (it fires first: name order). The farm's departure day is not checked: a load the farm
+--      records the evening before would block a whole morning delivery with no way to correct it (the milkings come with release B).
+--   «Not in a vat» below means more left than the weighing tolerance (milk.weight_tolerance_pct, 2 %, at least 1 kg): the margin the
+--   over-draw guard allows, so a litre meter or the farm's weight never makes a fully worked delivery look unfinished.
+--   2. prod_watch (19:xx Rome): a delivery of the day (or of the last 5 days, if the watch missed it) with milk not in a vat is an alarm
+--      («Regola del caseificio») ONCE, with one non-conformity per delivery (minor): closing it needs HACCP level 3 and the corrective
+--      action, so an exception is always documented. It replaces «latte vicino alle 60 ore» (48 h).
+--   3. production_plan: only the day's deliveries are proposed, all of their kg; older milk not in a vat is listed apart («stale») until
+--      its non-conformity is closed.
+--   4. «Prima di chiudere» (_haccp_evening_items): from 15:00 the deliveries of the day not yet all in a vat (an earlier day: until its
+--      non-conformity is closed).
+--   5. consorzio_declaration: checks latte_altro_giorno and latte_non_lavorato (from 29/10/2026, the day of the rule; expected 0) and the
+--      month's longest arrival-to-vat time.
 --   6. milk.raw_shelf_days = 0 (minimum lowered to 0): a raw-milk lot expires the day it arrives (information: the expiring and
 --      sell-down views read finished goods only).
---   7. The message rule «latte_60_ore» becomes «latte_non_lavorato»; the «Perché?» of the evening watch explains the house rule.
+--   7. The message rule «latte_60_ore» becomes «latte_non_lavorato»; the «Perché?» of the evening watch explains the house rule (a
+--      message posted before v1.20 keeps its 48/60 h explanation).
 -- Not changed: plan_milk / demand_7d (they never counted raw milk), milk_reject, correct_batch_milk (kg only, same delivery), the D-1
 -- guard, grants, the farm page (release B).
 -- Rollback: tools/go-live/rollback/20261029200000_v120a_down.sql.
@@ -33,25 +40,40 @@ declare v_day date; mi record;
 begin
   select coalesce((b.started_at at time zone 'Europe/Rome')::date, b.batch_date) into v_day
     from fabula.production_batches b where b.id = new.batch_id;
-  select m.milk_lot, m.intake_date, (s.shipped_at at time zone 'Europe/Rome')::date ship_day into mi
-    from fabula.milk_intake m left join fabula.milk_shipments s on s.id = m.shipment_id where m.id = new.milk_intake_id;
+  select m.milk_lot, m.intake_date into mi from fabula.milk_intake m where m.id = new.milk_intake_id;
   if v_day is null or mi.intake_date is null then return new; end if;     -- a missing lot or delivery: the foreign keys say so
   if mi.intake_date <> v_day then
     raise exception 'Il latte % è arrivato il %: si lavora solo il giorno in cui arriva (regola del caseificio: tutto il latte consegnato va in caldaia lo stesso giorno). Chiama il responsabile.',
       coalesce(mi.milk_lot, '?'), fabula._it_d(mi.intake_date) using errcode = '23514';
   end if;
-  if mi.ship_day is not null and mi.ship_day < v_day then
-    raise exception 'Il latte % è partito dalla Masseria il %: si lavora solo latte consegnato la mattina stessa (regola del caseificio). Chiama il responsabile.',
-      coalesce(mi.milk_lot, '?'), fabula._it_d(mi.ship_day) using errcode = '23514';
-  end if;
   return new;
 end $$;
 comment on function fabula.trg_batch_milk_same_day() is
-  'v1.20 (MILK-1): regola del caseificio — il latte va in caldaia il giorno in cui arriva (e in cui è partito dalla Masseria), per ogni prodotto';
+  'v1.20 (MILK-1): regola del caseificio — il latte va in caldaia il giorno in cui arriva, per ogni prodotto';
 revoke all on function fabula.trg_batch_milk_same_day() from public, anon, authenticated;
 drop trigger if exists batch_milk_same_day on fabula.batch_milk_inputs;
 create trigger batch_milk_same_day before insert or update of milk_intake_id, batch_id on fabula.batch_milk_inputs
   for each row execute function fabula.trg_batch_milk_same_day();
+
+-- the house rule's non-conformity of a delivery (one per delivery, opened by prod_watch) and «milk not in a vat» (more than the weighing
+-- tolerance left), shared by the watch, the plan, the evening list and the declaration
+create or replace function fabula.milk_left_over(p_qty numeric, p_left numeric) returns boolean
+language sql stable set search_path = fabula, public as $$
+  select coalesce(p_left, 0) > greatest(1, coalesce(p_qty, 0) * fabula.setting_num('milk.weight_tolerance_pct', 2) / 100)
+$$;
+comment on function fabula.milk_left_over(numeric, numeric) is
+  'v1.20 (MILK-1): latte non messo in caldaia = più della tolleranza di peso (milk.weight_tolerance_pct, almeno 1 kg)';
+create or replace function fabula.milk_rule_nc_status(p_milk_lot text) returns text
+language sql stable set search_path = fabula, public as $$
+  select n.status::text from fabula.non_conformities n
+   where n.lot_number = p_milk_lot and n.description like 'Regola del caseificio:%' order by n.opened_at limit 1
+$$;
+comment on function fabula.milk_rule_nc_status(text) is
+  'v1.20 (MILK-1): stato della non conformità «Regola del caseificio» del latte (null = nessuna)';
+revoke all on function fabula.milk_left_over(numeric, numeric) from public, anon;
+revoke all on function fabula.milk_rule_nc_status(text) from public, anon;
+grant execute on function fabula.milk_left_over(numeric, numeric) to authenticated, service_role;
+grant execute on function fabula.milk_rule_nc_status(text) to authenticated, service_role;
 
 -- ============================================================================================================================
 -- 2. The evening watch (19:xx Rome): milk not all in a vat on its day → alarm + one non-conformity per delivery
@@ -62,37 +84,40 @@ create or replace function fabula.prod_watch(p_now timestamp with time zone defa
  security definer
  set search_path to 'fabula', 'public'
 as $function$
-declare v_day date := (p_now at time zone 'Europe/Rome')::date; v_open text; v_milk text; n_open int; n_milk int; n_nc int := 0; v_title text; d record;
+declare v_day date := (p_now at time zone 'Europe/Rome')::date; v_open text; v_milk text; n_open int; n_milk int; n_nc int := 0; v_title text;
+        d record; v_lines text[] := '{}'; v_basis jsonb := '[]';
 begin
   if extract(hour from p_now at time zone 'Europe/Rome') <> 19 then return jsonb_build_object('skipped', 'not 19:xx in Rome'); end if;
   select count(*), string_agg(batch_lot || ' (' || to_char(coalesce(started_at, batch_date::timestamptz) at time zone 'Europe/Rome', 'DD/MM HH24:MI') || ')', ', ' order by batch_lot)
     into n_open, v_open
     from fabula.production_batches where output_kg is null and batch_date <= v_day and coalesce(source, '') not in ('simulation', 'test');
-  -- v1.20 (MILK-1, house rule): every kg delivered goes into a vat the day it arrives; at 19:xx a delivery of today, or of the last
-  -- 5 days, that still has more than 1 kg not in a vat breaks the rule (was: milk 48 h old, before the DOP 60 h)
-  select count(*), string_agg(format('%s: %s kg, arrivato %s', m.milk_lot, trim_scale(m.left_kg), to_char(m.arrived at time zone 'Europe/Rome', 'DD/MM HH24:MI')), E'\n• ' order by m.arrived)
-    into n_milk, v_milk
-    from (select mi.milk_lot, ((mi.intake_date + coalesce(mi.intake_time, time '07:00')) at time zone 'Europe/Rome') arrived,
-                 mi.qty_kg - coalesce((select sum(bmi.qty_kg) from fabula.batch_milk_inputs bmi where bmi.milk_intake_id = mi.id), 0) left_kg
-            from fabula.milk_intake mi where mi.accepted and coalesce(mi.source, '') <> 'simulation' and mi.intake_date between v_day - 5 and v_day) m
-   where m.left_kg > 1 and m.arrived <= p_now;
-  if n_open = 0 and n_milk = 0 then return jsonb_build_object('open_batches', 0, 'old_milk', 0); end if;
-  -- one non-conformity per delivery, once: the responsible closes it with what was done (trg_nc_close_guard asks for the action)
-  for d in select mi.milk_lot, mi.intake_date,
-                  mi.qty_kg - coalesce((select sum(bmi.qty_kg) from fabula.batch_milk_inputs bmi where bmi.milk_intake_id = mi.id), 0) left_kg
-             from fabula.milk_intake mi
-            where mi.accepted and coalesce(mi.source, '') <> 'simulation' and mi.intake_date between v_day - 5 and v_day
-              and ((mi.intake_date + coalesce(mi.intake_time, time '07:00')) at time zone 'Europe/Rome') <= p_now
-            order by mi.intake_date, mi.milk_lot loop
-    continue when d.left_kg <= 1;
-    continue when exists (select 1 from fabula.non_conformities n where n.lot_number = d.milk_lot and n.description like 'Regola del caseificio%');
-    insert into fabula.non_conformities (severity, status, description, lot_number)
-    values ('minor', 'open',
-            format('Regola del caseificio (non di sicurezza alimentare): latte %s arrivato il %s, %s kg non lavorati il giorno di arrivo. Non va in caldaia nei giorni seguenti: scrivi cosa è stato fatto.',
-                   d.milk_lot, fabula._it_d(d.intake_date), fabula._it_num(round(d.left_kg, 1))),
-            d.milk_lot);
-    n_nc := n_nc + 1;
+  -- v1.20 (MILK-1, house rule): every kg delivered goes into a vat the day it arrives. A delivery of today (or of the last 5 days, if an
+  -- evening was missed) with milk not in a vat (fabula.milk_left_over: more than the weighing tolerance) is reported ONCE: on the evening
+  -- its non-conformity is opened (a second run that evening finds the same list, so the same title, and is not posted twice). Was: milk
+  -- 48 h old, reported every evening until the DOP 60 h.
+  for d in select m.milk_lot, m.intake_date, m.arrived, m.left_kg
+             from (select mi.milk_lot, mi.intake_date, mi.qty_kg, ((mi.intake_date + coalesce(mi.intake_time, time '07:00')) at time zone 'Europe/Rome') arrived,
+                          mi.qty_kg - coalesce((select sum(bmi.qty_kg) from fabula.batch_milk_inputs bmi where bmi.milk_intake_id = mi.id), 0) left_kg
+                     from fabula.milk_intake mi
+                    where mi.accepted and coalesce(mi.source, '') <> 'simulation' and mi.intake_date between v_day - 5 and v_day) m
+            where fabula.milk_left_over(m.qty_kg, m.left_kg) and m.arrived <= p_now
+              and not exists (select 1 from fabula.non_conformities n where n.lot_number = m.milk_lot and n.description like 'Regola del caseificio:%'
+                                and n.opened_at < (v_day::timestamp at time zone 'Europe/Rome'))
+            order by m.arrived, m.milk_lot loop
+    v_lines := v_lines || format('%s: %s kg, arrivato %s', d.milk_lot, trim_scale(d.left_kg), to_char(d.arrived at time zone 'Europe/Rome', 'DD/MM HH24:MI'));
+    v_basis := v_basis || jsonb_build_object('lot', d.milk_lot, 'left_kg', d.left_kg, 'arrived', d.arrived, 'hours', round(extract(epoch from p_now - d.arrived) / 3600));
+    if fabula.milk_rule_nc_status(d.milk_lot) is null then
+      -- one non-conformity per delivery: the HACCP responsible closes it with what was done (trg_nc_close_guard asks for the action)
+      insert into fabula.non_conformities (severity, status, description, lot_number)
+      values ('minor', 'open',
+              format('Regola del caseificio: latte %s arrivato il %s, %s kg non lavorati il giorno di arrivo. Non va in caldaia nei giorni seguenti: decidi cosa farne e scrivi cosa è stato fatto.',
+                     d.milk_lot, fabula._it_d(d.intake_date), fabula._it_num(round(d.left_kg, 1))),
+              d.milk_lot);
+      n_nc := n_nc + 1;
+    end if;
   end loop;
+  n_milk := cardinality(v_lines); v_milk := array_to_string(v_lines, E'\n• ');
+  if n_open = 0 and n_milk = 0 then return jsonb_build_object('open_batches', 0, 'old_milk', 0, 'nc_opened', 0); end if;
   v_title := format('Produzione %s: %s', to_char(v_day, 'DD/MM'), concat_ws(' · ', case when n_open > 0 then n_open || ' lott' || case when n_open = 1 then 'o aperto' else 'i aperti' end end,
                                                                      case when n_milk > 0 then n_milk || case when n_milk = 1 then ' consegna di latte non lavorata' else ' consegne di latte non lavorate' end || ' in giornata' end));
   if exists (select 1 from fabula.bot_messages where agent in ('produzione', 'sicurezza') and title = v_title) then
@@ -102,16 +127,11 @@ begin
       'rule', 'same_day', 'dop_limit_hours', 60,
       'open_batches', (select coalesce(jsonb_agg(jsonb_build_object('lot', batch_lot, 'started', coalesce(started_at, batch_date::timestamptz)) order by batch_lot), '[]'::jsonb)
                          from fabula.production_batches where output_kg is null and batch_date <= v_day and coalesce(source, '') not in ('simulation', 'test')),
-      'old_milk', (select coalesce(jsonb_agg(jsonb_build_object('lot', m.milk_lot, 'left_kg', m.left_kg, 'arrived', m.arrived,
-                                                               'hours', round(extract(epoch from p_now - m.arrived) / 3600)) order by m.arrived), '[]'::jsonb)
-                     from (select mi.milk_lot, ((mi.intake_date + coalesce(mi.intake_time, time '07:00')) at time zone 'Europe/Rome') arrived,
-                                  mi.qty_kg - coalesce((select sum(bmi.qty_kg) from fabula.batch_milk_inputs bmi where bmi.milk_intake_id = mi.id), 0) left_kg
-                             from fabula.milk_intake mi where mi.accepted and coalesce(mi.source, '') <> 'simulation' and mi.intake_date between v_day - 5 and v_day) m
-                    where m.left_kg > 1 and m.arrived <= p_now)), 'database');   -- v1.06 («Perché?»)
+      'old_milk', v_basis), 'database');   -- v1.06 («Perché?»)
   perform fabula.post_bot_message(case when n_milk > 0 then 'sicurezza' else 'produzione' end, 'warn', v_title,
     concat_ws(E'\n\n',
       case when n_open > 0 then format(E'Lotti avviati e non chiusi:\n• %s\nSe sono finiti, scansiona l''etichetta sul tank e chiudili con i kg; se sono stati scartati, registra lo scarto.', replace(v_open, ', ', E'\n• ')) end,
-      case when n_milk > 0 then format(E'Regola del caseificio: tutto il latte consegnato va in caldaia il giorno in cui arriva. Latte non ancora lavorato:\n• %s\nNon può andare in caldaia nei giorni seguenti. Per ogni consegna c''è una non conformità (Autocontrollo → Non conformità): il responsabile la chiude scrivendo cosa è stato fatto.', v_milk) end));
+      case when n_milk > 0 then format(E'Regola del caseificio: tutto il latte consegnato va in caldaia il giorno in cui arriva. Latte non lavorato:\n• %s\nNon può andare in caldaia nei giorni seguenti. Per ogni consegna c''è una non conformità (Autocontrollo → Non conformità): il responsabile HACCP la chiude scrivendo cosa è stato fatto.', v_milk) end));
   return jsonb_build_object('open_batches', n_open, 'old_milk', n_milk, 'nc_opened', n_nc);
 end $function$;
 
@@ -125,15 +145,20 @@ begin
                          'non ancora chiuso: se è finito si chiude con i kg, se è stato scartato si registra lo scarto');
   end loop;
   for x in select y from jsonb_array_elements(coalesce(d->'old_milk', '[]'::jsonb)) y loop
-    m := m || fabula._wr('Latte ' || coalesce(x->>'lot', ''), fabula._wq(x->'left_kg') || ' non lavorati',
+    m := m || fabula._wr('Latte ' || coalesce(x->>'lot', ''), fabula._wq(x->'left_kg') || case when d ? 'rule' then ' non lavorati' else ' da lavorare' end,
                          format('arrivato %s ore %s: %s fa', fabula._wd(x->'arrived'), coalesce(fabula._wt(x->'arrived'), 'n/d'),
                                 case when fabula._wn(x->'hours') is not null then fabula.it_n(fabula._wn(x->'hours'), 'ora', 'ore') else 'n/d ore' end), 'ko');
   end loop;
   return fabula._wout('Perché questo avviso della sera', array[
     fabula._wsec('Lotti aperti', r),
-    fabula._wsec('Latte non lavorato il giorno di arrivo', m, case when cardinality(m) > 0 then
-      format('Regola del caseificio: tutto il latte consegnato va in caldaia il giorno in cui arriva (il disciplinare DOP consente fino a %s ore dalla mungitura). Questo latte non può andare in caldaia nei giorni seguenti: il responsabile chiude la non conformità scrivendo cosa è stato fatto.',
-             coalesce(d->>'dop_limit_hours', '60')) end)]);
+    case when d ? 'rule' then    -- v1.20 (MILK-1): the house rule
+      fabula._wsec('Latte non lavorato il giorno di arrivo', m, case when cardinality(m) > 0 then
+        format('Regola del caseificio: tutto il latte consegnato va in caldaia il giorno in cui arriva (il disciplinare DOP consente fino a %s ore dalla mungitura). Questo latte non può andare in caldaia nei giorni seguenti: il responsabile HACCP chiude la non conformità scrivendo cosa è stato fatto.',
+               coalesce(d->>'dop_limit_hours', '60')) end)
+    else                         -- a message posted before v1.20: its own explanation, unchanged
+      fabula._wsec('Latte vicino alle 60 ore', m, case when cardinality(m) > 0 then
+        format('Il disciplinare DOP consente %s ore dalla mungitura; l''avviso parte a %s ore dall''arrivo (dalla mungitura sono di più). Lavoralo domattina per primo o non usarlo per la DOP.',
+               coalesce(d->>'dop_limit_hours', '60'), coalesce(d->>'warn_hours', '48')) end) end]);
 end $$;
 
 -- ============================================================================================================================
@@ -146,7 +171,7 @@ update fabula.settings
 
 update fabula.message_rules
    set kind = 'latte_non_lavorato', title_regex = 'latte non lavorat',
-       meaning_it = 'Latte consegnato e non messo tutto in caldaia il giorno di arrivo (regola del caseificio): non va in caldaia nei giorni seguenti; il responsabile chiude la non conformità.'
+       meaning_it = 'Latte consegnato e non messo tutto in caldaia il giorno di arrivo (regola del caseificio): non va in caldaia nei giorni seguenti; il responsabile HACCP chiude la non conformità. Una volta per consegna.'
  where kind = 'latte_60_ore';
 
 update fabula.cron_jobs_expected set purpose_it = 'Lotti aperti e latte non lavorato in giornata (sera)' where jobname = 'fabula_prod_watch';
@@ -223,16 +248,17 @@ begin
                from fabula.production_batches b
               where b.batch_date = p_date and b.output_kg is not null and b.product_id = v_prod.id and b.source is distinct from 'simulation'),
     'expected_kg', (select coalesce(sum((x->>'expected_kg')::numeric), 0) from jsonb_array_elements(props) x),
-    -- v1.20 (MILK-1, house rule): only the milk that arrived on the day is proposed; milk of an earlier day that still has kg left is
-    -- listed here, never proposed (it can no longer go into a vat: batch_milk_same_day refuses it)
+    -- v1.20 (MILK-1, house rule): only the milk that arrived on the day is proposed; milk of an earlier day not in a vat (more than the
+    -- weighing tolerance left) is listed here until its non-conformity is closed, never proposed (batch_milk_same_day refuses it)
     'same_day', true,
-    'stale', (select coalesce(jsonb_agg(jsonb_build_object('milk_intake_id', x.id, 'milk_lot', x.milk_lot, 'intake_date', x.intake_date, 'left_kg', x.left_kg)
+    'stale', (select coalesce(jsonb_agg(jsonb_build_object('milk_intake_id', x.id, 'milk_lot', x.milk_lot, 'intake_date', x.intake_date, 'left_kg', x.left_kg,
+                                                            'nc_status', fabula.milk_rule_nc_status(x.milk_lot))
                                 order by x.intake_date, x.milk_lot), '[]')
-                from (select mi.id, mi.milk_lot, mi.intake_date,
+                from (select mi.id, mi.milk_lot, mi.intake_date, mi.qty_kg,
                              round(mi.qty_kg - coalesce((select sum(bm.qty_kg) from fabula.batch_milk_inputs bm where bm.milk_intake_id = mi.id), 0), 1) left_kg
                         from fabula.milk_intake mi
                        where mi.accepted is not false and mi.intake_date between p_date - 7 and p_date - 1 and coalesce(mi.source, '') <> 'simulation') x
-               where x.left_kg >= 1));
+               where fabula.milk_left_over(x.qty_kg, x.left_kg) and coalesce(fabula.milk_rule_nc_status(x.milk_lot), '') <> 'closed'));
 end $function$;
 
 -- ============================================================================================================================
@@ -288,16 +314,18 @@ begin
     items := items || jsonb_build_object('code', 'abx', 'label_it', format('CCP 1b test antibiotici: %s conferimenti di latte senza esito', n_milk - n_abx), 'scan', 'CCP:CCP-MILK-ABX');
   end if;
   -- v1.20 (MILK-1, house rule): every kg delivered goes into a vat on the day it arrives. From 15:00 Rome (any time, for an earlier
-  -- day) a delivery of the day with more than 1 kg not yet in a vat is on the list; its label opens the milk (batch start).
+  -- day: until its non-conformity is closed) a delivery of the day not yet all in a vat (more than the weighing tolerance left) is on
+  -- the list; its label opens the milk (batch start).
   if p_date < (now() at time zone 'Europe/Rome')::date or (now() at time zone 'Europe/Rome')::time >= time '15:00' then
     select items || coalesce(jsonb_agg(jsonb_build_object('code', 'milkleft:' || x.milk_lot,
              'label_it', case when p_date < (now() at time zone 'Europe/Rome')::date
                               then format('Latte %s: %s kg non lavorati il giorno di arrivo (regola del caseificio): chiama il responsabile', x.milk_lot, fabula._it_num(x.left_kg))
                               else format('Latte %s: %s kg non ancora in caldaia: va lavorato oggi', x.milk_lot, fabula._it_num(x.left_kg)) end,
              'scan', 'LOT:' || x.milk_lot) order by x.milk_lot), '[]') into items
-      from (select mi.milk_lot, mi.qty_kg - coalesce((select sum(bm.qty_kg) from fabula.batch_milk_inputs bm where bm.milk_intake_id = mi.id), 0) left_kg
+      from (select mi.milk_lot, mi.qty_kg, mi.qty_kg - coalesce((select sum(bm.qty_kg) from fabula.batch_milk_inputs bm where bm.milk_intake_id = mi.id), 0) left_kg
               from fabula.milk_intake mi where mi.intake_date = p_date and mi.accepted and coalesce(mi.source, '') <> 'simulation') x
-     where x.left_kg > 1;
+     where fabula.milk_left_over(x.qty_kg, x.left_kg)
+       and (p_date >= (now() at time zone 'Europe/Rome')::date or coalesce(fabula.milk_rule_nc_status(x.milk_lot), '') <> 'closed');
   end if;
   if v_real_prod and not exists (select 1 from fabula.calibration_checks c join fabula.equipment e on e.id = c.equipment_id
                                  where e.code = 'PH-01' and (c.checked_at at time zone 'Europe/Rome')::date = p_date) then
@@ -365,17 +393,18 @@ begin
              'n', count(*), 'detail', coalesce(jsonb_agg(jsonb_build_object('lot', x.batch_lot, 'milk_lot', x.milk_lot, 'arrived', x.intake_date, 'vat_day', x.vat_day)), '[]'))
       from (select b.batch_lot, mi.milk_lot, mi.intake_date, coalesce((b.started_at at time zone 'Europe/Rome')::date, b.batch_date) vat_day
               from fabula.production_batches b join fabula.batch_milk_inputs bmi on bmi.batch_id = b.id join fabula.milk_intake mi on mi.id = bmi.milk_intake_id
-             where b.batch_date between m0 and m1) x
+             where b.batch_date between m0 and m1 and b.batch_date >= date '2026-10-29') x   -- the rule exists from 29/10/2026
      where x.intake_date <> x.vat_day
     union all
     select jsonb_build_object('check', 'latte_non_lavorato', 'it', 'Consegne di latte non lavorate per intero il giorno di arrivo (regola del caseificio)',
-             'n', count(*), 'detail', coalesce(jsonb_agg(jsonb_build_object('milk_lot', x.milk_lot, 'date', x.intake_date, 'kg_left', x.left_kg)), '[]'))
-      from (select mi.milk_lot, mi.intake_date,
+             'n', count(*), 'detail', coalesce(jsonb_agg(jsonb_build_object('milk_lot', x.milk_lot, 'date', x.intake_date, 'kg_left', x.left_kg,
+                                                                    'nc_status', fabula.milk_rule_nc_status(x.milk_lot))), '[]'))
+      from (select mi.milk_lot, mi.intake_date, mi.qty_kg,
                    round(mi.qty_kg - coalesce((select sum(bmi.qty_kg) from fabula.batch_milk_inputs bmi join fabula.production_batches b on b.id = bmi.batch_id
                                                 where bmi.milk_intake_id = mi.id
                                                   and coalesce((b.started_at at time zone 'Europe/Rome')::date, b.batch_date) = mi.intake_date), 0), 1) left_kg
-              from fabula.milk_intake mi where mi.accepted and mi.intake_date between m0 and m1) x
-     where x.left_kg > 1
+              from fabula.milk_intake mi where mi.accepted and mi.intake_date between m0 and m1 and mi.intake_date >= date '2026-10-29') x
+     where fabula.milk_left_over(x.qty_kg, x.left_kg)
   ) s;
 
   select jsonb_build_object('month', to_char(m0, 'YYYY-MM'), 'from', m0, 'to', m1,

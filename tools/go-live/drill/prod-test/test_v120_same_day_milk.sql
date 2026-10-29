@@ -68,16 +68,17 @@ select pg_temp.lot('L120-E', :'moz', :'d'::date - 3, pg_temp.at(:'d'::date - 3, 
 select pg_temp.ck('2e a start copied from paper 3 days later, from that day''s milk: accepted',
   pg_temp.err(format('insert into fabula.batch_milk_inputs values (%L, %L, 200)', :'le', :'mp')) = '');
 insert into fabula.milk_shipments (id, shipped_at, ship_date, supplier_id, kg, milk_lot, status) values
-  ('60000000-0000-4000-a000-0000000a1201', pg_temp.at(:'y', '20:00'), :'y', :'sup', 300, 'M120-S1', 'shipped'),
+  ('60000000-0000-4000-a000-0000000a1201', pg_temp.at(:'y', '23:40'), :'y', :'sup', 300, 'M120-S1', 'shipped'),
   ('60000000-0000-4000-a000-0000000a1202', pg_temp.at(:'d', '06:00'), :'d', :'sup', 300, 'M120-S2', 'shipped');
 select pg_temp.milk('M120-S1', :'d', 300, '06:30', '60000000-0000-4000-a000-0000000a1201') ms1 \gset
 select pg_temp.milk('M120-S2', :'d', 300, '06:30', '60000000-0000-4000-a000-0000000a1202') ms2 \gset
 select pg_temp.lot('L120-F', :'moz', :'d', now()) lf \gset
-select pg_temp.ck('2f a load that left the Masseria yesterday evening and arrived this morning: refused (only milk delivered the same morning)',
-  pg_temp.err(format('insert into fabula.batch_milk_inputs values (%L, %L, 200)', :'lf', :'ms1')) = format('Il latte M120-S1 è partito dalla Masseria il %s: si lavora solo latte consegnato la mattina stessa (regola del caseificio). Chiama il responsabile.', fabula._it_d(:'y')),
-  pg_temp.err(format('insert into fabula.batch_milk_inputs values (%L, %L, 200)', :'lf', :'ms1')));
+-- the farm's departure is not checked (review 29/10): a load the farm records the evening before and that arrives this morning is the
+-- morning delivery; refusing it would block every vat of the day with no way to correct the time. The milkings come with release B.
+select pg_temp.ck('2f a load recorded by the farm yesterday at 23:40 and arrived this morning: accepted (the arrival day decides)',
+  pg_temp.err(format('insert into fabula.batch_milk_inputs values (%L, %L, 100)', :'lf', :'ms1')) = '');
 select pg_temp.ck('2g a load that left this morning: accepted',
-  pg_temp.err(format('insert into fabula.batch_milk_inputs values (%L, %L, 200)', :'lf', :'ms2')) = '');
+  pg_temp.err(format('insert into fabula.batch_milk_inputs values (%L, %L, 100)', :'lf', :'ms2')) = '');
 select pg_temp.ck('2h pointing an input at older milk afterwards (UPDATE): refused',
   pg_temp.err(format('update fabula.batch_milk_inputs set milk_intake_id = %L, qty_kg = 50 where batch_id = %L', :'my', :'la')) like 'Il latte M120-Y è arrivato il %');   -- 50 kg: within what is left, so the over-draw guard lets it through
 select pg_temp.ck('2i …and moving yesterday''s input to today''s vat (UPDATE batch_id): refused',
@@ -121,6 +122,15 @@ select pg_temp.ck('3c a small delivery of today (250 kg, under the minimum run) 
 select pg_temp.ck('3d the 60 h DOP deadline is still in the payload (the tablet reads the age from it)',
   (select x ? 'use_by' from jsonb_array_elements(:'p'::jsonb->'milk') x where x->>'milk_lot' = 'M120-T'));
 
+-- the weighing tolerance (milk.weight_tolerance_pct, 2 %): 15 kg left of 1,000 is a delivery worked in full; 30 kg left is not
+select pg_temp.milk('M120-TOL', :'d', 1000, '07:30') mtol \gset
+select pg_temp.milk('M120-OVER', :'d', 1000, '07:40') mover \gset
+select pg_temp.lot('L120-T1', :'moz', :'d', now()) lt1 \gset
+select pg_temp.lot('L120-T2', :'moz', :'d', now()) lt2 \gset
+insert into fabula.batch_milk_inputs values (:'lt1', :'mtol', 985), (:'lt2', :'mover', 970);
+select pg_temp.ck('3e the tolerance: 15 kg left of 1.000 kg (1,5 %) counts as worked in full; 30 kg (3 %) does not; never less than 1 kg',
+  not fabula.milk_left_over(1000, 15) and fabula.milk_left_over(1000, 30) and fabula.milk_left_over(40, 1.5) and not fabula.milk_left_over(40, 1));
+
 -- ============================== 4. «Prima di chiudere» ==============================
 select fabula._haccp_evening_items(:'y')::text ey \gset
 select pg_temp.ck('4a yesterday: the delivery with kg left is on the list, as not worked on its day, and opens the milk',
@@ -130,6 +140,9 @@ select fabula._haccp_evening_items(:'d')::text ed \gset
 select pg_temp.ck('4b today: the delivery with kg left is on the list from 15:00 Rome, not before',
   exists (select 1 from jsonb_array_elements(:'ed'::jsonb) x where x->>'code' = 'milkleft:M120-T' and x->>'label_it' like 'Latte M120-T: % kg non ancora in caldaia: va lavorato oggi')
   = ((now() at time zone 'Europe/Rome')::time >= time '15:00'), :'ed');
+select pg_temp.ck('4b2 …within the weighing tolerance it is not (15 kg of 1.000); over it, it is (30 kg), from 15:00',
+  not (:'ed' like '%M120-TOL%')
+  and (:'ed' like '%milkleft:M120-OVER%') = ((now() at time zone 'Europe/Rome')::time >= time '15:00'), :'ed');
 select pg_temp.milk('M120-FULL', :'y', 200, '07:20') mfull \gset
 select pg_temp.lot('L120-L', :'moz', :'y', pg_temp.at(:'y', '11:00')) ll \gset
 insert into fabula.batch_milk_inputs values (:'ll', :'mfull', 200);
@@ -144,20 +157,22 @@ select id m1 from fabula.bot_messages where agent = 'sicurezza' and title like '
 select pg_temp.ck('5b an alarm for food safety: «Regola del caseificio», each delivery with its kg left (today''s and the earlier ones), and what happens next',
   (select severity = 'alert' and body like '%Regola del caseificio: tutto il latte consegnato va in caldaia il giorno in cui arriva.%'
           and body like '%M120-Y: 100 kg, arrivato%' and body like '%M120-T: % kg, arrivato%' and body like '%Non può andare in caldaia nei giorni seguenti.%'
-          and body not like '%M120-FULL%' from fabula.bot_messages where id = :'m1'), :'w1');
-select pg_temp.ck('5c one non-conformity per delivery not worked in full, severity minor, marked as not food safety, with the milk lot',
-  (select count(*) from fabula.non_conformities where description like 'Regola del caseificio (non di sicurezza alimentare): latte %') = (:'w1'::jsonb->>'nc_opened')::int
-  and (:'w1'::jsonb->>'nc_opened')::int >= 2
+          and body not like '%M120-FULL%' and body not like '%M120-TOL%' and body like '%M120-OVER: 30 kg, arrivato%' from fabula.bot_messages where id = :'m1'), :'w1');
+select pg_temp.ck('5c one non-conformity per delivery not worked in full (as many as the alarm lists), severity minor, with the milk lot; none within the tolerance',
+  (select count(*) from fabula.non_conformities where description like 'Regola del caseificio:%') = (:'w1'::jsonb->>'nc_opened')::int
+  and (:'w1'::jsonb->>'nc_opened')::int = (:'w1'::jsonb->>'old_milk')::int and (:'w1'::jsonb->>'nc_opened')::int >= 2
+  and not exists (select 1 from fabula.non_conformities where lot_number = 'M120-TOL')
   and exists (select 1 from fabula.non_conformities where lot_number = 'M120-Y' and severity = 'minor' and status = 'open'
-                and description = format('Regola del caseificio (non di sicurezza alimentare): latte M120-Y arrivato il %s, 100 kg non lavorati il giorno di arrivo. Non va in caldaia nei giorni seguenti: scrivi cosa è stato fatto.', fabula._it_d(:'y'))),
+                and description = format('Regola del caseificio: latte M120-Y arrivato il %s, 100 kg non lavorati il giorno di arrivo. Non va in caldaia nei giorni seguenti: decidi cosa farne e scrivi cosa è stato fatto.', fabula._it_d(:'y'))),
   :'w1');
 select fabula.prod_watch(pg_temp.at(:'d', '19:40')) w2 \gset
 select pg_temp.ck('5d the same evening again: not posted twice, no second non-conformity',
   :'w2'::jsonb->>'skipped' = 'already posted' and (:'w2'::jsonb->>'nc_opened')::int = 0, :'w2');
 select fabula.prod_watch(pg_temp.at(:'d'::date + 1, '19:30')) w3 \gset
-select pg_temp.ck('5e the next evening the same milk is listed again, but its non-conformity is not opened twice',
-  (:'w3'::jsonb->>'old_milk')::int >= 1 and (:'w3'::jsonb->>'nc_opened')::int = 0
-  and (select count(*) from fabula.non_conformities where lot_number = 'M120-Y') = 1, :'w3');
+select pg_temp.ck('5e the next evening: no alarm again for milk already reported (its non-conformity is open), no second non-conformity',
+  (:'w3'::jsonb->>'old_milk')::int = 0 and (:'w3'::jsonb->>'nc_opened')::int = 0
+  and (select count(*) from fabula.non_conformities where lot_number = 'M120-Y') = 1
+  and not exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and title like format('Produzione %s:%%latte%%', to_char(:'d'::date + 1, 'DD/MM'))), :'w3');
 select pg_temp.ck('5f the rule that makes it an alarm is «latte_non_lavorato» (was «latte_60_ore»)',
   exists (select 1 from fabula.message_rules where kind = 'latte_non_lavorato' and severity = 'alert' and topic = 'food_safety' and title_regex = 'latte non lavorat')
   and not exists (select 1 from fabula.message_rules where kind = 'latte_60_ore'));
@@ -171,6 +186,15 @@ select pg_temp.err(format('update fabula.non_conformities set status = ''closed'
 :OWNER
 select pg_temp.ck('5h the non-conformity is closed only with the corrective action (titolare, HACCP level 3)',
   :'e_close' like 'Scrivi l''azione correttiva%' and :'e_close2' = '' and (select status = 'closed' from fabula.non_conformities where id = :'nc'), :'e_close' || ' | ' || :'e_close2');
+select fabula.production_plan(:'d') p2 \gset
+select pg_temp.ck('5j once its non-conformity is closed, yesterday''s milk leaves the plan''s list and the evening list; an open one stays',
+  not exists (select 1 from jsonb_array_elements(:'p2'::jsonb->'stale') x where x->>'milk_lot' = 'M120-Y')
+  and exists (select 1 from jsonb_array_elements(:'p2'::jsonb->'stale') x where x->>'milk_lot' = 'M120-P' and x->>'nc_status' = 'open')
+  and not (fabula._haccp_evening_items(:'y')::text like '%M120-Y%'), (:'p2'::jsonb->'stale')::text);
+select fabula._why_prod_watch('{"warn_hours": 48, "dop_limit_hours": 60, "open_batches": [], "old_milk": [{"lot": "MX-OLD", "left_kg": 5, "arrived": "2026-10-20T06:00:00+00:00", "hours": 50}]}'::jsonb)::text wold \gset
+select pg_temp.ck('5k «Perché?» of a message posted before v1.20 (no «rule» in its data) keeps its own 48/60 h explanation',
+  :'wold' like '%"t": "Latte vicino alle 60 ore"%' and :'wold' like '%5 kg da lavorare%' and :'wold' like '%l''avviso parte a 48 ore dall''arrivo%'
+  and :'wold' not like '%Regola del caseificio%', :'wold');
 select pg_temp.ck('5i the scheduled job keeps its slot; its description says what it now watches',
   exists (select 1 from fabula.cron_jobs_expected where jobname = 'fabula_prod_watch' and purpose_it = 'Lotti aperti e latte non lavorato in giornata (sera)'));
 
@@ -185,12 +209,32 @@ select pg_temp.ck('6a check «latte_altro_giorno»: the lot made from milk of an
   exists (select 1 from jsonb_array_elements(:'j'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
            where i->>'check' = 'latte_altro_giorno' and x->>'lot' = 'L120-X' and x->>'milk_lot' = 'M120-P'),
   (select string_agg(i->>'check', ',') from jsonb_array_elements(:'j'::jsonb->'issues') i));
-select fabula.consorzio_declaration(date_trunc('month', :'y'::date)::date) jy \gset
-select pg_temp.ck('6b check «latte_non_lavorato»: yesterday''s delivery with 100 kg not worked on its day (the kg of the late lot do not count as worked)',
-  exists (select 1 from jsonb_array_elements(:'jy'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
-           where i->>'check' = 'latte_non_lavorato' and x->>'milk_lot' = 'M120-Y' and (x->>'kg_left')::numeric = 100)
-  and not exists (select 1 from jsonb_array_elements(:'jy'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
-           where i->>'check' = 'latte_non_lavorato' and x->>'milk_lot' = 'M120-FULL'), (:'jy'::jsonb->'issues')::text);
+-- a delivery of today: 200 kg in a vat today, 100 kg in a vat tomorrow (only possible as old data: trigger off)
+select pg_temp.milk('M120-LATE', :'d', 300, '07:50') mlate \gset
+select pg_temp.lot('L120-LT1', :'sca', :'d', now()) llt1 \gset
+insert into fabula.batch_milk_inputs values (:'llt1', :'mlate', 200);
+alter table fabula.batch_milk_inputs disable trigger batch_milk_same_day;
+select pg_temp.lot('L120-LT2', :'sca', :'d'::date + 1, pg_temp.at(:'d'::date + 1, '09:00')) llt2 \gset
+insert into fabula.batch_milk_inputs values (:'llt2', :'mlate', 100);
+alter table fabula.batch_milk_inputs enable trigger batch_milk_same_day;
+select fabula.consorzio_declaration(date_trunc('month', :'d'::date)::date) jd \gset
+select pg_temp.ck('6b check «latte_non_lavorato»: a delivery with 100 kg not worked on its day (the kg of the late lot do not count), with its non-conformity''s status; a delivery within the tolerance is not listed',
+  exists (select 1 from jsonb_array_elements(:'jd'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
+           where i->>'check' = 'latte_non_lavorato' and x->>'milk_lot' = 'M120-LATE' and (x->>'kg_left')::numeric = 100)
+  and exists (select 1 from jsonb_array_elements(:'jd'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
+           where i->>'check' = 'latte_non_lavorato' and x->>'milk_lot' = 'M120-T' and x->>'nc_status' = 'open')
+  and not exists (select 1 from jsonb_array_elements(:'jd'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
+           where i->>'check' = 'latte_non_lavorato' and x->>'milk_lot' = 'M120-TOL'), (:'jd'::jsonb->'issues')::text);
+-- before 29/10/2026 the rule did not exist (the plan itself proposed the day before's milk): a lot of 21/10 from milk of 20/10 is not listed
+alter table fabula.batch_milk_inputs disable trigger batch_milk_same_day;
+select pg_temp.milk('M120-PRE', date '2026-10-20', 300, '07:00') mpre \gset
+select pg_temp.lot('L120-PRE', :'sca', date '2026-10-21', pg_temp.at(date '2026-10-21', '09:00')) lpre \gset
+insert into fabula.batch_milk_inputs values (:'lpre', :'mpre', 200);
+alter table fabula.batch_milk_inputs enable trigger batch_milk_same_day;
+select fabula.consorzio_declaration(date '2026-10-01') jo \gset
+select pg_temp.ck('6d the checks start on 29/10/2026: October''s lots and deliveries before it are not listed',
+  not exists (select 1 from jsonb_array_elements(:'jo'::jsonb->'issues') i, jsonb_array_elements(i->'detail') x
+               where x->>'lot' = 'L120-PRE' or x->>'milk_lot' = 'M120-PRE'), (:'jo'::jsonb->'issues')::text);
 select pg_temp.ck('6c the month''s longest time from arrival to vat is in the figures',
   (:'j'::jsonb->>'arrival_to_vat_max_h') is not null and (:'j'::jsonb->>'arrival_to_vat_max_h')::numeric >= 0, :'j'::jsonb->>'arrival_to_vat_max_h');
 
