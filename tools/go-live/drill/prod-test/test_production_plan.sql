@@ -18,7 +18,8 @@ insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot,
  (:'d'::date,     '06:40', :'sup', 'MT-BAD', 300, false, 'test'),
  (:'d'::date - 1, '06:00', :'sup', 'MT-USED', 400, true, 'test');
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, output_kg, started_at, finished_at, source)
-values (:'d'::date - 1, 'LTEST-USED', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 400, null, now() - interval '20 hours', null, 'test') returning id used_b \gset
+-- v1.20: started yesterday morning, MT-USED's day (was now() − 20 h: after 20:00 Rome that is today, and the vat would not be on its milk's day)
+values (:'d'::date - 1, 'LTEST-USED', (select id from fabula.products where sku = 'MOZ-DOP-KG'), 400, null, ((:'d'::date - 1) + time '10:00') at time zone 'Europe/Rome', null, 'test') returning id used_b \gset
 insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values (:'used_b', (select id from fabula.milk_intake where milk_lot = 'MT-USED'), 400);
 insert into fabula.milk_plans (plan_date, milk_kg, planned_output_kg, status) values (:'d', 1400, 420, 'approved');
 

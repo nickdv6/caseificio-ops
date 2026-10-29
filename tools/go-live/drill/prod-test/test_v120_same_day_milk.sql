@@ -168,10 +168,19 @@ select pg_temp.ck('5c one non-conformity per delivery not worked in full (as man
 select fabula.prod_watch(pg_temp.at(:'d', '19:40')) w2 \gset
 select pg_temp.ck('5d the same evening again: not posted twice, no second non-conformity',
   :'w2'::jsonb->>'skipped' = 'already posted' and (:'w2'::jsonb->>'nc_opened')::int = 0, :'w2');
+-- between two runs of the same evening: a new delivery not in a vat, and the same lot as yesterday's on a new day (a lot written by hand)
+select pg_temp.milk('M120-NEW2', :'d', 200, '08:10') mnew2 \gset
+select pg_temp.milk('M120-Y', :'d', 120, '08:20') my2 \gset
+select fabula.prod_watch(pg_temp.at(:'d', '19:45')) w2b \gset
+select pg_temp.ck('5d2 a later run the same evening with new milk not in a vat: posted (never only a non-conformity), just the new deliveries, the same lot on a new day included',
+  :'w2b'::jsonb->>'skipped' is null and (:'w2b'::jsonb->>'old_milk')::int = 2 and (:'w2b'::jsonb->>'nc_opened')::int = 2
+  and (select body like '%M120-NEW2: 200 kg%' and body like '%M120-Y: 120 kg%' and body not like '%M120-T:%' from fabula.bot_messages
+        where agent = 'sicurezza' and title like 'Produzione %' order by id desc limit 1)
+  and (select count(*) from fabula.non_conformities where lot_number = 'M120-Y') = 2, :'w2b');
 select fabula.prod_watch(pg_temp.at(:'d'::date + 1, '19:30')) w3 \gset
 select pg_temp.ck('5e the next evening: no alarm again for milk already reported (its non-conformity is open), no second non-conformity',
-  (:'w3'::jsonb->>'old_milk')::int = 0 and (:'w3'::jsonb->>'nc_opened')::int = 0
-  and (select count(*) from fabula.non_conformities where lot_number = 'M120-Y') = 1
+  (:'w3'::jsonb->>'old_milk')::int = 0 and (:'w3'::jsonb->>'nc_opened')::int = 0 and :'w3'::jsonb->>'skipped' is null
+  and (select count(*) from fabula.non_conformities where lot_number = 'M120-Y') = 2
   and not exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and title like format('Produzione %s:%%latte%%', to_char(:'d'::date + 1, 'DD/MM'))), :'w3');
 select pg_temp.ck('5f the rule that makes it an alarm is «latte_non_lavorato» (was «latte_60_ore»)',
   exists (select 1 from fabula.message_rules where kind = 'latte_non_lavorato' and severity = 'alert' and topic = 'food_safety' and title_regex = 'latte non lavorat')
@@ -179,7 +188,7 @@ select pg_temp.ck('5f the rule that makes it an alarm is «latte_non_lavorato» 
 select fabula.message_why(:'m1')::text why \gset
 select pg_temp.ck('5g «Perché?»: the lot, the kg not worked, when it arrived, and the house rule next to the DOP limit',
   :'why' like '%M120-Y%' and :'why' like '%100 kg non lavorati%' and :'why' like '%Regola del caseificio%' and :'why' like '%60 ore dalla mungitura%', left(:'why', 500));
-select id nc from fabula.non_conformities where lot_number = 'M120-Y' \gset
+select id nc from fabula.non_conformities where lot_number = 'M120-Y' and description like format('Regola del caseificio: latte M120-Y arrivato il %s,%%', fabula._it_d(:'y')) \gset
 :TIT
 select pg_temp.err(format('update fabula.non_conformities set status = ''closed'' where id = %L', :'nc')) e_close \gset
 select pg_temp.err(format('update fabula.non_conformities set status = ''closed'', corrective_action = %L where id = %L', 'Latte rimasto per guasto del pastorizzatore: restituito alla Masseria e venduto da lì', :'nc')) e_close2 \gset
@@ -192,6 +201,10 @@ select pg_temp.ck('5j once its non-conformity is closed, yesterday''s milk leave
   and exists (select 1 from jsonb_array_elements(:'p2'::jsonb->'stale') x where x->>'milk_lot' = 'M120-P' and x->>'nc_status' = 'open')
   and not (fabula._haccp_evening_items(:'y')::text like '%M120-Y%'), (:'p2'::jsonb->'stale')::text);
 select fabula._why_prod_watch('{"warn_hours": 48, "dop_limit_hours": 60, "open_batches": [], "old_milk": [{"lot": "MX-OLD", "left_kg": 5, "arrived": "2026-10-20T06:00:00+00:00", "hours": 50}]}'::jsonb)::text wold \gset
+insert into fabula.bot_messages (agent, severity, title, body, source, created_at)
+values ('produzione', 'warn', format('Produzione %s: 1 lotto aperto', to_char(:'d'::date + 2, 'DD/MM')), 'x', 'bot', now() - interval '1 year');
+select pg_temp.ck('5j2 an evening message of the same date a year ago does not silence this evening',
+  fabula.prod_watch(pg_temp.at(:'d'::date + 2, '19:30'))->>'skipped' is null);
 select pg_temp.ck('5k «Perché?» of a message posted before v1.20 (no «rule» in its data) keeps its own 48/60 h explanation',
   :'wold' like '%"t": "Latte vicino alle 60 ore"%' and :'wold' like '%5 kg da lavorare%' and :'wold' like '%l''avviso parte a 48 ore dall''arrivo%'
   and :'wold' not like '%Regola del caseificio%', :'wold');

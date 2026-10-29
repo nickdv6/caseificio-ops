@@ -304,4 +304,5 @@ end $function$;
 
 -- the two helpers, now unused
 drop function if exists fabula.milk_left_over(numeric, numeric);
-drop function if exists fabula.milk_rule_nc_status(text);
+drop function if exists fabula.milk_rule_nc_status(text, date);
+delete from fabula.security_accepted where key = 'authenticated_security_definer_function_executable:fabula.milk_rule_nc_status(p_milk_lot text, p_intake_date date)';

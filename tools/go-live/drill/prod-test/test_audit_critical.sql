@@ -23,7 +23,8 @@ insert into fabula.milk_intake (id, intake_date, intake_time, supplier_id, milk_
 -- between 22:00/23:00 and 24:00 UTC it is the day before Rome's, and the vat started now() would be on another day than its milk)
 values ('70000000-0000-4000-a000-0000000096d1', (now() at time zone 'Europe/Rome')::date, '06:30', '50000000-0000-4000-a000-0000000096f1', 'x', 1, true, 4, 'tablet', '60000000-0000-4000-a000-0000000096c1');
 insert into fabula.production_batches (id, batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, output_kg, finished_at, source) values
-  ('80000000-0000-4000-a000-0000000096b1', current_date, 'LC96-A', :'moz', 400, 'milk', now() - interval '1 hour', 120, now(), 'tablet');
+  ('80000000-0000-4000-a000-0000000096b1', current_date, 'LC96-A', :'moz', 400, 'milk',
+   greatest(now() - interval '1 hour', ((now() at time zone 'Europe/Rome')::date)::timestamp at time zone 'Europe/Rome'), 120, now(), 'tablet');   -- v1.20: an hour ago, but on MC96-1's (Rome) day
 insert into fabula.batch_milk_inputs (batch_id, milk_intake_id, qty_kg) values ('80000000-0000-4000-a000-0000000096b1', '70000000-0000-4000-a000-0000000096d1', 400);
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, parent_batch_id, started_at, source)
 select current_date, 'RC96-A', byproduct_product_id, 300, 'whey', '80000000-0000-4000-a000-0000000096b1', now(), 'tablet' from fabula.products where id = :'moz';
