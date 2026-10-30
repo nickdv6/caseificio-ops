@@ -59,7 +59,7 @@ select pg_temp.ck('A-04 the offline queue may call it', pg_get_functiondef((sele
 -- A-03 · a lot closed without its CCPs is held, not just reported
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LC96-B', :'moz', 200, 'milk', now(), 'tablet');
 update fabula.production_batches set output_kg = 60, finished_at = now() where batch_lot = 'LC96-B';
--- v1.21: CCP 2 a tino also needs its holding minutes, listed last (classification A, approval pending)
+-- v1.21: CCP 2 a tino also needs its holding minutes, listed last (classification A, approved by Nick 30/10/2026 10:42 ET)
 select pg_temp.ck('A-03 closing without CCP 2 and CCP 3 holds the lot', (select food_safety_hold and hold_reason like 'CCP mancante alla chiusura: CCP-PAST, CCP-STRETCH, CCP-PAST-HOLD' from fabula.production_batches where batch_lot = 'LC96-B'),
   (select hold_reason from fabula.production_batches where batch_lot = 'LC96-B'));
 select pg_temp.ck('A-03 …and the message says it is blocked', exists (select 1 from fabula.bot_messages where title like 'Lotto LC96-B chiuso senza%' and body like '%Il lotto è BLOCCATO%'));

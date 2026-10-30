@@ -64,7 +64,7 @@ select pg_temp.ck('new recall assessments get no deadline', pg_get_functiondef('
 
 -- 4 · B-01: critical limits cannot be blanked or inverted
 select pg_temp.err($$update fabula.haccp_control_points set min_value = null where code = 'CCP-PAST'$$) e1 \gset
--- v1.21: CCP 2 a tino, minimum 63 °C since 30/10/2026 (was 72; classification A, approval pending)
+-- v1.21: CCP 2 a tino, minimum 63 °C since 30/10/2026 (was 72; classification A, approved by Nick 30/10/2026 10:42 ET)
 select pg_temp.ck('clearing the CCP 2 minimum is refused', :'e1' like '%limite minimo (63.00) non si può cancellare%', :'e1');
 select pg_temp.err($$update fabula.haccp_control_points set min_value = 7 where code = 'CCP-COLD-1'$$) e2 \gset
 select pg_temp.ck('minimum above maximum is refused', :'e2' like '%deve essere più basso del massimo%', :'e2');

@@ -15,7 +15,7 @@ select pg_temp.ck('v_process_steps returns ccp_code (pasteurisation and stretchi
 -- a mozzarella batch closed with no CCP records
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LG-1', :'moz', 500, 'milk', now(), 'tablet');
 update fabula.production_batches set output_kg = 150, finished_at = now() where batch_lot = 'LG-1';
--- v1.21: and the CCP 2 holding minutes, named last (classification A, approval pending)
+-- v1.21: and the CCP 2 holding minutes, named last (classification A, approved by Nick 30/10/2026 10:42 ET)
 select pg_temp.ck('closed without CCP 2 and CCP 3: alert from «Sicurezza alimentare» naming both',
   exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and title = 'Lotto LG-1 chiuso senza pastorizzazione (CCP 2) e temperatura di filatura (CCP 3) e minuti di sosta della pastorizzazione (CCP 2)'),
   (select string_agg(agent || ': ' || title, ' | ') from fabula.bot_messages));

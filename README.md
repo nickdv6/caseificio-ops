@@ -38,7 +38,7 @@ was recorded. Migration `v121a` and the tablet:
   scamorza, stracciatella…); the close form asks them when the lot has none yet; 🛡 → Ricopia da foglio di carta lists «⏱ Pastorizzazione:
   minuti di sosta (MOD-02)»; a CCP check on a lot or a correction offers the lot for the minutes too (no thermometer recorded on them).
   The kept list of control points now drops one switched off.
-- **Tests:** `test_v121_past_hold.sql` (36 checks; RED on v1.20 as expected). Test changes **waiting for Nick's approval**:
+- **Tests:** `test_v121_past_hold.sql` (36 checks; RED on v1.20 as expected). Test changes **approved by Nick** (30/10/2026 10:42 ET):
   `test_audit_critical` A-03 and `test_prod_guards` (the lot closed with nothing: the reason and the alert also name the minutes) and
   `test_audit_food_safety` B-01 (the CCP 2 minimum in the message is 63.00, was 72.00) — classification A, the meaning changed on purpose;
   `test_prod_guards` LG-2 and `test_v117_legal_records` P5 record the minutes in their fixture — classification B, no assertion changed.
