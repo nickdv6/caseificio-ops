@@ -256,3 +256,10 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
     written on it; a start today, and a paper copy dated today, are refused with the rule's message and nothing reaches the database; a
     paper copy dated yesterday (the milk's day) is taken with yesterday's time, and Home no longer shows that milk; today's tile opens
     the start without the note and the batch starts. Expect `FAILURES: none` (11 checks); on main it fails (no rule there).
+
+36. `python3 v121_e2e.py` (v1.21 CCP 2 a tino, the holding minutes; pages on :8797; restore_drill with v121a and PostgREST on :3000, one
+    milk supplier) — the mozzarella preset asks «Sosta di pastorizzazione (CCP 2)» right after the temperature as a critical point (no
+    «Fatto», no «Salta», target 30 min); 25 minutes gives the red card and the lot is held, with the minutes in the register as a
+    non-conformity; a product with no preset asks the temperature and the minutes on the start form (both required) and both reach the
+    register; a lot that reaches its close without the minutes is asked them there and closes free; 🛡 → Ricopia lists the minutes; with
+    CCP-PAST-HOLD switched off the start form asks the temperature only. Expect `FAILURES: none` (13 checks); on v1.20 it fails.

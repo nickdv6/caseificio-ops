@@ -1,13 +1,13 @@
 {
-  "version": "v1.20",
-  "title_it": "Latte del giorno (regola del caseificio): il latte va in caldaia solo il giorno in cui arriva, per ogni prodotto; il piano propone solo il latte di oggi; la sera un allarme e una non conformità se resta latte; la dichiarazione mensile ne dà la prova",
+  "version": "v1.21",
+  "title_it": "CCP 2 a tino: si registrano i minuti di sosta (almeno 30 a ≥ 63 °C) su ogni lotto; sotto i 30 il lotto si blocca; un lotto chiuso senza minuti resta bloccato",
   "order": [
     "database"
   ],
   "force": [],
   "after_it": [
-    "Spiega al casaro la regola: tutto il latte consegnato va in caldaia lo stesso giorno; dal giorno dopo il tablet e il database non lo accettano più",
-    "Se una sera resta latte (guasto, imprevisto): arriva l'allarme con una non conformità; il responsabile HACCP la chiude scrivendo cosa è stato fatto"
+    "Spiega al casaro il nuovo passo «Sosta di pastorizzazione (CCP 2)»: dopo la temperatura si scrivono i minuti di sosta, contati da quando tutto il latte è a 63 °C (almeno 30)",
+    "Leggi la targa della caldaia: se fosse un pastorizzatore a flusso continuo, il CCP 2 torna a 72 °C per 15 s e i minuti di sosta si spengono (chiedi a Claude)"
   ],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }

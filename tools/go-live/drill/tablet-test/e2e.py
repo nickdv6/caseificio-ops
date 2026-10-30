@@ -78,7 +78,7 @@ with sync_playwright() as p:
         for k, v in vals.items():
             pg.evaluate("([k, v]) => { const e = document.getElementById(k); e.value = v; e.dispatchEvent(new Event('change')); }", [k, str(v)])
     def save_form():
-        pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; const c = document.getElementById('ccpv'); if (c && !c.value) c.value = (c.previousElementSibling && /CCP 4/.test(c.previousElementSibling.textContent)) ? '88' : '65'; })()"); pg.evaluate("document.getElementById('btn-form-save').click()"); pg.wait_for_timeout(1500)
+        pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5';  const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30';const c = document.getElementById('ccpv'); if (c && !c.value) c.value = (c.previousElementSibling && /CCP 4/.test(c.previousElementSibling.textContent)) ? '88' : '65'; })()"); pg.evaluate("document.getElementById('btn-form-save').click()"); pg.wait_for_timeout(1500)
     def milk(ddt, lot, kg=600):
         scan('DDT:' + ddt)
         check(f'milk form opens ({lot}, offline={state["off"]})', view() == 'v-form', pg.evaluate("document.getElementById('f-title').textContent") + ' | ' + toast())

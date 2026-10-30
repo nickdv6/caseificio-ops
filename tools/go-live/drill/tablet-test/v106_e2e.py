@@ -45,6 +45,7 @@ M_OLD = sql1(f"select fabula.post_bot_message('procurement', 'info', 'Nessun ord
 # 3. a food-safety alarm from the database: a lot closed without CCP 3
 sql(f"insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, '{LOT}', '{MOZ}', 500, 'milk', now(), 'tablet')")
 sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST', p_value => 72.5, p_staff_id => (select id from fabula.staff where auth_user_id = '{CASARO[0]}'), p_batch_lot => '{LOT}')")
+sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST-HOLD', p_value => 30, p_staff_id => (select id from fabula.staff where auth_user_id = '{CASARO[0]}'), p_batch_lot => '{LOT}')")   # v1.21: CCP 2 a tino also records the minutes
 sql(f"update fabula.production_batches set output_kg = 150, finished_at = now() where batch_lot = '{LOT}'")
 M_CCP = sql1(f"select id from fabula.bot_messages where agent = 'sicurezza' and title like 'Lotto {LOT} chiuso senza%' order by id desc limit 1")
 

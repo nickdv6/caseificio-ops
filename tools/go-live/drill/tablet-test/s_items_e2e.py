@@ -45,6 +45,7 @@ sql(f"insert into fabula.batch_step_logs (batch_id, step_id, step_name, source) 
 sql(f"insert into fabula.batch_consumables (batch_id, product_id, qty, recipe_id, entry) select b.id, p.id, 1, r.recipe_id, 'tablet' from fabula.production_batches b join fabula.v_recipe_active r on r.finished_product_id = b.product_id and r.phase = 'start' join fabula.products p on p.sku = r.sku where b.batch_lot = '{LB}'")
 sql(f"select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value => 64, p_batch_lot => '{LB}', p_staff_id => '10000000-0000-4000-a000-000000000001')")
 sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST', p_value => 72, p_batch_lot => '{LB}', p_staff_id => '10000000-0000-4000-a000-000000000001')")
+sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST-HOLD', p_value => 30, p_batch_lot => '{LB}', p_staff_id => '10000000-0000-4000-a000-000000000001')")   # v1.21: CCP 2 a tino also records the minutes
 # farm: today's approved order (a test one if there is none)
 ORDER = sql1(f"select milk_kg from fabula.milk_plans where status = 'approved' and plan_date = '{TODAY}' order by milk_kg desc limit 1")
 made_plan = not ORDER
@@ -135,7 +136,7 @@ try:
     check('A-16 ricotta is not offered for a vat started from milk', prods and not any('icotta' in x for x in prods), str(prods))
     n0 = sql1(f"select count(*) from fabula.batch_milk_inputs where milk_intake_id = '{mid}'")
     setf({'kg': 500, 'mu': 'kg'})
-    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) { v.value = '0'; } const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; })()")
+    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) { v.value = '0'; } const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; } const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30';)()")
     save_form()
     check('D-09 500 kg on 400 left is refused, saying what is left', view() == 'v-form' and 'restano 400 kg: hai scritto 500 kg' in toast()
           and sql1(f"select count(*) from fabula.batch_milk_inputs where milk_intake_id = '{mid}'") == n0, toast())

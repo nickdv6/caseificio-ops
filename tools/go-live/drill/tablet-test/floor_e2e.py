@@ -213,7 +213,7 @@ try:
     t_title = title()
     check('A-08 offline, the tablet does not know the other tablet''s lot: it proposes the same letter', nxt in t_title, t_title + ' vs ' + nxt)
     setf({'kg': 300})
-    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; })()")
+    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; } const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30';)()")
     if has('valvenote'): setf({'valvenote': 'riparato e provato (e2e)'})
     save(); pg.wait_for_timeout(1200)
     saw_nm, dbl = False, None
@@ -232,7 +232,7 @@ try:
     mine = sql1("select count(*) from fabula.production_batches where batch_lot = '" + nxt + "'")
     home(); code('LOT:' + LOTM2)                       # second vat offline: a product with no preset, CCP 2 typed in the form
     pg.evaluate("p => { const s = document.getElementById('product'); s.value = p; s.dispatchEvent(new Event('change')); }", NOPRE)
-    t2 = title(); setf({'kg': 200, 'past': 72.4})
+    t2 = title(); setf({'kg': 200, 'past': 72.4, 'pasthold': 30})
     pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; })()")
     if has('valvenote'): setf({'valvenote': 'riparato e provato (e2e)'})
     save(); pg.wait_for_timeout(1500)

@@ -150,7 +150,7 @@ try:
     # ---- D-06 vat size at the start ----
     code('LOT:' + MILK)
     check('D-06 scanning the milk opens the batch start', 'Inizio lotto' in title(), title())
-    setf({'product': NOPRE}); setf({'valve': '0'}); typef('kg', '3100'); typef('past', '72,5'); save()
+    setf({'product': NOPRE}); setf({'valve': '0'}); typef('kg', '3100'); typef('past', '72,5'); typef('pasthold', '30'); save()
     check('D-06 3100 kg in one vat (vat 800 kg) is refused on the tablet before anything is saved', view() == 'v-form'
           and 'una caldaia ne tiene al massimo 880 kg' in toast() and sql1(f"select count(*) from fabula.production_batches where product_id = '{NOPRE}'") == '0', toast())
     typef('kg', '31'); save(); pg.wait_for_timeout(1500)
@@ -180,7 +180,7 @@ try:
     done_btn()
 
     # ---- D-06 a yield under the minimum needs what was lost ----
-    code('LOT:' + MILK); setf({'product': NOPRE}); typef('kg', '300'); typef('past', '72'); save(); pg.wait_for_timeout(1500)
+    code('LOT:' + MILK); setf({'product': NOPRE}); typef('kg', '300'); typef('past', '72'); typef('pasthold', '30'); save(); pg.wait_for_timeout(1500)
     L2 = sql1(f"select batch_lot from fabula.production_batches where product_id = '{NOPRE}' order by created_at desc limit 1")
     home(); code('LOT:' + L2); typef('out', '15'); typef('ccpv', '61'); save()
     q5 = ask_input(pg, 'metà cagliata persa: caldaia fredda', wait=0); pg.wait_for_timeout(1500)

@@ -15,13 +15,16 @@ select pg_temp.ck('v_process_steps returns ccp_code (pasteurisation and stretchi
 -- a mozzarella batch closed with no CCP records
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LG-1', :'moz', 500, 'milk', now(), 'tablet');
 update fabula.production_batches set output_kg = 150, finished_at = now() where batch_lot = 'LG-1';
+-- v1.21: and the CCP 2 holding minutes, named last (classification A, approval pending)
 select pg_temp.ck('closed without CCP 2 and CCP 3: alert from «Sicurezza alimentare» naming both',
-  exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and title = 'Lotto LG-1 chiuso senza pastorizzazione (CCP 2) e temperatura di filatura (CCP 3)'),
+  exists (select 1 from fabula.bot_messages where agent = 'sicurezza' and severity = 'alert' and title = 'Lotto LG-1 chiuso senza pastorizzazione (CCP 2) e temperatura di filatura (CCP 3) e minuti di sosta della pastorizzazione (CCP 2)'),
   (select string_agg(agent || ': ' || title, ' | ') from fabula.bot_messages));
 
 -- a batch with both records, closed in the same transaction as the stretching record (deferred check)
 insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, source) values (current_date, 'LG-2', :'moz', 500, 'milk', now(), 'tablet');
 select fabula.log_ccp(p_cp_code => 'CCP-PAST', p_value => 72.5, p_staff_id => '10000000-0000-4000-a000-0000000000b1', p_batch_lot => 'LG-2') \gset
+-- v1.21: CCP 2 a tino also records the holding minutes (classification B: the fixture records them; no assertion changed)
+select fabula.log_ccp(p_cp_code => 'CCP-PAST-HOLD', p_value => 30, p_staff_id => '10000000-0000-4000-a000-0000000000b1', p_batch_lot => 'LG-2') \gset
 begin;
 update fabula.production_batches set output_kg = 150, finished_at = now() where batch_lot = 'LG-2';
 select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value => 65, p_staff_id => '10000000-0000-4000-a000-0000000000b1', p_batch_lot => 'LG-2') \gset

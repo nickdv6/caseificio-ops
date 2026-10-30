@@ -18,6 +18,36 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## CCP 2 a tino: the holding minutes (v1.21)
+Decided by Nick on 30/10/2026: CCP 2 set «to 63 for 30 minutes for now» (on live that morning as a data change), then «yes» to recording
+the minutes. The Fortino invoices say the vat is a Mod. MCA300, 300 L, a batch pasteuriser; its rating plate is still to be read
+(Manuale §13). Batch pasteurisation is temperature AND time (≥ 63 °C for ≥ 30 min in the whole volume); until now only the temperature
+was recorded. Migration `v121a` and the tablet:
+- **CCP-PAST** carries the batch limits (critical ≥ 63 °C, alert below 64) and texts, and its preset step shows «63 °C · 30 min»: the
+  values written on live on 30/10, here so that a replay equals live.
+- **CCP-PAST-HOLD** «Pastorizzazione: minuti di sosta a ≥ 63 °C» (new control point): CCP 2, minutes, critical limit ≥ 30, possible
+  0–240, per batch, MOD-02, critical. Below 30 → non-conformity and the lot is held (log_ccp, as every CCP with a lot); it prints on the
+  MOD-02 register next to the temperature.
+- **Preset step** «Sosta di pastorizzazione (CCP 2)» right after each pasteurisation step (`record_metric` duration, `ccp_code`
+  CCP-PAST-HOLD): the tablet asks it as a critical point (no «Fatto», no «Salta»); `trg_step_log_ccp` writes the register.
+- **`trg_batch_ccp_check`**: a milk lot closed without the minutes is held like one closed without CCP 2 or CCP 3, while CCP-PAST-HOLD
+  is active. The missing list keeps its order (CCP-PAST, CCP-STRETCH, then CCP-PAST-HOLD). Switching CCP-PAST-HOLD off is how a continuous
+  pasteuriser (72 °C × 15 s with diversion valve) would go back: nothing is asked or required then.
+- **«Prima di chiudere»**: a lot of the day without the minutes is listed («CCP 2 Pastorizzazione: minuti di sosta … · lotto …»).
+- **Tablet** (sw `perla-v84`): the start form asks the minutes when the chosen preset has no minutes step (products with no preset:
+  scamorza, stracciatella…); the close form asks them when the lot has none yet; 🛡 → Ricopia da foglio di carta lists «⏱ Pastorizzazione:
+  minuti di sosta (MOD-02)»; a CCP check on a lot or a correction offers the lot for the minutes too (no thermometer recorded on them).
+  The kept list of control points now drops one switched off.
+- **Tests:** `test_v121_past_hold.sql` (36 checks; RED on v1.20 as expected). Test changes **waiting for Nick's approval**:
+  `test_audit_critical` A-03 and `test_prod_guards` (the lot closed with nothing: the reason and the alert also name the minutes) and
+  `test_audit_food_safety` B-01 (the CCP 2 minimum in the message is 63.00, was 72.00) — classification A, the meaning changed on purpose;
+  `test_prod_guards` LG-2 and `test_v117_legal_records` P5 record the minutes in their fixture — classification B, no assertion changed.
+  Tablet suites: `v121_e2e.py` (new) and the helpers of `e2e`, `floor_e2e`, `guard_e2e`, `numbers_e2e`, `office_e2e`, `offline_e2e`,
+  `prod_e2e`, `s_items_e2e`, `v106_e2e`, `v120_e2e` fill the minutes like the temperature (classification B).
+- **Rollback:** `tools/go-live/rollback/20261030150000_v121a_down.sql` (switches the control point and the steps off, puts back the two
+  functions; records stay; CCP-PAST stays at 63 °C); revert the tablet in the same release.
+- **Order:** after v1.20 (its migration `20261029200000` is older).
+
 ## Same-day milk, the house rule (v1.20)
 Decided by Nick on 29/10/2026 (MILK-1; claude/milk-same-day-pre-change-review-2026-10-29.md): the farm delivers every morning of
 cheesemaking, each delivery holds only last evening's (15:30) and that morning's (05:00) milkings, and **everything delivered to the

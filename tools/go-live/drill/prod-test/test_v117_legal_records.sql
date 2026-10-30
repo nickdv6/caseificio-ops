@@ -186,6 +186,8 @@ select pg_temp.try('p4a', format($q$select to_jsonb(fabula.record_batch_consumab
 select pg_temp.try('p4b', format($q$select to_jsonb(fabula.record_batch_consumable(%L, 'CON-SALT', 1.5, 1.0, '10000000-0000-4000-a000-00000000d103', null, true))$q$, current_setting('d1.lot')));
 -- P5: CCP 3 through log_ccp, then the close as the tablet sends it (the lot update and the production output)
 select pg_temp.try('p5a', format($q$select fabula.log_ccp(p_cp_code => 'CCP-STRETCH', p_value => 62, p_logged_at => null, p_staff_id => '10000000-0000-4000-a000-00000000d103', p_batch_lot => %L, p_source => 'tablet')$q$, current_setting('d1.lot')));
+-- v1.21: CCP 2 a tino also records the holding minutes, as the casaro login (classification B: the fixture records them; no assertion changed)
+select pg_temp.try('p5h', format($q$select fabula.log_ccp(p_cp_code => 'CCP-PAST-HOLD', p_value => 32, p_logged_at => null, p_staff_id => '10000000-0000-4000-a000-00000000d103', p_batch_lot => %L, p_source => 'tablet')$q$, current_setting('d1.lot')));
 select pg_temp.try('p5b', format($q$select fabula.save_ops(jsonb_build_array(
    jsonb_build_object('table', 'production_batches', 'update', jsonb_build_object('batch_lot', %L), 'row', jsonb_build_object('output_kg', 21, 'finished_at', now())),
    jsonb_build_object('table', 'stock_moves', 'row', jsonb_build_object('product_id', %L, 'lot_number', %L, 'expiry_date', current_date + 5, 'qty', 21, 'move_type', 'production_out', 'batch_id', (select id from fabula.production_batches where batch_lot = %L), 'source', 'tablet'))), gen_random_uuid())$q$,

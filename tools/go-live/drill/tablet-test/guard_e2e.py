@@ -140,6 +140,7 @@ try:
     lot2 = 'LQ' + RUN
     sql(f"insert into fabula.production_batches (batch_date, batch_lot, product_id, milk_in_kg, input_kind, started_at, casaro, source) values ((now() at time zone 'Europe/Rome')::date, '{lot2}', '{moz}', 200, 'milk', now(), 'Test', 'tablet')")
     sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST', p_value => 72, p_batch_lot => '{lot2}', p_staff_id => (select id from fabula.staff where active order by created_at limit 1))")
+    sql(f"select fabula.log_ccp(p_cp_code => 'CCP-PAST-HOLD', p_value => 30, p_batch_lot => '{lot2}', p_staff_id => (select id from fabula.staff where active order by created_at limit 1))")   # v1.21: CCP 2 a tino also records the minutes
     # its working steps were done on an old app that let the stretching step be skipped (step marked done, no value)
     sql(f"update fabula.production_batches set preset_id = (select id from fabula.process_presets where name like 'Base · prova%') where batch_lot = '{lot2}'")
     sql(f"insert into fabula.batch_step_logs (batch_id, step_id, step_name, source) select b.id, s.id, s.name_it, 'tablet' from fabula.production_batches b join fabula.process_steps s on s.preset_id = b.preset_id and s.phase in ('start', 'make') where b.batch_lot = '{lot2}'")

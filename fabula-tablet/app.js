@@ -113,12 +113,12 @@
     const o = ccpOut(code, v); if (!o) return true;
     const c = o.cp, what = c.unit === 'esito' ? `Hai scelto «${code === 'CCP-MILK-ABX' ? 'POSITIVO' : 'NON ok'}»` : `Hai scritto ${itN(v)} ${c.unit || ''}. Il limite è ${o.lim}`;
     return ask({ danger: true, title: `${c.ccp_no ? c.ccp_no + ' · ' : ''}${c.name}: fuori limite`, yes: 'Sì, è giusto: registra', no: 'No, correggo',
-      lines: [what.trim() + ':', (lot && ['CCP-PAST', 'CCP-STRETCH', 'CCP-RIC'].includes(code) ? `il lotto ${lot} verrà BLOCCATO (non si vende)` : CONSEQ(code)) + '.', 'È giusto?'] });
+      lines: [what.trim() + ':', (lot && LOT_CCPS.includes(code) ? `il lotto ${lot} verrà BLOCCATO (non si vende)` : CONSEQ(code)) + '.', 'È giusto?'] });
   }
   // after a non-conformity: a card that stays until OK, with what to do now (it used to flash for 2,6 s in a toast)
   function ncCard(code, r, lot, extra = []) {
     const c = refStore()['cp_' + code] || {};
-    const held = r ? r.lot_on_hold : !!lot && ['CCP-PAST', 'CCP-STRETCH', 'CCP-RIC'].includes(code);
+    const held = r ? r.lot_on_hold : !!lot && LOT_CCPS.includes(code);
     return showDone(`⚠ NON CONFORMITÀ · ${c.ccp_no || ''} ${c.name || code}`.replace(/\s+/g, ' ').trim(), [
       held ? `Lotto ${lot} BLOCCATO: non si vende finché il responsabile HACCP non lo sblocca.` : null,
       ...extra,
@@ -147,7 +147,12 @@
   // v0.95 (audit D-12): the same "possible values" as the database (haccp_control_points.plausible_min/max, kept on the tablet;
   // built-in copy if not read yet), checked before saving or queuing — offline too, so one slipped comma cannot send a whole
   // batch close to «rifiutate» when the queue goes out
-  const PLAUS = { 'CCP-PAST': [10, 100], 'CCP-STRETCH': [10, 99], 'CCP-RIC': [10, 99], 'CCP-MILK-TEMP': [-2, 45], 'CCP-COLD-1': [-10, 45], 'CCP-COLD-2': [-10, 45], 'CCP-MILK-ABX': [0, 1], 'PRP-PAST-VALVE': [0, 1] };
+  // v1.21: the control points recorded on a lot (out of limit = the lot is held), and CCP 2 a tino's holding minutes, asked while that
+  // control point is active (the kept list holds only active ones); minutes are timed, not read on the hot thermometer
+  const LOT_CCPS = ['CCP-PAST', 'CCP-PAST-HOLD', 'CCP-STRETCH', 'CCP-RIC'];
+  const holdActive = () => !!refStore()['cp_CCP-PAST-HOLD'];
+  const ccpEq = code => code === 'CCP-PAST-HOLD' ? null : 'TERM-02';
+  const PLAUS = { 'CCP-PAST': [10, 100], 'CCP-PAST-HOLD': [0, 240], 'CCP-STRETCH': [10, 99], 'CCP-RIC': [10, 99], 'CCP-MILK-TEMP': [-2, 45], 'CCP-COLD-1': [-10, 45], 'CCP-COLD-2': [-10, 45], 'CCP-MILK-ABX': [0, 1], 'PRP-PAST-VALVE': [0, 1] };
   const itN = v => String(v).replace('.', ',');
   function plausCheck(code, v) {
     if (v == null || v === '' || !code) return;
@@ -768,6 +773,8 @@
       if (set.data) patch.settings = Object.fromEntries(set.data.map(r => [r.key, r.value]));   // v0.98: vat size and possible yields, offline too
       (eq.data || []).forEach(e => { patch['eq_' + e.code] = e; });
       (cps.data || []).forEach(c => { patch['cp_' + c.code] = c; if (c.equipment_id && c.code !== 'CCP-MILK-TEMP') patch['cp_eq_' + c.equipment_id] = c; });
+      // v1.21: a control point switched off leaves the kept list (CCP 2's minutes are asked only while CCP-PAST-HOLD is active)
+      if (cps.data) Object.keys(refStore()).filter(k => /^cp_(?!eq_)/.test(k) && !cps.data.some(c => 'cp_' + c.code === k)).forEach(k => { patch[k] = undefined; });
       if (sup.data) patch.milk_suppliers = sup.data; if (pest.data) patch.pest_stations = pest.data; if (cust.data) patch.customers = cust.data;   // v0.78
       putRef(patch);
     } catch (e) { /* offline: keep what we have */ }
@@ -1577,6 +1584,11 @@
     const pastLbl = pastIn.previousElementSibling;
     const togglePast = () => { const has = processSteps(presets, preSel.value, 'start').some(st => st.ccp === 'CCP-PAST' || /CCP\s*2/.test(st.name)); pastIn.style.display = pastLbl.style.display = has ? 'none' : ''; pastIn.required = !has; };
     preSel.addEventListener('change', togglePast); prodSel.addEventListener('change', togglePast); togglePast();
+    // v1.21: CCP 2 a tino is temperature and time: the holding minutes asked here when the chosen preset has no step for them
+    const holdIn = field('pasthold', 'Minuti di sosta a ≥ 63 °C (CCP 2), almeno 30', 'number', { required: false, ...cpRange('CCP-PAST-HOLD'), unit: 'min' });
+    const holdLbl = holdIn.previousElementSibling;
+    const toggleHold = () => { const has = !holdActive() || processSteps(presets, preSel.value, 'start').some(st => st.ccp === 'CCP-PAST-HOLD'); holdIn.style.display = holdLbl.style.display = has ? 'none' : ''; holdIn.required = !has; };
+    preSel.addEventListener('change', toggleHold); prodSel.addEventListener('change', toggleHold); toggleHold();
     if (pre) {
       setNum(kgIn, pre.milk_kg);
       const h = document.createElement('div'); h.className = 'hint'; $('form').append(h);
@@ -1591,6 +1603,7 @@
       pb.check();
       if (milkDay && (paper ? pb.day() : today()) !== milkDay) throw new Error(dayRule);   // v1.20 (MILK-1)
       if (pastIn.required) plausCheck('CCP-PAST', val('past'));             // v0.95 (audit D-12)
+      if (holdIn.required) plausCheck('CCP-PAST-HOLD', val('pasthold'));     // v1.21
       // v0.95 (audit D-09): the database refuses more than the milk left (+2 % for the scale): say it here, before the dosing starts
       if (kg > leftKg * 1.02) throw new Error(`Sul latte ${lot} restano ${fmtKg(leftKg)} kg: hai scritto ${fmtKg(kg)} kg. Controlla il lotto sull'etichetta e i kg`);
       const vat = setting('prod.vat_kg', null);                            // v0.98 (audit D-06): a vat holds what it holds (the database checks it too)
@@ -1610,11 +1623,13 @@
       }
       batchLot = await nextLot(paper ? pb.day() : today());     // another tablet may have opened a lot meanwhile (offline: the device copy)
       if (pastIn.required && val('past') != null && !(await confirmOut('CCP-PAST', val('past'), batchLot))) throw stop();   // v0.97 (audit A-07)
+      if (holdIn.required && val('pasthold') != null && !(await confirmOut('CCP-PAST-HOLD', val('pasthold'), batchLot))) throw stop();   // v1.21
       const pWho = paper ? pb.who() : null, pId = paper ? ((opList().find(p => p.full_name === pWho) || {}).id || null) : null;
       const extra = [];
       if (askValve) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'PRP-PAST-VALVE', p_value: 0, p_staff_id: me().id, p_action: valveKo ? String(val('valvenote')).trim() : null, ...vp } });
       // the lot of row $1 as saved: if another tablet had the letter, the database gave the next one and CCP 2 goes with it
       if (pastIn.required && val('past') != null) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('past'), p_staff_id: me().id, p_batch_lot: '$1.batch_lot', p_source: paper ? 'paper' : 'tablet', p_equipment_code: 'TERM-02', ...(paper ? { p_logged_at: pb.iso(), p_written_by: pWho } : {}) } });
+      if (holdIn.required && val('pasthold') != null) extra.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST-HOLD', p_value: val('pasthold'), p_staff_id: me().id, p_batch_lot: '$1.batch_lot', p_source: paper ? 'paper' : 'tablet', ...(paper ? { p_logged_at: pb.iso(), p_written_by: pWho } : {}) } });   // v1.21
       const ops = [scanEvent(current.code, 'batch_start', { payload: { batch_lot: batchLot, kg, entered: val('kg'), unit: val('mu'), preset_id: preset, ...(paper ? { paper_at: pb.iso() } : {}) } }),
         { table: 'production_batches', row: { batch_date: paper ? pb.day() : today(), batch_lot: batchLot, product_id: product, milk_in_kg: kg, preset_id: preset, started_at: paper ? pb.iso() : new Date().toISOString(),
           casaro: paper ? pWho : me().full_name, casaro_id: paper ? pId : me().id, source: paper ? 'paper' : 'tablet', ...(paper ? { notes: `Inizio ricopiato dal foglio di carta da ${me().full_name}` } : {}) } },
@@ -1626,6 +1641,9 @@
       const pr = out && out[4 + (askValve ? 1 : 0)];
       if (pastIn.required && ccpOut('CCP-PAST', val('past')))               // CCP 2 out of limit: the lot is held — said now, the work goes on
         await ask({ danger: true, title: `⚠ NON CONFORMITÀ · CCP 2: lotto ${batchLot} BLOCCATO`, lines: ['Non si vende finché il responsabile HACCP non lo sblocca (riceve l\'avviso).', 'Cosa fare adesso: ' + ((pr && pr.corrective_it) || (refStore()['cp_CCP-PAST'] || {}).corrective_it || 'avvisa il responsabile HACCP.')], yes: 'Ho capito', no: null });
+      const hr = out && out[4 + (askValve ? 1 : 0) + (pastIn.required && val('past') != null ? 1 : 0)];   // v1.21: the minutes' row comes after the temperature's
+      if (holdIn.required && ccpOut('CCP-PAST-HOLD', val('pasthold')))
+        await ask({ danger: true, title: `⚠ NON CONFORMITÀ · CCP 2 (minuti di sosta): lotto ${batchLot} BLOCCATO`, lines: ['Non si vende finché il responsabile HACCP non lo sblocca (riceve l\'avviso).', 'Cosa fare adesso: ' + ((hr && hr.corrective_it) || (refStore()['cp_CCP-PAST-HOLD'] || {}).corrective_it || 'avvisa il responsabile HACCP.')], yes: 'Ho capito', no: null });
       // v0.99 (audit A-02): the lot gets its own label at the start, for the vat or the curd tray: from now on the lot is scanned on
       // its label (LOT:L…-A), not on the milk tank shared by every vat of that delivery
       const pName = ((prodSel.selectedOptions && prodSel.selectedOptions[0]) || {}).textContent || 'Lotto';
@@ -1685,6 +1703,9 @@
     // v0.96 (audit A-03): pasteurisation too — a start interrupted before CCP 2 must not close without it
     const pastDone = b.input_kind === 'whey' ? true : await ccpRecorded('CCP-PAST', b.batch_lot, b.id);
     if (!pastDone) field('pastv', 'Temperatura di pastorizzazione (CCP 2), °C · non ancora registrata', 'number', { ...cpRange('CCP-PAST'), unit: '°C', limit: 'Valore letto all\'inizio del lotto; se era scritto sul foglio, ricopialo qui' });
+    // v1.21: and CCP 2 a tino's holding minutes (a start interrupted before that step must not close without them)
+    const holdDone = b.input_kind === 'whey' || !holdActive() ? true : await ccpRecorded('CCP-PAST-HOLD', b.batch_lot, b.id);
+    if (!holdDone) field('pastholdv', 'Minuti di sosta a ≥ 63 °C (CCP 2) · non ancora registrati', 'number', { ...cpRange('CCP-PAST-HOLD'), unit: 'min', limit: 'Almeno 30 minuti; se erano scritti sul foglio, ricopiali qui' });
     if (!ccpDone) field('ccpv', b.input_kind === 'whey' ? 'Temperatura di affioramento (CCP 4), °C · non ancora registrata' : 'Temperatura della pasta filata (CCP 3), °C · non ancora registrata', 'number', { ...cpRange(ccpCode), unit: '°C', limit: 'Valore letto sul termometro; se era scritto sul foglio, ricopialo qui' });
     field('ph', 'pH cagliata (se misurato)', 'number', { required: false, min: 3, max: 8 }); field('n', 'Etichette da stampare', 'number', { required: false, min: 0, max: 200, int: true });
     const pb = paperBox('la fine del lotto');                            // v0.97 (audit A-20)
@@ -1695,7 +1716,7 @@
       ric.addEventListener('change', tog); tog();
     }
     openForm('Fine lotto ' + b.batch_lot, `${b.milk_in_kg} kg ${b.input_kind === 'whey' ? 'siero' : 'latte'} in caldaia`, async () => {
-      phCheck(val('ph')); if (!ccpDone) plausCheck(ccpCode, val('ccpv')); if (!pastDone) plausCheck('CCP-PAST', val('pastv'));   // v0.95 (audit D-12): before the packing steps, not after them
+      phCheck(val('ph')); if (!ccpDone) plausCheck(ccpCode, val('ccpv')); if (!pastDone) plausCheck('CCP-PAST', val('pastv')); if (!holdDone) plausCheck('CCP-PAST-HOLD', val('pastholdv'));   // v0.95 (audit D-12): before the packing steps, not after them
       pb.check(); const paper = pb.on(), pWho = paper ? pb.who() : null;
       const ricNo = !!byp && val('ricyn') === 'no';
       if (byp && val('ricyn') === 'si' && !(val('whey') > 0)) throw new Error('Scrivi i kg di siero per la ricotta');
@@ -1738,6 +1759,7 @@
       if (whey > milkKg * 0.95) throw new Error(`Siero per la ricotta ${fmtKg(whey)} kg: non può superare il latte della caldaia (${fmtKg(milkKg)} kg). Controlla i kg.`);   // v0.98 (D-30)
       // v0.97 (audit A-07): a missing CCP written here out of its limit holds the lot: red question first
       if (!pastDone && !(await confirmOut('CCP-PAST', val('pastv'), b.batch_lot))) throw stop();
+      if (!holdDone && !(await confirmOut('CCP-PAST-HOLD', val('pastholdv'), b.batch_lot))) throw stop();   // v1.21
       if (!ccpDone && !(await confirmOut(ccpCode, val('ccpv'), b.batch_lot))) throw stop();
       const closeDay = paper ? pb.day() : today();
       const expS = addDays(closeDay, prod?.shelf_life_days || 5), code = current.code;
@@ -1752,17 +1774,20 @@
           { table: 'stock_moves', row: { product_id: b.product_id, lot_number: b.batch_lot, expiry_date: expS, qty: out, move_type: 'production_out', batch_id: bId, source: 'tablet' } }];
         const pp = paper ? { p_source: 'paper', p_logged_at: pb.iso(), p_written_by: pWho } : { p_source: 'tablet' };
         if (!pastDone && val('pastv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST', p_value: val('pastv'), p_staff_id: me().id, p_batch_lot: b.batch_lot, p_equipment_code: 'TERM-02', ...pp } });   // v0.96 (A-03)
+        if (!holdDone && val('pastholdv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: 'CCP-PAST-HOLD', p_value: val('pastholdv'), p_staff_id: me().id, p_batch_lot: b.batch_lot, ...pp } });   // v1.21
         if (!ccpDone && val('ccpv') != null) ops.push({ rpc: 'log_ccp', args: { p_cp_code: ccpCode, p_value: val('ccpv'), p_staff_id: me().id, p_batch_lot: b.batch_lot, p_equipment_code: 'TERM-02', ...pp } });   // v0.80 (after the update: ids above stay $1)
         if (b.input_kind !== 'whey')   // ricotta label row is created when the batch starts; the printable label is offered at close (v0.52)
           ops.push({ table: 'labels', row: { kind: 'batch_lot', code: 'LOT:' + b.batch_lot, lot_number: b.batch_lot, product_id: b.product_id, batch_id: bId, qty_printed: n || 1, printed_by_id: me().id } });
         const sv = await save(ops);
         toast(`Resa ${itN(y)}% · ${itN(out)} kg ✓`);
-        const ccpKo = (!pastDone && ccpOut('CCP-PAST', val('pastv'))) || (!ccpDone && ccpOut(ccpCode, val('ccpv')));
+        // v1.21: the first control point out of limit names the card (CCP 2 temperature, CCP 2 minutes, then CCP 3/4)
+        const koCode = !pastDone && ccpOut('CCP-PAST', val('pastv')) ? 'CCP-PAST' : !holdDone && ccpOut('CCP-PAST-HOLD', val('pastholdv')) ? 'CCP-PAST-HOLD' : ccpCode;
+        const ccpKo = (!pastDone && ccpOut('CCP-PAST', val('pastv'))) || (!holdDone && ccpOut('CCP-PAST-HOLD', val('pastholdv'))) || (!ccpDone && ccpOut(ccpCode, val('ccpv')));
         if (whey > 0) {
-          if (ccpKo) await ask({ danger: true, title: `⚠ NON CONFORMITÀ: lotto ${b.batch_lot} BLOCCATO`, lines: ['Non si vende finché il responsabile HACCP non lo sblocca (riceve l\'avviso).', 'Cosa fare adesso: ' + ((refStore()['cp_' + (!pastDone && ccpOut('CCP-PAST', val('pastv')) ? 'CCP-PAST' : ccpCode)] || {}).corrective_it || 'avvisa il responsabile HACCP.')], yes: 'Ho capito: avvio la ricotta', no: null });
+          if (ccpKo) await ask({ danger: true, title: `⚠ NON CONFORMITÀ: lotto ${b.batch_lot} BLOCCATO`, lines: ['Non si vende finché il responsabile HACCP non lo sblocca (riceve l\'avviso).', 'Cosa fare adesso: ' + ((refStore()['cp_' + koCode] || {}).corrective_it || 'avvisa il responsabile HACCP.')], yes: 'Ho capito: avvio la ricotta', no: null });
           return startRicotta();
         }
-        if (ccpKo) return ncCard(!pastDone && ccpOut('CCP-PAST', val('pastv')) ? 'CCP-PAST' : ccpCode, sv ? (sv.find(x => x && typeof x === 'object' && x.result === 'non_conformity') || { lot_on_hold: true }) : null, b.batch_lot, [`Lotto chiuso: ${itN(out)} kg · scade ${ddmm(expS)}. Le etichette si stampano lo stesso, ma il lotto resta bloccato.`]);
+        if (ccpKo) return ncCard(koCode, sv ? (sv.find(x => x && typeof x === 'object' && x.result === 'non_conformity') || { lot_on_hold: true }) : null, b.batch_lot, [`Lotto chiuso: ${itN(out)} kg · scade ${ddmm(expS)}. Le etichette si stampano lo stesso, ma il lotto resta bloccato.`]);
         return showDone(`✓ Lotto ${b.batch_lot} chiuso`, [`${itN(out)} kg · resa ${itN(y)}% · scade ${ddmm(expS)}`, 'Etichetta ogni cassa e confezione con il lotto.'], [lotLink]);
       };
       const presets = await loadPresets();
@@ -2305,7 +2330,7 @@
   async function stepCcp(cpCode, lot) {
     const { data: cp } = await cached('cp_' + cpCode, () => sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).maybeSingle());
     if (!cp) throw new Error('Punto di controllo sconosciuto: ' + cpCode);
-    const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
+    const needsLot = LOT_CCPS.includes(cp.code);
     if (needsLot && !lot) {
       const { data: bs } = await cached('batches_today_' + today(), () => sb.from('production_batches').select('batch_lot, input_kind').eq('batch_date', today()).order('batch_lot'));
       const mine = (bs || []).filter(b => cp.code === 'CCP-RIC' ? b.input_kind === 'whey' : b.input_kind !== 'whey');
@@ -2341,7 +2366,7 @@
         const rm = await rpcNow('log_milk_check', { p_milk_intake_id: val('mi'), p_cp_code: cp.code, p_value: value, p_staff_id: me().id, p_action: val('action'), p_source: 'tablet', p_equipment_code: cp.code === 'CCP-MILK-TEMP' ? 'TERM-01' : null });
         return milkResult(rm);
       }
-      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_staff_id: me().id, p_batch_lot: theLot, p_action: val('action'), p_source: 'tablet', p_equipment_code: needsLot ? 'TERM-02' : null });
+      const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_staff_id: me().id, p_batch_lot: theLot, p_action: val('action'), p_source: 'tablet', p_equipment_code: needsLot ? ccpEq(cp.code) : null });
       await closeTask({ control_point_id: cp.id });   // v0.57: any task tied to this control point (cloro, valvola, salamoia)
       if ((r && r.result === 'non_conformity') || (!r && ccpOut(cp.code, value))) return ncCard(cp.code, r, theLot);
       if (!r) return toast('Salvato offline');
@@ -2350,7 +2375,7 @@
     });
   }
   // v0.77: PAPER:[<control point>] — a check written on the printed sheet (tablet or Wi-Fi down), typed in later with the time on the sheet
-  const PAPER_CPS = [['🥛 Test antibiotici latte (MOD-01)', 'CCP-MILK-ABX'], ['🌡 Temperatura latte in arrivo (MOD-01)', 'CCP-MILK-TEMP'], ['🔧 Pastorizzatore: verifica di inizio giornata (MOD-02)', 'PRP-PAST-VALVE'], ['♨ Pastorizzazione (MOD-02)', 'CCP-PAST'],
+  const PAPER_CPS = [['🥛 Test antibiotici latte (MOD-01)', 'CCP-MILK-ABX'], ['🌡 Temperatura latte in arrivo (MOD-01)', 'CCP-MILK-TEMP'], ['🔧 Pastorizzatore: verifica di inizio giornata (MOD-02)', 'PRP-PAST-VALVE'], ['♨ Pastorizzazione (MOD-02)', 'CCP-PAST'], ['⏱ Pastorizzazione: minuti di sosta (MOD-02)', 'CCP-PAST-HOLD'],
     ['🧫 Siero-innesto (MOD-03)', 'PRP-INNESTO'], ['🔥 Temperatura pasta filata (MOD-03)', 'CCP-STRETCH'], ['🍶 Ricotta: affioramento (MOD-04)', 'CCP-RIC'],
     ['❄ Cella 1 (MOD-05)', 'CCP-COLD-1'], ['❄ Cella 2 (MOD-05)', 'CCP-COLD-2'], ['🧽 Sanificazione fine turno (MOD-06)', 'PRP-CLEAN'], ['🧂 Salamoia (MOD-17)', 'PRP-BRINE']];
   function stepPaperMenu() {
@@ -2372,7 +2397,7 @@
   async function stepPaper(cpCode, pDay, pLot) {
     const { data: cp } = await cached('cp_' + cpCode, () => sb.from('haccp_control_points').select('*').eq('code', cpCode).eq('active', true).maybeSingle());
     if (!cp) throw new Error('Punto di controllo sconosciuto: ' + cpCode);
-    const needsLot = ['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code);
+    const needsLot = LOT_CCPS.includes(cp.code);
     const d = field('pday', 'Data scritta sul foglio', 'date'); d.max = today(); d.min = addDays(today(), -7);
     d.value = pDay && /^\d{4}-\d{2}-\d{2}$/.test(pDay) && pDay <= today() && pDay >= addDays(today(), -7) ? pDay : today();
     field('ptime', 'Ora scritta sul foglio', 'time');
@@ -2406,7 +2431,7 @@
         stepPaperMenu(); return 'stay';
       }
       const r = await rpcNow('log_ccp', { p_cp_code: cp.code, p_value: value, p_logged_at: romeIso(day, hm), p_staff_id: me().id, p_batch_lot: lot, p_action: redoNote(val('action')),
-                                          p_source: redoSrc(), p_equipment_code: needsLot ? 'TERM-02' : null, p_written_by: val('pwho') });
+                                          p_source: redoSrc(), p_equipment_code: needsLot ? ccpEq(cp.code) : null, p_written_by: val('pwho') });
       // v0.97 (audit A-05): with the sheet's time, so a morning line closes the morning task and not the evening one
       try { await save([{ rpc: 'close_open_task', args: { p_day: day, p_code: null, p_equipment_id: null, p_control_point_id: cp.id, p_staff_id: me().id, p_scan_event_id: null, p_at: romeIso(day, hm) } }]); } catch (e) { console.warn('closeTask', e); }
       if ((r && r.result === 'non_conformity') || (!r && ccpOut(cp.code, value))) return ncCard(cp.code, r, lot, [`Riga del foglio ${fmtDay(day)} ${hm} ricopiata.`]);

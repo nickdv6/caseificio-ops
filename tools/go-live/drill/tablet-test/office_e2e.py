@@ -331,7 +331,7 @@ try:
         if not tp.evaluate("k => !!document.getElementById(k) && document.getElementById(k).offsetParent !== null", k): return
         tp.fill('#' + k, ''); tp.type('#' + k, str(v)); tp.wait_for_timeout(150)
     code('LOT:' + MILK)
-    setf({'product': NOPRE}); setf({'valve': '0'}); typef('kg', '300'); typef('past', '72,5')
+    setf({'product': NOPRE}); setf({'valve': '0'}); typef('kg', '300'); typef('past', '72,5'); typef('pasthold', '30')
     tp.evaluate("document.getElementById('btn-form-save').click()"); tp.wait_for_timeout(3500)
     lot = sql1(f"select batch_lot from fabula.production_batches where product_id = '{NOPRE}' order by created_at desc limit 1")
     lk = tp.evaluate("(() => { const a = [...document.querySelectorAll('#form a')].find(x => x.textContent.includes('Stampa etichetta lotto in lavorazione')); return a ? a.getAttribute('href') : ''; })()")

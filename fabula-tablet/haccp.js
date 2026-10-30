@@ -313,7 +313,7 @@
       const v = await ask(`Correggi: ${cp.ccp_no || ''} ${cp.name || ''} · ${fmtDT(l.logged_at)}`,
         `<div class="hint">Registrato: <b>${num(l.measured_value, 2)} ${esc(cp.unit || '')}</b>${l.production_batches?.batch_lot ? ' · lotto ' + esc(l.production_batches.batch_lot) : ''} · ${esc(l.operator || '')}. Il valore originale resta scritto sul registro insieme al motivo.</div>
          <div class="form"><div><label>Valore giusto (${esc(cp.unit || '')})</label><input id="fx-val" type="text" inputmode="decimal" autocomplete="off"></div>
-         ${['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST'].includes(cp.code) ? '<div><label>Lotto giusto (se era sbagliato)</label><input id="fx-lot" type="text" style="text-transform:uppercase"></div>' : ''}</div>
+         ${['CCP-STRETCH', 'CCP-RIC', 'CCP-PAST', 'CCP-PAST-HOLD'].includes(cp.code) ? '<div><label>Lotto giusto (se era sbagliato)</label><input id="fx-lot" type="text" style="text-transform:uppercase"></div>' : ''}</div>
          ${REASONS}`,
         'Salva la correzione', () => {
           const ch = {}, t = $('fx-val').value.trim().replace(',', '.');
