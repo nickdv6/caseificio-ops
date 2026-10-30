@@ -7,7 +7,7 @@
   "force": [],
   "after_it": [
     "Spiega al casaro il nuovo passo «Sosta di pastorizzazione (CCP 2)»: dopo la temperatura si scrivono i minuti di sosta, contati da quando tutto il latte è a 63 °C (almeno 30)",
-    "Leggi la targa della caldaia: se fosse un pastorizzatore a flusso continuo, il CCP 2 torna a 72 °C per 15 s e i minuti di sosta si spengono (chiedi a Claude)"
+    "Leggi la targa della caldaia: se fosse un pastorizzatore a flusso continuo, servono insieme il CCP 2 a 72 °C per 15 s e i minuti di sosta spenti, con un nuovo rilascio (chiedi a Claude)"
   ],
   "_help": "One file per release, written by Claude with the version (RELEASING.md). order: functions and database, in the order they must go live (the site is always last). force: parts to deploy even if git shows no change, kept until a release that carries it goes live. after_it: steps left for people, shown in the Bot feed message."
 }

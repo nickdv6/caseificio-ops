@@ -136,7 +136,7 @@ try:
     check('A-16 ricotta is not offered for a vat started from milk', prods and not any('icotta' in x for x in prods), str(prods))
     n0 = sql1(f"select count(*) from fabula.batch_milk_inputs where milk_intake_id = '{mid}'")
     setf({'kg': 500, 'mu': 'kg'})
-    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) { v.value = '0'; } const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; } const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30';)()")
+    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) { v.value = '0'; } const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30'; })()")
     save_form()
     check('D-09 500 kg on 400 left is refused, saying what is left', view() == 'v-form' and 'restano 400 kg: hai scritto 500 kg' in toast()
           and sql1(f"select count(*) from fabula.batch_milk_inputs where milk_intake_id = '{mid}'") == n0, toast())

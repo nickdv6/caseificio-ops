@@ -151,6 +151,10 @@
   // control point is active (the kept list holds only active ones); minutes are timed, not read on the hot thermometer
   const LOT_CCPS = ['CCP-PAST', 'CCP-PAST-HOLD', 'CCP-STRETCH', 'CCP-RIC'];
   const holdActive = () => !!refStore()['cp_CCP-PAST-HOLD'];
+  // v1.21 (review): a critical step whose control point is not in the kept list yet (a tablet offline since a release): the step's own
+  // minimum stands in, so the red question and the «BLOCCATO» card still come
+  const stepKo = (s, v) => !!(s.kind === 'process' && s.ccp && v != null && v !== ''
+    && (ccpOut(s.ccp, v) || (!refStore()['cp_' + s.ccp] && s.lo != null && Number(v) < s.lo)));
   const ccpEq = code => code === 'CCP-PAST-HOLD' ? null : 'TERM-02';
   const PLAUS = { 'CCP-PAST': [10, 100], 'CCP-PAST-HOLD': [0, 240], 'CCP-STRETCH': [10, 99], 'CCP-RIC': [10, 99], 'CCP-MILK-TEMP': [-2, 45], 'CCP-COLD-1': [-10, 45], 'CCP-COLD-2': [-10, 45], 'CCP-MILK-ABX': [0, 1], 'PRP-PAST-VALVE': [0, 1] };
   const itN = v => String(v).replace('.', ',');
@@ -751,6 +755,17 @@
   async function refreshSettings() {
     const r = await live(sb.from('settings').select('key, value').in('key', TABLET_SETTINGS), 4000);
     if (!r.error && Array.isArray(r.data) && r.data.length) putRef({ settings: { ...(refStore().settings || {}), ...Object.fromEntries(r.data.map(x => [x.key, x.value])) } });
+  }
+  // v1.21 (review): the active control points read again where a form depends on them (batch start and close). One switched off since
+  // the app started (CCP 2's minutes, if the vat proves to be a continuous pasteuriser) is no longer asked: its log_ccp would make the
+  // database refuse the whole save. Offline the kept list stays as it is.
+  async function refreshCps() {
+    const r = await live(sb.from('haccp_control_points').select('*').eq('active', true), 4000);
+    if (r.error || !Array.isArray(r.data) || !r.data.length) return;
+    const patch = {};
+    r.data.forEach(c => { patch['cp_' + c.code] = c; });
+    Object.keys(refStore()).filter(k => /^cp_(?!eq_)/.test(k) && !r.data.some(c => 'cp_' + c.code === k)).forEach(k => { patch[k] = undefined; });
+    putRef(patch);
   }
   // v0.98: the database asks for a confirmation (HINT confirm) that the tablet did not ask itself (other numbers on the server):
   // ask now, then send the same save confirmed
@@ -1559,6 +1574,7 @@
       $('form').append(n);
     }
     const prodSel = field('product', 'Prodotto', 'select', { options: prods.map(p => [p.id, p.name]) });
+    await refreshCps();                              // v1.21: CCP 2's minutes asked only while that control point is active
     const presets = await loadPresets();
     const preSel = field('preset', 'Impostazioni di processo', 'select', { options: [['', '—']], required: false });
     const fillPresets = () => { const mine = presetsFor(presets, prodSel.value); preSel.innerHTML = mine.length ? mine.map(p => `<option value="${esc(p.id)}" ${p.is_default ? 'selected' : ''}>${esc(p.name)}${p.is_default ? ' · predefinito' : ''}</option>`).join('') : '<option value="">nessun preset: solo dosi</option>'; };
@@ -1684,6 +1700,7 @@
   }
   async function stepBatchEnd(b) {
     await refreshSettings();                         // v0.98: the possible yields as they are now
+    await refreshCps();                              // v1.21: CCP 2's minutes asked only while that control point is active
     // v0.78: a batch started offline (no id yet) closes offline too: the update finds it by lot number, later steps take its id from that step
     const bKey = b.id ? { id: b.id } : { batch_lot: b.batch_lot };
     let bId = b.id || '$1.id';                      // v0.98: '$2.id' when a milk correction goes before the close
@@ -2248,7 +2265,7 @@
       } finally { btns.forEach(b => b.disabled = false); }
       lastLine(s, q);
       // v0.97 (audit A-07): a CCP step out of its critical limit holds the lot — said now, in a card that waits for «Ho capito»
-      if (s.kind === 'process' && s.ccp && ccpOut(s.ccp, q)) {
+      if (stepKo(s, q)) {
         const c = refStore()['cp_' + s.ccp] || {};
         await ask({ danger: true, title: `⚠ NON CONFORMITÀ · ${c.ccp_no || s.ccp}: lotto ${batchLot} BLOCCATO`, lines: ['Non si vende finché il responsabile HACCP non lo sblocca (riceve l\'avviso).', 'Cosa fare adesso: ' + (c.corrective_it || 'avvisa il responsabile HACCP.')], yes: 'Ho capito: continuo', no: null });
       }
@@ -2271,6 +2288,8 @@
         const v = raw, out = (s.lo != null && v < s.lo) || (s.hi != null && v > s.hi);
         try { if (s.ccp) plausCheck(s.ccp, v); if (s.metric === 'ph') phCheck(v); } catch (e) { return toast(e.message, 'err', 6000); }   // v0.95 (audit D-12)
         if (s.ccp && ccpOut(s.ccp, v)) { if (!(await confirmOut(s.ccp, v, batchLot))) return; }               // v0.97 (audit A-07): red, the lot is held
+        else if (stepKo(s, v)) { if (!(await ask({ danger: true, title: `${s.name}: fuori limite`, yes: 'Sì, è giusto: registra', no: 'No, correggo',   // v1.21
+          lines: [`Hai scritto ${itN(v)} ${unit(s)}. Il limite è ≥ ${itN(s.lo)} ${unit(s)}:`, `il lotto ${batchLot} verrà BLOCCATO (non si vende).`, 'È giusto?'] }))) return; }
         else if (out && !(await ask({ title: 'Fuori dall\'intervallo', lines: [`Hai scritto ${itN(v)} ${unit(s)}: l'intervallo è ${s.lo ?? '…'}–${s.hi ?? '…'} ${unit(s)}.`, 'È giusto?'] }))) return;   // v0.97 (A-17)
         return next(v);
       }
@@ -2381,7 +2400,7 @@
   function stepPaperMenu() {
     $('form').innerHTML = ''; current = { code: 'PAPER:' };
     const n = document.createElement('div'); n.className = 'limit'; n.textContent = 'Una riga del foglio alla volta: scegli il controllo, poi scrivi data, ora e valore come sul foglio.'; $('form').append(n);
-    PAPER_CPS.forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode('PAPER:' + c); $('form').append(b); });
+    PAPER_CPS.filter(([, c]) => c !== 'CCP-PAST-HOLD' || holdActive()).forEach(([t, c]) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nitem'; b.textContent = t + ' ›'; b.onclick = () => handleCode('PAPER:' + c); $('form').append(b); });
     openForm('Ricopia da foglio di carta', 'Registrazioni fatte sul foglio quando il tablet o la rete non c\'erano', async () => {}); $('btn-form-save').style.display = 'none';
   }
   const romeIso = (ymd, hm) => {   // the sheet's date + time in Agropoli → ISO with the right offset for that day

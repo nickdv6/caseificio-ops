@@ -14,9 +14,12 @@
 --      A preset without that step (or a vat started without a preset) is asked the minutes on the start form; a vat that reaches its
 --      close without them is asked there (tablet).
 --   4. trg_batch_ccp_check: a milk lot closed without the minutes is held like one closed without CCP 2 or CCP 3 (only while
---      CCP-PAST-HOLD is active: switching it off is how a continuous pasteuriser, 72 °C × 15 s with diversion valve, would go back).
---      The missing list keeps its order (CCP-PAST, CCP-STRETCH, then CCP-PAST-HOLD).
+--      CCP-PAST-HOLD is active). The missing list keeps its order (CCP-PAST, CCP-STRETCH, then CCP-PAST-HOLD).
 --   5. «Prima di chiudere» (_haccp_evening_items, from v1.20a): a lot of the day without the minutes is listed, as for CCP 2.
+--   6. Switching a control point off is one operation (review 30/10): its preset steps go off with it (trg_cp_active_steps), and a
+--      step saved by a tablet that still shows it records the step but not the register (trg_step_log_ccp skips a control point that
+--      exists but is switched off). So switching CCP-PAST-HOLD off stops every question about the minutes. If the vat proves to be a
+--      continuous pasteuriser, that switch goes WITH CCP-PAST back to 72 °C × 15 s (limits, texts, step target): a later release.
 -- Not changed: log_ccp, ccp_eval, the trial week check (trial_check counts CCP 2 temperatures), simulate_days (simulated lots are exempt).
 -- Rollback: tools/go-live/rollback/20261030150000_v121a_down.sql.
 
@@ -60,6 +63,12 @@ on conflict (code) do nothing;
 -- ============================================================================================================================
 -- 3. The preset step after each pasteurisation step: the minutes are a critical point on the tablet
 -- ============================================================================================================================
+-- where the next place is taken, the later steps of that preset and phase move down by one first (their order, not their ids)
+update fabula.process_steps o set step_order = o.step_order + 1, updated_at = now()
+  from fabula.process_steps s
+ where s.ccp_code = 'CCP-PAST' and s.active and o.preset_id = s.preset_id and o.phase = s.phase and o.step_order > s.step_order
+   and not exists (select 1 from fabula.process_steps h where h.preset_id = s.preset_id and h.ccp_code = 'CCP-PAST-HOLD')
+   and exists (select 1 from fabula.process_steps x where x.preset_id = s.preset_id and x.phase = s.phase and x.step_order = s.step_order + 1);
 insert into fabula.process_steps (preset_id, phase, step_order, name_it, equipment_id, duration_min, duration_min_min, record_metric,
                                   instruction_it, ccp_code, active)
 select s.preset_id, s.phase, s.step_order + 1, 'Sosta di pastorizzazione (CCP 2)', s.equipment_id, 30, 30, 'duration',
@@ -67,8 +76,17 @@ select s.preset_id, s.phase, s.step_order + 1, 'Sosta di pastorizzazione (CCP 2)
        'CCP-PAST-HOLD', true
   from fabula.process_steps s
  where s.ccp_code = 'CCP-PAST' and s.active
-   and not exists (select 1 from fabula.process_steps h where h.preset_id = s.preset_id and h.ccp_code = 'CCP-PAST-HOLD')
-   and not exists (select 1 from fabula.process_steps o where o.preset_id = s.preset_id and o.phase = s.phase and o.step_order = s.step_order + 1);
+   and not exists (select 1 from fabula.process_steps h where h.preset_id = s.preset_id and h.ccp_code = 'CCP-PAST-HOLD');
+-- every active pasteurisation step has its minutes step right after it, or the release stops here (nothing is applied)
+do $check$
+begin
+  if exists (select 1 from fabula.process_steps s
+              where s.ccp_code = 'CCP-PAST' and s.active
+                and not exists (select 1 from fabula.process_steps h where h.preset_id = s.preset_id and h.phase = s.phase
+                                   and h.step_order = s.step_order + 1 and h.ccp_code = 'CCP-PAST-HOLD' and h.active)) then
+    raise exception 'v1.21a: a pasteurisation step (CCP-PAST) has no minutes step right after it';
+  end if;
+end $check$;
 
 -- ============================================================================================================================
 -- 4. A milk lot closed without the minutes is held (as without CCP 2 or CCP 3)
@@ -156,7 +174,7 @@ begin
   -- food safety: CCP per real batch (filatura for mozzarella, affioramento for ricotta, pasteurisation when the milk is pasteurised)
   select items || coalesce(jsonb_agg(jsonb_build_object('code', 'ccp:' || cp.code || ':' || b.batch_lot,
                                                         'label_it', cp.ccp_no || ' ' || cp.name || ' · lotto ' || b.batch_lot,
-                                                        'scan', 'CCP:' || cp.code || ':' || b.batch_lot) order by b.batch_lot, cp.sort), '[]') into items
+                                                        'scan', 'CCP:' || cp.code || ':' || b.batch_lot) order by b.batch_lot, cp.sort, cp.code), '[]') into items
   from fabula.production_batches b
   join fabula.haccp_control_points cp on cp.active and (
          cp.code = case when b.input_kind = 'whey' then 'CCP-RIC' else 'CCP-STRETCH' end
@@ -199,5 +217,40 @@ begin
   return items;
 end $function$;
 
+
+-- ============================================================================================================================
+-- 6. Switching a control point off is one operation: its preset steps follow it, and the register skips it
+-- ============================================================================================================================
+create or replace function fabula.trg_cp_active_steps() returns trigger
+language plpgsql security definer set search_path = fabula, public as $$
+begin
+  -- v1.21a: a control point switched off (or on again) takes its preset steps with it, so the tablet stops (or starts) asking them
+  update fabula.process_steps set active = new.active, updated_at = now() where ccp_code = new.code and active is distinct from new.active;
+  return null;
+end $$;
+revoke all on function fabula.trg_cp_active_steps() from public, anon, authenticated;
+comment on function fabula.trg_cp_active_steps() is
+  'v1.21a: AFTER UPDATE OF active on haccp_control_points: the preset steps with that ccp_code follow (CCP 2 minutes switched off = not asked).';
+drop trigger if exists haccp_cp_active_steps on fabula.haccp_control_points;
+create trigger haccp_cp_active_steps after update of active on fabula.haccp_control_points
+  for each row when (old.active is distinct from new.active) execute function fabula.trg_cp_active_steps();
+
+CREATE OR REPLACE FUNCTION fabula.trg_step_log_ccp()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'fabula', 'public', 'extensions'
+AS $function$
+declare v_ccp text; v_lot text;
+begin
+  select ccp_code into v_ccp from fabula.process_steps where id = new.step_id;
+  if v_ccp is null or new.actual_value is null then return new; end if;
+  -- v1.21a: a control point that exists but is switched off (a tablet still showing its step) records the step, not the register
+  if exists (select 1 from fabula.haccp_control_points where code = v_ccp and not active) then return new; end if;
+  if tg_op = 'UPDATE' and old.actual_value is not distinct from new.actual_value then return new; end if;
+  select batch_lot into v_lot from fabula.production_batches where id = new.batch_id;
+  perform fabula.log_ccp(p_cp_code => v_ccp, p_value => new.actual_value, p_logged_at => new.logged_at, p_staff_id => new.staff_id,
+                         p_batch_lot => v_lot, p_action => new.note, p_source => 'preset');
+  return new;
+end $function$;
 
 -- (end of v1.21a)

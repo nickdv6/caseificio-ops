@@ -175,3 +175,34 @@ select pg_temp.ck('6b …the temperature rows show the new limit «≥ 63 °C»'
   exists (select 1 from jsonb_array_elements(:'r02'::jsonb) r where r ->> 'controllo' like 'CCP 2 Temperatura pastorizzazione%' and r ->> 'limite' = '≥ 63 °C'));
 select pg_temp.ck('6c …and a short hold is flagged in red (_ko) on the register',
   exists (select 1 from jsonb_array_elements(:'r02'::jsonb) r where r ->> 'valore' = '25 min' and (r ->> '_ko')::boolean));
+
+-- ============================== 7. switching the minutes off is one operation (review 30/10) ==============================
+update fabula.haccp_control_points set active = false where code = 'CCP-PAST-HOLD';
+select pg_temp.ck('7a switching CCP-PAST-HOLD off switches its preset step off: the tablet (active steps) no longer sees it',
+  (select not active from fabula.process_steps where id = :'step_hold')
+  and not exists (select 1 from fabula.v_process_steps where step_id = :'step_hold' and active and preset_active));
+select pg_temp.ck('7b …the pasteurisation step itself stays on', (select active from fabula.process_steps where id = :'step_past'));
+select pg_temp.lot('LH-L', :'moz', 'milk', :'preset');
+select pg_temp.err(format($q$select fabula.log_batch_step('LH-L', %L, 33, '10000000-0000-4000-a000-000000121a01')$q$, :'step_hold')) e_off \gset
+select pg_temp.ck('7c a tablet still showing the step: its save is not refused, the step is kept, the register is not written',
+  :'e_off' = ''
+  and exists (select 1 from fabula.batch_step_logs l join fabula.production_batches b on b.id = l.batch_id where b.batch_lot = 'LH-L' and l.step_id = :'step_hold' and l.actual_value = 33)
+  and not exists (select 1 from fabula.haccp_log l join fabula.production_batches b on b.id = l.batch_id where b.batch_lot = 'LH-L'),
+  :'e_off');
+select pg_temp.log('CCP-STRETCH', 62, 'LH-L') l2 \gset
+select fabula.log_batch_step('LH-L', :'step_past', 64, '10000000-0000-4000-a000-000000121a01') l1 \gset
+select pg_temp.close('LH-L');
+select pg_temp.ck('7d …and that lot closes free with the temperature and CCP 3 (the minutes are not required while off)',
+  not pg_temp.held('LH-L') and pg_temp.reason('LH-L') = '', pg_temp.reason('LH-L'));
+update fabula.haccp_control_points set active = true where code = 'CCP-PAST-HOLD';
+select pg_temp.ck('7e switching it on again switches the step on again', (select active from fabula.process_steps where id = :'step_hold'));
+select pg_temp.ck('7f the cascade trigger is closed to logins and anon; it fires only on a change of «active»',
+  not has_function_privilege('authenticated', 'fabula.trg_cp_active_steps()', 'EXECUTE') and not has_function_privilege('anon', 'fabula.trg_cp_active_steps()', 'EXECUTE')
+  and (select pg_get_triggerdef(oid) from pg_trigger where tgname = 'haccp_cp_active_steps') like '%AFTER UPDATE OF active ON fabula.haccp_control_points%WHEN ((old.active IS DISTINCT FROM new.active))%');
+select pg_temp.lot('LH-M', :'moz', 'milk', :'preset');
+select fabula.log_batch_step('LH-M', :'step_hold', 40, '10000000-0000-4000-a000-000000121a01') m1 \gset
+select pg_temp.ck('7g switched on again, the step writes the register as before (40 min ok)',
+  exists (select 1 from fabula.haccp_log l join fabula.haccp_control_points c on c.id = l.control_point_id join fabula.production_batches b on b.id = l.batch_id
+           where b.batch_lot = 'LH-M' and c.code = 'CCP-PAST-HOLD' and l.measured_value = 40 and l.result = 'ok'));
+select pg_temp.ck('7h the evening list orders the two CCP 2 lines by code when their sort ties',
+  pg_get_functiondef('fabula._haccp_evening_items(date)'::regprocedure) like '%order by b.batch_lot, cp.sort, cp.code%');

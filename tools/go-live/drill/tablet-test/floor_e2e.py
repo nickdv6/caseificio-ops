@@ -213,7 +213,7 @@ try:
     t_title = title()
     check('A-08 offline, the tablet does not know the other tablet''s lot: it proposes the same letter', nxt in t_title, t_title + ' vs ' + nxt)
     setf({'kg': 300})
-    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; } const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30';)()")
+    pg.evaluate("(() => { const v = document.getElementById('valve'); if (v && !v.value) v.value = '0'; const p = document.getElementById('past'); if (p && p.required && !p.value) p.value = '72.5'; const h = document.getElementById('pasthold'); if (h && h.required && !h.value) h.value = '30'; const hv = document.getElementById('pastholdv'); if (hv && !hv.value) hv.value = '30'; })()")
     if has('valvenote'): setf({'valvenote': 'riparato e provato (e2e)'})
     save(); pg.wait_for_timeout(1200)
     saw_nm, dbl = False, None

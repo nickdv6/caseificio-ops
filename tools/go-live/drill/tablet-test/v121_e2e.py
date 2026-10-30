@@ -6,7 +6,8 @@
 - a vat of a product with no preset: the start form asks the temperature AND the minutes; both reach the register, the lot is free;
 - a lot that reaches its close without the minutes: the close form asks them; saved with the close, the lot closes free;
 - 🛡 → Ricopia da foglio di carta lists «⏱ Pastorizzazione: minuti di sosta (MOD-02)»;
-- with CCP-PAST-HOLD switched off (a continuous pasteuriser) the start form no longer asks the minutes;
+- with CCP-PAST-HOLD switched off while the app is open: the start form re-reads the control points and asks the temperature only, the
+  vat starts; the mozzarella preset has no minutes step any more; the paper copy no longer lists them;
 - no page errors.
 Expect `FAILURES: none`."""
 import json, subprocess, time, os, hmac, hashlib, base64
@@ -102,13 +103,17 @@ try:
           json.dumps(st, ensure_ascii=False)[:300])
     pg.screenshot(path='/tmp/v121_step.png')
     type_step(25)
+    q = answer_ask(pg, wait=0)                            # the red «È giusto?» before saving
+    check('25 minutes: first the red question (out of limit, the lot will be BLOCKED)', 'fuori limite' in q and 'BLOCCATO' in q, q[:300])
+    pg.wait_for_timeout(1500)
     card = pg.evaluate("(document.querySelector('.ask') || {}).innerText || ''")
-    check('25 minutes: the red card says the lot is BLOCKED and what to do (restart the 30 minutes)',
+    check('…then, saved, the card says the lot is BLOCKED and what to do (restart the 30 minutes)',
           'NON CONFORMITÀ' in card and 'BLOCCATO' in card and 'ricomincia il conteggio dei 30 minuti' in card, card[:300])
     answer_ask(pg, wait=0)
+    check('…and the wizard moves on past the minutes step', view() != 'v-dose' or dose()['name'] != 'Sosta di pastorizzazione (CCP 2)', json.dumps(dose(), ensure_ascii=False)[:200])
     la = lot_of(MA)
     check('the register has the temperature ok and the minutes as a non-conformity; the lot is held',
-          'CCP-PAST=64.0:ok' in logs(la) and 'CCP-PAST-HOLD=25.0:non_conformity' in logs(la) and held(la) == 't', la + ' ' + logs(la))
+          logs(la) == 'CCP-PAST=64.0:ok CCP-PAST-HOLD=25.0:non_conformity' and held(la) == 't', la + ' ' + logs(la))
     for _ in range(40):                                   # the rest of the start steps (doses, other process steps)
         if view() != 'v-dose': break
         st = dose()
@@ -153,13 +158,42 @@ try:
     items = pg.evaluate("[...document.querySelectorAll('#form .nitem')].map(b => b.textContent)")
     check('🛡 → Ricopia da foglio di carta lists «⏱ Pastorizzazione: minuti di sosta (MOD-02)»', any('Pastorizzazione: minuti di sosta (MOD-02)' in t for t in items), str(items)[:300])
 
-    # 5 — the control point switched off: not asked any more
+    # 5 — the control point switched off while the app is open (its kept list still has it): not asked any more, anywhere
+    kept = pg.evaluate("!!JSON.parse(localStorage.getItem('perla_ref_v1') || '{}')['cp_CCP-PAST-HOLD']")
     sql("update fabula.haccp_control_points set active = false where code = 'CCP-PAST-HOLD'")
-    MC = 'MJ' + RUN
-    sql(f"insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source) values ('{TODAY}', '07:00', '{sup}', '{MC}', 200, true, 4, 'tablet')")
-    pg.evaluate("localStorage.removeItem('perla_ref_v1')")
-    home(); code('LOT:' + MC); pick('Scamorza e2e121')
-    check('CCP-PAST-HOLD switched off: the start form asks the temperature only', shown('past') and not shown('pasthold') and not req('pasthold'))
+    MC, MD = 'MJ' + RUN, 'MK' + RUN
+    for lot in (MC, MD):
+        sql(f"insert into fabula.milk_intake (intake_date, intake_time, supplier_id, milk_lot, qty_kg, accepted, temperature_c, source) values ('{TODAY}', '07:00', '{sup}', '{lot}', 200, true, 4, 'tablet')")
+    pg.evaluate("document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-home'))")   # no reload
+    code('LOT:' + MC); pick('Scamorza e2e121')
+    check('switched off while the app was open: the start form re-reads the control points and asks the temperature only',
+          kept and shown('past') and not shown('pasthold') and not req('pasthold')
+          and not pg.evaluate("!!JSON.parse(localStorage.getItem('perla_ref_v1') || '{}')['cp_CCP-PAST-HOLD']"))
+    setf({'kg': 200, 'past': 74})
+    if shown('valve'): setf({'valve': '0'})
+    save(); answer_ask(pg, wait=0)
+    for _ in range(20):
+        if view() != 'v-dose': break
+        pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(500)
+    lc = lot_of(MC)
+    check('…and the vat starts (the save is not refused), with the temperature only', lc != '' and logs(lc) == 'CCP-PAST=74.0:ok', lc + ' ' + logs(lc) + ' · ' + toast()[:150])
+    pg.evaluate("document.querySelectorAll('.view').forEach(e => e.classList.toggle('active', e.id === 'v-home'))")
+    code('LOT:' + MD); pick('mozzarella'); setf({'kg': 200})
+    if shown('valve'): setf({'valve': '0'})
+    save()
+    names = []
+    for _ in range(40):
+        if view() != 'v-dose': break
+        st = dose(); names.append(st['name'])
+        if st['ok'] == 'none': type_step(64 if 'astorizz' in st['name'] else 36)
+        else: pg.evaluate("document.getElementById('d-ok').click()"); pg.wait_for_timeout(500)
+    ld = lot_of(MD)
+    check('…the mozzarella preset no longer has the minutes step (it went off with its control point) and the start completes',
+          'Sosta di pastorizzazione (CCP 2)' not in names and any('astorizzazione del latte' in n for n in names) and ld != '' and logs(ld) == 'CCP-PAST=64.0:ok',
+          ' / '.join(names)[:300] + ' · ' + ld + ' ' + logs(ld))
+    code('PAPER:')
+    items = pg.evaluate("[...document.querySelectorAll('#form .nitem')].map(b => b.textContent)")
+    check('…and the paper copy no longer lists the minutes', not any('minuti di sosta' in t for t in items), str(items)[:200])
     sql("update fabula.haccp_control_points set active = true where code = 'CCP-PAST-HOLD'")
     check('no page errors', not errs, ' | '.join(errs)[:300])
     b.close()

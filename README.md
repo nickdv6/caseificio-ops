@@ -31,21 +31,32 @@ was recorded. Migration `v121a` and the tablet:
 - **Preset step** «Sosta di pastorizzazione (CCP 2)» right after each pasteurisation step (`record_metric` duration, `ccp_code`
   CCP-PAST-HOLD): the tablet asks it as a critical point (no «Fatto», no «Salta»); `trg_step_log_ccp` writes the register.
 - **`trg_batch_ccp_check`**: a milk lot closed without the minutes is held like one closed without CCP 2 or CCP 3, while CCP-PAST-HOLD
-  is active. The missing list keeps its order (CCP-PAST, CCP-STRETCH, then CCP-PAST-HOLD). Switching CCP-PAST-HOLD off is how a continuous
-  pasteuriser (72 °C × 15 s with diversion valve) would go back: nothing is asked or required then.
+  is active. The missing list keeps its order (CCP-PAST, CCP-STRETCH, then CCP-PAST-HOLD).
+- **Switching off is one operation** (review): `haccp_cp_active_steps` (AFTER UPDATE OF active) takes the preset steps of a control point
+  with it, and `trg_step_log_ccp` records the step but not the register for a control point that exists but is off. With CCP-PAST-HOLD
+  off nothing about the minutes is asked or required. **It is not by itself the way back for a continuous pasteuriser**: that switch goes
+  with CCP-PAST back to 72 °C × 15 s (limits, texts, step target), as one later release. Known limit: a start or close saved OFFLINE
+  with the minutes, sent after the switch-off, is refused by the database (set aside, redone from 🛡); the switch is a one-time decision
+  before opening.
 - **«Prima di chiudere»**: a lot of the day without the minutes is listed («CCP 2 Pastorizzazione: minuti di sosta … · lotto …»).
 - **Tablet** (sw `perla-v84`): the start form asks the minutes when the chosen preset has no minutes step (products with no preset:
   scamorza, stracciatella…); the close form asks them when the lot has none yet; 🛡 → Ricopia da foglio di carta lists «⏱ Pastorizzazione:
-  minuti di sosta (MOD-02)»; a CCP check on a lot or a correction offers the lot for the minutes too (no thermometer recorded on them).
-  The kept list of control points now drops one switched off.
-- **Tests:** `test_v121_past_hold.sql` (36 checks; RED on v1.20 as expected). Test changes **approved by Nick** (30/10/2026 10:42 ET):
+  minuti di sosta (MOD-02)» while that control point is on; a CCP check on a lot or a correction offers the lot for the minutes too (no
+  thermometer recorded on them). The batch start and close re-read the active control points (`refreshCps`), and the kept list drops one
+  switched off. A critical step whose control point is not in the kept list yet (a tablet offline since the release) uses the step's own
+  minimum for the red question and the «BLOCCATO» card.
+- **Tests:** `test_v121_past_hold.sql` (44 checks; RED on v1.20 as expected). Test changes **approved by Nick** (30/10/2026 10:42 ET):
   `test_audit_critical` A-03 and `test_prod_guards` (the lot closed with nothing: the reason and the alert also name the minutes) and
   `test_audit_food_safety` B-01 (the CCP 2 minimum in the message is 63.00, was 72.00) — classification A, the meaning changed on purpose;
   `test_prod_guards` LG-2 and `test_v117_legal_records` P5 record the minutes in their fixture — classification B, no assertion changed.
   Tablet suites: `v121_e2e.py` (new) and the helpers of `e2e`, `floor_e2e`, `guard_e2e`, `numbers_e2e`, `office_e2e`, `offline_e2e`,
   `prod_e2e`, `s_items_e2e`, `v106_e2e`, `v120_e2e` fill the minutes like the temperature (classification B).
-- **Rollback:** `tools/go-live/rollback/20261030150000_v121a_down.sql` (switches the control point and the steps off, puts back the two
-  functions; records stay; CCP-PAST stays at 63 °C); revert the tablet in the same release.
+- **Review** (a separate agent, of `bd2fe94`): the switch-off blocked the step wizard and stale tablets' saves; the minutes step could be
+  skipped silently; two edited browser helpers had broken JavaScript; the new suite misread the red question. All fixed in the next commit
+  (cascade, `trg_step_log_ccp`, `refreshCps`, the step's own minimum, renumbering + a check that stops the release, helpers, suite), plus
+  the paper list filtered and the evening list's order by code.
+- **Rollback:** `tools/go-live/rollback/20261030150000_v121a_down.sql` (drops the cascade, switches the control point and the steps off,
+  puts back the three functions; records stay; CCP-PAST stays at 63 °C); revert the tablet in the same release.
 - **Order:** after v1.20 (its migration `20261029200000` is older).
 
 ## Same-day milk, the house rule (v1.20)

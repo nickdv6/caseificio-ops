@@ -259,7 +259,9 @@ v105_e2e, then alerts_e2e, then v107_e2e; resumed after sync_e2e on the same dat
 
 36. `python3 v121_e2e.py` (v1.21 CCP 2 a tino, the holding minutes; pages on :8797; restore_drill with v121a and PostgREST on :3000, one
     milk supplier) — the mozzarella preset asks «Sosta di pastorizzazione (CCP 2)» right after the temperature as a critical point (no
-    «Fatto», no «Salta», target 30 min); 25 minutes gives the red card and the lot is held, with the minutes in the register as a
-    non-conformity; a product with no preset asks the temperature and the minutes on the start form (both required) and both reach the
-    register; a lot that reaches its close without the minutes is asked them there and closes free; 🛡 → Ricopia lists the minutes; with
-    CCP-PAST-HOLD switched off the start form asks the temperature only. Expect `FAILURES: none` (13 checks); on v1.20 it fails.
+    «Fatto», no «Salta», target 30 min); 25 minutes gives the red question, then the card, and the lot is held, with the minutes in the
+    register as a non-conformity; a product with no preset asks the temperature and the minutes on the start form (both required) and both
+    reach the register; a lot that reaches its close without the minutes is asked them there and closes free; 🛡 → Ricopia lists the
+    minutes; CCP-PAST-HOLD switched off while the app is open: the start form re-reads the control points and asks the temperature only,
+    the vat starts, the mozzarella preset has no minutes step, the paper copy no longer lists them. Expect `FAILURES: none` (18 checks);
+    on v1.20 it fails.

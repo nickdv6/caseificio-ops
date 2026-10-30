@@ -1,11 +1,13 @@
 -- Rollback of v1.21a (CCP 2 a tino: the holding minutes): puts back what was live before it.
--- v1.21a added one control point (CCP-PAST-HOLD) and one preset step per pasteurisation step, and replaced two functions
--- (trg_batch_ccp_check, _haccp_evening_items). The texts below are the ones live before v1.21a: trg_batch_ccp_check as read from
--- production on 30/10/2026, _haccp_evening_items as v1.20a wrote it. Records already written (haccp_log rows, non-conformities, step
+-- v1.21a added one control point (CCP-PAST-HOLD), one preset step per pasteurisation step and a trigger (haccp_cp_active_steps), and
+-- replaced three functions (trg_batch_ccp_check, trg_step_log_ccp, _haccp_evening_items). The texts below are the ones live before
+-- v1.21a: trg_batch_ccp_check and trg_step_log_ccp as read from production on 30/10/2026, _haccp_evening_items as v1.20a wrote it. Records already written (haccp_log rows, non-conformities, step
 -- logs) stay: the control point and the steps are switched off, not deleted, so the registers keep pointing at them.
 -- CCP-PAST stays at 63 °C (set on live on 30/10/2026 before v1.21a; v1.21a only wrote the same values into the migrations).
 -- To use it, copy it into supabase/migrations under a new, later version and release it through the pipeline like any other release.
 
+drop trigger if exists haccp_cp_active_steps on fabula.haccp_control_points;
+drop function if exists fabula.trg_cp_active_steps();
 update fabula.process_steps set active = false, updated_at = now() where ccp_code = 'CCP-PAST-HOLD';
 update fabula.haccp_control_points set active = false, updated_at = now() where code = 'CCP-PAST-HOLD';
 update fabula.process_steps set
@@ -127,6 +129,22 @@ begin
   select items || coalesce(jsonb_agg(jsonb_build_object('code', 'shift:' || st.badge_code, 'label_it', st.full_name || ': badge di uscita non passato', 'scan', st.badge_code)), '[]') into items
   from fabula.shifts s join fabula.staff st on st.id = s.staff_id where s.clock_out is null and (s.clock_in at time zone 'Europe/Rome')::date = p_date;
   return items;
+end $function$;
+
+CREATE OR REPLACE FUNCTION fabula.trg_step_log_ccp()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'fabula', 'public', 'extensions'
+AS $function$
+declare v_ccp text; v_lot text;
+begin
+  select ccp_code into v_ccp from fabula.process_steps where id = new.step_id;
+  if v_ccp is null or new.actual_value is null then return new; end if;
+  if tg_op = 'UPDATE' and old.actual_value is not distinct from new.actual_value then return new; end if;
+  select batch_lot into v_lot from fabula.production_batches where id = new.batch_id;
+  perform fabula.log_ccp(p_cp_code => v_ccp, p_value => new.actual_value, p_logged_at => new.logged_at, p_staff_id => new.staff_id,
+                         p_batch_lot => v_lot, p_action => new.note, p_source => 'preset');
+  return new;
 end $function$;
 
 -- (end of the v1.21a rollback)
