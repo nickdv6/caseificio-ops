@@ -50,7 +50,7 @@ was recorded. Migration `v121a` and the tablet:
   `test_audit_food_safety` B-01 (the CCP 2 minimum in the message is 63.00, was 72.00) — classification A, the meaning changed on purpose;
   `test_prod_guards` LG-2 and `test_v117_legal_records` P5 record the minutes in their fixture — classification B, no assertion changed.
   Tablet suites: `v121_e2e.py` (new) and the helpers of `e2e`, `floor_e2e`, `guard_e2e`, `numbers_e2e`, `office_e2e`, `offline_e2e`,
-  `prod_e2e`, `s_items_e2e`, `v106_e2e`, `v120_e2e` fill the minutes like the temperature (classification B).
+  `prod_e2e`, `s_items_e2e`, `v106_e2e`, `v120_e2e` fill the minutes like the temperature (classification B). `paper_e2e`: the paper menu has 12 sheet checks, was 11 (classification A, the menu grew on purpose).
 - **Review** (a separate agent, of `bd2fe94`): the switch-off blocked the step wizard and stale tablets' saves; the minutes step could be
   skipped silently; two edited browser helpers had broken JavaScript; the new suite misread the red question. All fixed in the next commit
   (cascade, `trg_step_log_ccp`, `refreshCps`, the step's own minimum, renumbering + a check that stops the release, helpers, suite), plus
