@@ -226,6 +226,9 @@ select :'d'::date + 14 - extract(isodow from :'d'::date)::int sun \gset
 select :'sun'::date + 1 mon \gset
 select :'sun'::date + 3 wed \gset
 insert into fabula.trade_closures (date_from, date_to, note) values (:'wed', :'wed', 'Ferie V');
+-- v1.22 (31/10/2026): Sunday is open in the replay too since v1.22a (as live); this check is about a closed weekday, so it sets one
+-- (Sunday, as the setting was until 30/10). Fixture only.
+update fabula.settings set value = '7' where key = 'prod.closed_weekdays';
 select fabula.generate_daily_tasks(:'sun') n_sun \gset
 select fabula.generate_daily_tasks(:'mon') n_mon \gset
 select fabula.generate_daily_tasks(:'wed') n_wed \gset

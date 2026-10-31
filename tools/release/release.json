@@ -1,8 +1,9 @@
 {
   "version": "v1.22",
-  "title_it": "Contratto estate: i dati del cliente professionista arrivano già compilati dal registro (nome, tipo, P.IVA, telefono, indirizzo di consegna), su qualsiasi dispositivo",
+  "title_it": "Contratto estate: i dati del cliente professionista arrivano già compilati dal registro (nome, tipo, P.IVA, telefono, indirizzo di consegna), su qualsiasi dispositivo; la domenica aperta (come in produzione dal 30/10) è scritta nelle migrazioni",
   "order": [
-    "functions"
+    "functions",
+    "database"
   ],
   "force": [],
   "after_it": [

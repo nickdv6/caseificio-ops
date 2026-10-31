@@ -285,13 +285,17 @@ select pg_temp.ck('trade_queue_claim is for the server function only', not has_f
   and not has_function_privilege('anon', 'fabula.trade_queue_claim()', 'execute'));
 
 -- ---------------------------------------------------------------- 10. the weekly plan: confirmed deliveries, windows (item 7)
+-- v1.22 (31/10/2026): date-proof. «Tomorrow» must be a delivery day whatever today is, so the section delivers every day of the week
+-- (as live since 30/10/2026) and the plan covers all seven days; before, on a Saturday «tomorrow» was a Sunday without delivery and
+-- the section stopped. Fixtures only: no check changed.
+update fabula.settings set value = '1,2,3,4,5,6,7' where key = 'trade.delivery_days';
 select id moz from fabula.products where sku = 'MOZ-DOP-KG' \gset
 insert into fabula.trade_products (variant_id, product_id, title, variant_title, kg_per_unit, unit_label, trade_price_eur, min_qty, step_qty)
 values ('gid://v110/1', :'moz', 'Mozzarella', 'v110', 1, 'kg', 11.5, 1, 1) on conflict do nothing;
 insert into fabula.parties (id, type, legal_name, active, trade_status) values ('50000000-0000-4000-a000-000000000111', 'customer', 'Pizzeria Piano', true, 'approved');
 insert into fabula.trade_schedules (customer_id, status, start_date) values ('50000000-0000-4000-a000-000000000111', 'active', current_date - 7);
-insert into fabula.trade_schedule_days (customer_id, weekday, active) select '50000000-0000-4000-a000-000000000111', w, true from generate_series(1, 6) w;
-insert into fabula.trade_schedule_lines (customer_id, weekday, variant_id, qty) select '50000000-0000-4000-a000-000000000111', w, 'gid://v110/1', 20 from generate_series(1, 6) w;
+insert into fabula.trade_schedule_days (customer_id, weekday, active) select '50000000-0000-4000-a000-000000000111', w, true from generate_series(1, 7) w;
+insert into fabula.trade_schedule_lines (customer_id, weekday, variant_id, qty) select '50000000-0000-4000-a000-000000000111', w, 'gid://v110/1', 20 from generate_series(1, 7) w;
 -- the cut-off moved to midnight: tomorrow is already confirmed, the day after can still change
 update fabula.settings set value = '00:00' where key = 'trade.cutoff_time';
 select d tom from (select g::date d from generate_series(fabula.trade_now_rome()::date + 1, fabula.trade_now_rome()::date + 8, interval '1 day') g
@@ -301,7 +305,7 @@ select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-40
 select pg_temp.ck('a customer''s new plan cannot change a delivery already confirmed (20 → 140 kg after the cut-off)', :'w1' ilike '%già chiusi%fai partire il piano dal%', :'w1');
 select pg_temp.ck('…the plan is untouched', (select qty from fabula.trade_schedule_lines where customer_id = '50000000-0000-4000-a000-000000000111' and weekday = :wd) = 20);
 select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"start_date":"%s","days":{"%s":{"lines":{"gid://v110/1":20}},"%s":{"lines":{"gid://v110/1":30}}}}'::jsonb, 'customer')$q$,
-  :'tom', :'wd', case when :wd = 6 then 1 else :wd + 1 end)) w2 \gset
+  :'tom', :'wd', case when :wd = 7 then 1 else :wd + 1 end)) w2 \gset
 select pg_temp.ck('…a plan that keeps the confirmed day as it is still saves', :'w2' = '', :'w2');
 update fabula.trade_schedules set status = 'paused' where customer_id = '50000000-0000-4000-a000-000000000111';
 select pg_temp.err(format($q$select fabula.trade_save_schedule('50000000-0000-4000-a000-000000000111', '{"start_date":"%s","days":{"%s":{"lines":{"gid://v110/1":90}}}}'::jsonb, 'customer')$q$, :'tom', :'wd')) w2b \gset

@@ -44,6 +44,17 @@ function only (`trade-portal`); no database, app or bot change:
   business type case, P.IVA check digit, tests). Second round: no High or Medium; 4 Low (no-CAP tails taken as a comune, any two
   letters as a province, `\p{L}` in the page, a cancelled plan's address). All fixed above.
 - **Rollback:** v1.21's `index.ts` (unchanged since v1.10) through a later release; the page then falls back to its other sources.
+- **Sunday open, written into the migrations (`v122a`, database).** On 30/10 (Nick: «assume sundays are open all year») two settings
+  were changed on live directly: `trade.delivery_days` 1–6 → 1–7 and `prod.closed_weekdays` 7 → empty. A replay still had Sunday closed,
+  and CI went red every Saturday (`test_v110_security_saves` §10 found no delivery day «tomorrow»; seen on 31/10 on v1.21 and v1.22
+  alike). Nick, 31/10: «Fix it properly». `20261031150000_v122a_sunday_open.sql` writes live's two values (only those rows changed on
+  30/10, checked on live); a row is touched only where it differs, so on live it changes nothing (no update, audit or updated_at).
+  Rollback `tools/go-live/rollback/20261031150000_v122a_down.sql`: nothing to undo; it says how to close Sunday again if ever decided.
+- **Tests (31/10, approved by Nick: «Fix it properly»), fixtures only, no check changed:** `test_v110_security_saves` §10 delivers
+  every day and its plan covers all seven days (it was Monday–Saturday); `test_v105_bots_ops` E-32 sets the closed weekday it checks
+  (Sunday) instead of relying on the replay's; `test_placeholders_autoread` books tomorrow, or Monday when tomorrow is a Sunday (the
+  seed's placeholder standing orders run Monday–Saturday). New `test_v122_sunday_open.sql` (9). §10 checked for every weekday by
+  pinning `trade_now_rome()` (Mon–Sun: 63/63 each; the old test fails on Saturday). Full SQL CI green on Saturday 31/10.
 
 ## CCP 2 a tino: the holding minutes (v1.21)
 Decided by Nick on 30/10/2026: CCP 2 set «to 63 for 30 minutes for now» (on live that morning as a data change), then «yes» to recording

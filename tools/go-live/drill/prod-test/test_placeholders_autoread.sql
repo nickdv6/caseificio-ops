@@ -4,6 +4,9 @@
 create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text default '') returns text language sql as
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
 select (now() at time zone 'Europe/Rome')::date d \gset
+-- v1.22 (31/10/2026): the placeholders' standing orders in the seed run Monday to Saturday, and Sunday is open since v1.22a (as live):
+-- on a Saturday «tomorrow» had nothing to book or skip. The day booked is tomorrow, or Monday when tomorrow is a Sunday (fixture only).
+select :'d'::date + case when extract(isodow from :'d'::date + 1) = 7 then 2 else 1 end t \gset
 select id c1 from fabula.parties where legal_name = 'Cliente 1' \gset
 select id c2 from fabula.parties where legal_name = 'Cliente 2' \gset
 -- two placeholder orders already booked: one not shipped, one shipped
@@ -12,7 +15,7 @@ insert into fabula.sales_orders (order_number, channel, order_date, customer_id,
  ('WS-OLD-2', 'wholesale', :'d'::date - 2, :'c2', 'confirmed', 'standing_order');
 insert into fabula.shipments (ddt_number, customer_id, sales_order_id, status, ship_date) select 'DDT-T', :'c2', id, 'picked', :'d' from fabula.sales_orders where order_number = 'WS-OLD-2';
 
-select fabula.confirm_standing_orders(:'d'::date + 1) r1 \gset
+select fabula.confirm_standing_orders(:'t'::date) r1 \gset
 select pg_temp.ck('placeholder customers: nothing booked, both listed as skipped', (:'r1'::jsonb->>'booked')::int = 0
   and :'r1'::jsonb->'skipped_placeholder' @> '["Cliente 1", "Cliente 2"]' and (:'r1'::jsonb->>'is_placeholder')::boolean, :'r1');
 select pg_temp.ck('their unshipped order is cancelled, the shipped one is left alone',
@@ -21,11 +24,11 @@ select pg_temp.ck('their unshipped order is cancelled, the shipped one is left a
 select pg_temp.ck('no confirmed wholesale demand left for the milk plan', (:'r1'::jsonb->>'total_kg')::numeric = 0);
 -- renamed in the console (notes/source cleared) → booking resumes
 update fabula.parties set legal_name = 'Pizzeria Da Tonino', notes = null, source = 'manual' where id = :'c1';
-select fabula.confirm_standing_orders(:'d'::date + 1) r2 \gset
+select fabula.confirm_standing_orders(:'t'::date) r2 \gset
 select pg_temp.ck('after renaming Cliente 1: its order is booked, Cliente 2 still skipped', (:'r2'::jsonb->>'booked')::int = 1
   and :'r2'::jsonb#>>'{customers,0,customer}' = 'Pizzeria Da Tonino' and :'r2'::jsonb->'skipped_placeholder' = '["Cliente 2"]', :'r2');
-select pg_temp.ck('running again does not book twice', (fabula.confirm_standing_orders(:'d'::date + 1)->>'booked')::int = 0
-  and (select count(*) from fabula.sales_orders where customer_id = :'c1' and order_date = :'d'::date + 1 and status = 'confirmed') = 1);
+select pg_temp.ck('running again does not book twice', (fabula.confirm_standing_orders(:'t'::date)->>'booked')::int = 0
+  and (select count(*) from fabula.sales_orders where customer_id = :'c1' and order_date = :'t'::date and status = 'confirmed') = 1);
 -- autoread
 insert into fabula.bot_messages (agent, severity, title, body, created_at) values
  ('daily_brief', 'info', 'T-old-info', 'x', now() - interval '2 days'), ('daily_brief', 'warn', 'T-old-warn', 'x', now() - interval '2 days'),
