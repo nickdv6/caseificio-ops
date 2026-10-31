@@ -290,9 +290,11 @@ select pg_temp.ck('B-18 an order cancelled by hand is not reopened by «Annulla�
   :'ub4' = 'ordine annullato a mano', :'ub4');
 
 -- ============================== B-19 · the milk forecast reads the Ingrosso plans ==============================
+-- a delivery day Monday to Saturday: the 7-day milk forecast (demand_7d) has no Sunday row, so B-19 reads a weekday (v1.22a: since
+-- Sunday is a delivery day too, a delivery day alone could be a Sunday)
 create or replace function pg_temp.dday(n int) returns date language sql as
 $$ select g::date from generate_series(fabula.trade_now_rome()::date + 3, fabula.trade_now_rome()::date + 20, interval '1 day') g
-   where fabula.trade_is_delivery_day(g::date) order by g offset n - 1 limit 1 $$;
+   where fabula.trade_is_delivery_day(g::date) and extract(isodow from g) <> 7 order by g offset n - 1 limit 1 $$;
 insert into fabula.trade_products (variant_id, product_id, title, variant_title, kg_per_unit, unit_label, base_price_eur, trade_price_eur, min_qty, step_qty)
 values ('gid://office/1', :'moz', 'Mozzarella', 'O', 1, 'kg', 14, 11.5, 1, 1) on conflict do nothing;
 insert into fabula.parties (id, type, legal_name, active, trade_status) values ('50000000-0000-4000-a000-0000000099e1', 'customer', 'Pizzeria O', true, 'approved') on conflict do nothing;

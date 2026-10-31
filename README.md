@@ -53,8 +53,27 @@ function only (`trade-portal`); no database, app or bot change:
 - **Tests (31/10, approved by Nick: «Fix it properly»), fixtures only, no check changed:** `test_v110_security_saves` §10 delivers
   every day and its plan covers all seven days (it was Monday–Saturday); `test_v105_bots_ops` E-32 sets the closed weekday it checks
   (Sunday) instead of relying on the replay's; `test_placeholders_autoread` books tomorrow, or Monday when tomorrow is a Sunday (the
-  seed's placeholder standing orders run Monday–Saturday). New `test_v122_sunday_open.sql` (9). §10 checked for every weekday by
+  seed's placeholder standing orders run Monday–Saturday). New `test_v122_sunday_open.sql` (10). §10 checked for every weekday by
   pinning `trade_now_rome()` (Mon–Sun: 63/63 each; the old test fails on Saturday). Full SQL CI green on Saturday 31/10.
+- **Review of v1.22a** (an independent agent): the migration has no findings (a no-op on live: every trigger on `fabula.settings` is
+  per row). But with Sunday a delivery day in the replay, CI went red on other days: `test_audit_wholesale` (Tuesday, Wednesday:
+  its Monday–Saturday customer had no plan on the Sunday its helper picked) and `test_audit_office` B-19 (Thursday: the 7-day milk
+  forecast `demand_7d` has no Sunday row). Fixed, fixtures only: the wholesale helper picks the customer's own days, B-19 a weekday.
+  `test_v122_sunday_open` section 3 now compares the whole settings table and the Bot feed before and after (it copied the
+  statements and only counted rows), and checks the kind of both settings.
+- **Full SQL CI with the database server's clock on every weekday** (libfaketime, Sun 01/11 – Sat 07/11, at 11:00 and 20:30 Rome):
+  at 11:00 every day failed only the trap below; with its fix, green at 20:30 on all seven days, at 11:00 on Sunday and Wednesday,
+  and on the real clock (Saturday 31/10). The trap is on main too: `test_v112_standins` («Esegui ora» on the monthly review)
+  fails every day from Sun 01/11/2026 08:30 Rome, because a run of part 1 at that fixed time stopped being in the future and became the month's latest run. Fixed,
+  fixture only: every earlier run of the review moves a year back, not only the future ones. No check changed in any suite.
+- **Not done here (found by the review, live since 30/10, no customer affected yet: 0 active wholesale plans on 31/10):** Sunday open
+  reaches the settings only. The bots that book and plan (`wholesale_orders` 18:20, `milk_planning`, `haccp_nudge`) still run
+  Monday–Saturday, so Saturday's run now books Sunday and nothing books Monday; `plan_milk` turns a Sunday into Monday, `demand_7d`
+  leaves Sunday out, `milk_order_again` refuses Sunday, and the bot prompts still say «if tomorrow is Sunday it books Monday».
+  A later release, once Nick decides how Sunday works for the bots.
+- **Release:** v1.20, v1.21 and v1.22 go live as one release (Nick, 31/10: «Fast-forward main straight to v1.22»). The pipeline reads
+  only the last `release.json` for the title and the steps after it, so v1.22's carries all three: functions first (`trade-portal`),
+  then the database (`v120a`, `v121a`, `v122a`, in that order), then the site (the tablet's v1.20 and v1.21 changes).
 
 ## CCP 2 a tino: the holding minutes (v1.21)
 Decided by Nick on 30/10/2026: CCP 2 set «to 63 for 30 minutes for now» (on live that morning as a data change), then «yes» to recording

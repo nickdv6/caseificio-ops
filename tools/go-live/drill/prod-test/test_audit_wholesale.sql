@@ -6,10 +6,14 @@ create or replace function pg_temp.ck(p_name text, p_ok boolean, p_info text def
 $$ select case when coalesce(p_ok, false) then 'PASS ' else 'FAIL ' end || p_name || case when p_info <> '' then '  [' || p_info || ']' else '' end $$;
 create or replace function pg_temp.err(p_sql text) returns text language plpgsql as
 $$ begin execute p_sql; return ''; exception when others then return sqlerrm; end $$;
--- the n-th delivery day (Mon–Sat) at least 3 days ahead, so customers can still change it
+-- the n-th delivery day at least 3 days ahead, so customers can still change it, and one of the audit customer's own days
+-- (Mon–Sat, below). v1.22a: since Sunday is a delivery day too, a delivery day alone could be a Sunday the customer has no plan for.
 create or replace function pg_temp.dday(n int) returns date language sql as
 $$ select g::date from generate_series(fabula.trade_now_rome()::date + 3, fabula.trade_now_rome()::date + 20, interval '1 day') g
-   where fabula.trade_is_delivery_day(g::date) order by g offset n - 1 limit 1 $$;
+   where fabula.trade_is_delivery_day(g::date)
+     and exists (select 1 from fabula.trade_schedule_days d where d.customer_id = '50000000-0000-4000-a000-000000000001'
+                 and d.active and d.weekday = extract(isodow from g)::int)
+   order by g offset n - 1 limit 1 $$;
 select id moz from fabula.products where sku = 'MOZ-DOP-KG' \gset
 insert into fabula.parties (id, type, legal_name, phone, active, trade_status) values ('50000000-0000-4000-a000-000000000001', 'customer', 'Pizzeria Audit', '+39 333 0000000', true, 'approved');
 insert into fabula.trade_products (variant_id, product_id, title, variant_title, kg_per_unit, unit_label, trade_price_eur, min_qty, step_qty)

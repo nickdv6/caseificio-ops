@@ -253,9 +253,11 @@ select pg_temp.ck('monthly: a CCP out of limit alone is a «warn» that comes be
   :'f6'::jsonb->>'title' = 'Marzo 2027: rivedi la sicurezza alimentare (Autocontrollo)' and :'f6'::jsonb->>'severity' = 'warn'
   and :'f6'::jsonb->>'body' like '%• Ricette: Mozzarella di Bufala Campana DOP da 30 a 27 g%', :'f6'::jsonb->>'body');
 -- «Esegui ora» on the monthly review later in the month asks first (the run of the 1st counts)
--- (the fixed-date runs of part 1 are in the future of the real clock: they move a year back, so only the run of this month's 1st can count)
-update fabula.agent_runs set started_at = started_at - interval '1 year', finished_at = finished_at - interval '1 year' where agent = 'monthly_review' and started_at > now();
-update fabula.bot_fallback_runs set ran_at = ran_at - interval '1 year' where agent = 'monthly_review' and ran_at > now();
+-- (every earlier run of the review, from the fixed dates of part 1 or from the clock, moves a year back, so only the run of this month's
+-- 1st can count. 31/10/2026: only the runs in the future moved, and from Sun 01/11/2026 08:30 Rome the fixed-date run «Sun 01/11 08:30»
+-- of part 1 was in the past and this month's latest run, so the check read 08:30 all November; found with the server clock moved.)
+update fabula.agent_runs set started_at = started_at - interval '1 year', finished_at = finished_at - interval '1 year' where agent = 'monthly_review';
+update fabula.bot_fallback_runs set ran_at = ran_at - interval '1 year' where agent = 'monthly_review';
 insert into fabula.agent_runs (agent, started_at, finished_at, status, summary)
 values ('monthly_review', (date_trunc('month', :'today'::date)::date + time '07:45') at time zone 'Europe/Rome',
         (date_trunc('month', :'today'::date)::date + time '07:50') at time zone 'Europe/Rome', 'ok', 'run of the 1st');
