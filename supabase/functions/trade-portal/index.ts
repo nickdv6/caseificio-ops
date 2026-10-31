@@ -4,6 +4,7 @@
 // storefront has no Supabase login; every path does its own check.
 //
 //   GET  ?action=state&t=<token>                       → fabula.trade_portal_state(token): the customer's plan, prices, upcoming deliveries
+//                                                        (v1.22: + customer.profile, the customer's register details for the trade forms: profile.ts)
 //   POST ?action=portal   { t, action, payload }       → fabula.trade_portal_action(...) (save_schedule, add_exception, cancel_exception, set_status, save_details)
 //   POST ?action=apply    { business_name, ... }       → fabula.trade_apply(...): public application form (honeypot field "website" must be empty)
 //   POST ?action=approve  { application_id, note }     → staff (Supabase JWT, Vendite ≥ 3 enforced by the database): fabula.trade_approve, then the
@@ -28,6 +29,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { money, planFrom } from "./prices.ts";
 import { createOnce } from "./queue.ts";
+import { PROFILE_COLUMNS, profileOf } from "./profile.ts";
 
 const SHOP = Deno.env.get("SHOPIFY_SHOP") ?? "pxssjd-cq.myshopify.com";
 const STATIC_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
@@ -280,9 +282,25 @@ Deno.serve(async (req: Request) => {
     if (req.method === "GET" && action === "state") {
       const t = url.searchParams.get("t") ?? "";
       if (!TOK.test(t)) return json({ error: "link non valido" }, 403);
-      const { data, error } = await admin().rpc("trade_portal_state", { p_token: t });
+      const db = admin();
+      const { data, error } = await db.rpc("trade_portal_state", { p_token: t });
       if (error) return dbErr(error);
-      return data ? json(data) : json({ error: "accesso non attivo" }, 403);
+      if (!data) return json({ error: "accesso non attivo" }, 403);
+      // v1.22: the customer's own details (profile.ts), so the Contratto estate form starts filled on any device. Only for the
+      // party this key belongs to (the state's customer.id); the delivery address as deliveries use it (the plan's first, already in
+      // the state, unless the plan is cancelled). If it cannot be read within 1.5 s, the state goes out without it (the portal page does not use it).
+      const cid = (data as any)?.customer?.id;
+      if (cid) {
+        try {
+          const { data: p, error: pe } = await db.from("parties").select(PROFILE_COLUMNS).eq("id", cid).abortSignal(AbortSignal.timeout(1500)).maybeSingle();
+          if (pe) console.error("trade-portal profile", pe.message);
+          else if (p) {
+            const plan = (data as any)?.schedule;
+            (data as any).customer.profile = profileOf(p, plan && plan.status !== "cancelled" ? plan.delivery_address ?? null : null);
+          }
+        } catch (e) { console.error("trade-portal profile", (e as Error).message); }
+      }
+      return json(data);
     }
     if (req.method === "POST" && action === "portal") {
       const t = String(b.t ?? "");

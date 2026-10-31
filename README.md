@@ -18,6 +18,33 @@ Operations system for the Agropoli micro-dairy (ex Latteria Fabula).
 Releases (v1.08): merging into `main` is the release, after one approval on GitHub — see `RELEASING.md`. The app is published from
 `fabula-tablet/` on GitHub Pages (app.bubalina.it); the database and the server functions by the same workflow.
 
+## The trade forms start filled from the register (v1.22)
+Nick, 30–31/10/2026: "this data should not need to be entered for the user. their data should be saved for future use", then
+«yes prepare it». The Contratto estate form (Shopify theme v1.32/v1.32b, «Bubalina · Dati salvati 2026-10-30») fills step 3 from what
+the customer last sent from that browser and from Shopify; on a new device P.IVA, type and the address in parts were missing. Server
+function only (`trade-portal`); no database, app or bot change:
+- `?action=state` adds **`customer.profile`** (`profile.ts`): business name (trade name, else legal name), business type (lower case),
+  P.IVA (11 digits with a valid check digit, without «IT»), phone, and the delivery address in parts, chosen as deliveries choose it
+  (`trade_effective_lines`): the plan's address (`trade_schedules.delivery_address`, already in the state; not a cancelled plan's),
+  else `parties.delivery_address`, else the register's address, comune, province, CAP. One-line addresses are split with the page's
+  rules: «street, CAP comune» or «street, CAP, comune», with «(PR)», « PR» or «, PR» only for real province codes, and «, Italia»;
+  «street, comune» without a CAP only for the register's comune; anything else gives the street only. The parts come from that one
+  source (the province from the register only for the register's comune); empty or malformed values are left out. The page (v1.32b) applies the four address fields as one group, so parts of two addresses are never mixed.
+- Read only for the party the portal key belongs to (the state's `customer.id`) and only those columns (never the key, notes,
+  e-mail, SDI/PEC or Shopify ids), with a 1.5 s limit; if the read fails or is slow, the state goes out without it and the log says why.
+- Nothing else in the state changes; the portal page ignores the new field. `portal` action answers are unchanged.
+- **Tests:** `profile_test.ts` 11/11 (with `prices_test.ts` and `queue_test.ts`: 24/24, `deno test supabase/functions/trade-portal/`);
+  `state_e2e.ts`, the real `index.ts` against a fake Supabase: 18/18 (profile; only the key's customer, the profile columns, schema
+  fabula; the plan's address first, a cancelled plan's skipped; read failure; slow register; no row; inactive and malformed keys; no
+  customer id), 7 fail on v1.21 as they should; `deno check` and `deno lint` clean. Theme v1.32b: 83/83 page checks (9 new for the
+  address group and the split; 8 of them fail on v1.32), and the page's split equals `splitAddress` on 108 cases (27 lines × 4
+  known comuni). The page parses as ES2017, like the builder already live (no `\p{L}`).
+- **Review:** two rounds by an independent reviewer. First draft: 1 High (the page could keep a CAP/province from Shopify next to
+  the register's street), 2 Medium (unsafe one-line splits ranked above Shopify; the plan's address ignored), Low items (no timeout,
+  business type case, P.IVA check digit, tests). Second round: no High or Medium; 4 Low (no-CAP tails taken as a comune, any two
+  letters as a province, `\p{L}` in the page, a cancelled plan's address). All fixed above.
+- **Rollback:** v1.21's `index.ts` (unchanged since v1.10) through a later release; the page then falls back to its other sources.
+
 ## CCP 2 a tino: the holding minutes (v1.21)
 Decided by Nick on 30/10/2026: CCP 2 set «to 63 for 30 minutes for now» (on live that morning as a data change), then «yes» to recording
 the minutes. The Fortino invoices say the vat is a Mod. MCA300, 300 L, a batch pasteuriser; its rating plate is still to be read
